@@ -37,6 +37,10 @@ TestResults/
 *.sql
 *.sqlite
 
+# Visual Studio #
+#################
+.vs/
+
 # OS generated files #
 ######################
 .DS_Store*

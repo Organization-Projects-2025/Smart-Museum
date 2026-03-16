@@ -24,6 +24,7 @@ using System.IO;
 using System.Linq;
 using System.Windows.Forms;
 using TUIO;
+using HandTracking;
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Application state machine
@@ -90,6 +91,10 @@ public class TuioDemo : Form, TuioListener
 	// ── TUIO ─────────────────────────────────────────────────────────────────
 	private TuioClient                            _client;
 	private readonly Dictionary<long, TuioObject> _objectList = new Dictionary<long, TuioObject>(64);
+
+	// ── Hand Tracking ─────────────────────────────────────────────────────────
+	private HandTrackingReceiver          _handReceiver;
+	private volatile List<HandData>       _latestHands = new List<HandData>();
 
 	// ── State ─────────────────────────────────────────────────────────────────
 	private struct StarPoint { public int X, Y, S; }
@@ -195,6 +200,16 @@ public class TuioDemo : Form, TuioListener
 		_client = new TuioClient(port);
 		_client.addTuioListener(this);
 		_client.connect();
+
+		// Hand tracking receiver
+		_handReceiver = new HandTrackingReceiver("127.0.0.1", 5555);
+		_handReceiver.HandDataReceived += hands =>
+		{
+			_latestHands = hands;
+			// Optionally trigger a repaint so hand data overlays update live
+			SafeInvalidate();
+		};
+		_handReceiver.Start();
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
@@ -351,6 +366,9 @@ public class TuioDemo : Form, TuioListener
 			case AppState.PairNotFacing: DrawPairNotFacing(g); break;
 			case AppState.PairFacing:    DrawPairFacing(g);    break;
 		}
+
+		// Hand overlay always drawn on top regardless of app state
+		DrawHandOverlay(g);
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
@@ -695,6 +713,100 @@ public class TuioDemo : Form, TuioListener
 		}
 	}
 
+	// ─────────────────────────────────────────────────────────────────────────
+	//  Hand overlay — draws finger-count image at palm position
+	// ─────────────────────────────────────────────────────────────────────────
+
+	// Image size for the finger indicator drawn at the palm
+	private const int HandImgSize = 120;
+
+	// Camera resolution Python is capturing at (default 640x480)
+	// Adjust if your webcam runs at a different resolution
+	private const int CamW = 640;
+	private const int CamH = 480;
+
+	private void DrawHandOverlay(Graphics g)
+	{
+		List<HandData> hands = _latestHands;
+		if (hands == null || hands.Count == 0) return;
+
+		foreach (HandData hand in hands)
+		{
+			if (hand.PalmPosition == null) continue;
+
+			// Map camera pixel coords → window coords
+			int wx = hand.PalmPosition.X * _W / CamW;
+			int wy = hand.PalmPosition.Y * _H / CamH;
+
+			int count = hand.FingersUp;  // 0–5
+
+			// Try to load content/fingers/{count}.png
+			string imgPath = $"content/fingers/{count}.png";
+			Image  img     = TryLoadImage(imgPath);
+
+			int half = HandImgSize / 2;
+			var dest = new Rectangle(wx - half, wy - half, HandImgSize, HandImgSize);
+
+			if (img != null)
+			{
+				// Draw with slight transparency so it doesn't obscure content
+				using (var ia = new ImageAttributes())
+				{
+					var cm = new ColorMatrix { Matrix33 = 0.88f };
+					ia.SetColorMatrix(cm);
+					g.DrawImage(img, dest, 0, 0, img.Width, img.Height,
+								GraphicsUnit.Pixel, ia);
+				}
+			}
+			else
+			{
+				// Fallback: draw a circle with the finger count number
+				DrawFingerCountFallback(g, wx, wy, count, hand.IsRight);
+			}
+
+			// Label below the image: hand side
+			DrawCentered(g, hand.Hand,
+				_fontSmall, Color.FromArgb(200, CGold),
+				new RectangleF(wx - 50, wy + half + 4, 100, 22));
+		}
+	}
+
+	private void DrawFingerCountFallback(Graphics g, int cx, int cy, int count, bool isRight)
+	{
+		Color accent = isRight ? CGold : Color.FromArgb(100, 190, 230);
+		int r = HandImgSize / 2;
+
+		// Semi-transparent filled circle
+		using (var fill = new SolidBrush(Color.FromArgb(160, 0, 0, 0)))
+			g.FillEllipse(fill, cx - r, cy - r, r * 2, r * 2);
+
+		using (var pen = new Pen(Color.FromArgb(200, accent), 3))
+			g.DrawEllipse(pen, cx - r, cy - r, r * 2, r * 2);
+
+		// Big finger count number
+		using (var bigFont = new Font("Georgia", 38f, FontStyle.Bold, GraphicsUnit.Pixel))
+		using (var br = new SolidBrush(accent))
+		{
+			var sf = new StringFormat
+			{
+				Alignment     = StringAlignment.Center,
+				LineAlignment = StringAlignment.Center
+			};
+			g.DrawString(count.ToString(), bigFont, br,
+				new RectangleF(cx - r, cy - r, r * 2, r * 2), sf);
+		}
+
+		// Small finger dots at the top of the circle
+		int dotR = 7, spacing = 18;
+		int startX = cx - (count - 1) * spacing / 2;
+		for (int i = 0; i < count; i++)
+		{
+			using (var br = new SolidBrush(Color.FromArgb(220, accent)))
+				g.FillEllipse(br, startX + i * spacing - dotR, cy - r - dotR - 6,
+							  dotR * 2, dotR * 2);
+		}
+	}
+
 	private void DrawTopGradientBar(Graphics g, int height, Color top)
 	{
 		using (var br = new LinearGradientBrush(
@@ -923,6 +1035,7 @@ public class TuioDemo : Form, TuioListener
 			_client.removeTuioListener(this);
 			_client.disconnect();
 		}
+		_handReceiver?.Stop();
 		Environment.Exit(0);
 	}
 

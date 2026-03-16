@@ -14,7 +14,7 @@
     </UpgradeBackupLocation>
     <OldToolsVersion>2.0</OldToolsVersion>
     <ReleaseVersion>1.1.6</ReleaseVersion>
-    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+    <TargetFrameworkVersion>v4.6.1</TargetFrameworkVersion>
     <TargetFrameworkProfile />
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
@@ -55,9 +55,7 @@
     <Compile Include="OSC.NET\OSCPacket.cs" />
     <Compile Include="OSC.NET\OSCReceiver.cs" />
     <Compile Include="OSC.NET\OSCTransmitter.cs" />
-    <Compile Include="TuioDemo.cs">
-      <SubType>Form</SubType>
-    </Compile>
+    <Compile Include="TuioDemo.cs" />
     <Compile Include="FigureData.cs" />
     <Compile Include="SlideShowManager.cs" />
     <Compile Include="TUIO\TuioClient.cs" />
@@ -69,11 +67,15 @@
     <Compile Include="TUIO\TuioTime.cs" />
     <Compile Include="OSC.NET\OSCTimeTag.cs" />
     <Compile Include="TUIO\TuioBlob.cs" />
+    <Compile Include="HandTracking\HandTrackingData.cs" />
+    <Compile Include="HandTracking\HandTrackingReceiver.cs" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="System" />
     <Reference Include="System.Drawing" />
+    <Reference Include="System.Runtime.Serialization" />
     <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
     <None Include="app.config" />
