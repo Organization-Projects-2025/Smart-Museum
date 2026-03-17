@@ -103,11 +103,32 @@ public class TuioDemo : Form, TuioListener
 	// ── Slideshow ─────────────────────────────────────────────────────────────
 	private SlideShowManager _slideShow;
 	private ContentSlide     _currentSlide;
+	private bool             _slideshowLocked = false;
+	private bool             _waitForClearAfterLockedShow = false;
+	private int              _activeFigureSymbolId = -1;
+	private bool             _singleFigureIntroDone = false;
+	private int              _slideElapsedMs = 0;
+
+	private enum SlideShowContext
+	{
+		None,
+		SingleFigureIntro,
+		SceneObjectStory,
+		Relationship
+	}
+	private SlideShowContext _lockedContext = SlideShowContext.None;
 
 	// ── Recognition countdown ────────────────────────────────────────────────
 	private Timer _recognitionTimer;
 	private float _recognitionProgress = 0f;   // 0..1
 	private const int RecognitionMs    = 2500; // ms before slideshow starts
+
+	// ── Single-figure object interaction ────────────────────────────────────
+	private SceneObjectDef _hoverObject;
+	private SceneObjectDef _activeObjectStory;
+	private float          _objectHoldProgress = 0f; // 0..1
+	private const int      ObjectHoldMs        = 1500;
+	private const float    ObjectFacingThresholdRad = (float)(Math.PI / 6.0); // 30 degrees
 
 	// ── Window ───────────────────────────────────────────────────────────────
 	private int  _W, _H;
@@ -189,8 +210,10 @@ public class TuioDemo : Form, TuioListener
 			_currentSlide = slide;
 			_fadeAlpha    = 0f;
 			_fadingIn     = true;
+			_slideElapsedMs = 0;
 			SafeInvalidate();
 		};
+		_slideShow.SlideShowCompleted += OnSlideShowCompleted;
 
 		// Recognition countdown timer
 		_recognitionTimer          = new Timer { Interval = 50 };
@@ -253,6 +276,26 @@ public class TuioDemo : Form, TuioListener
 		// Keep only recognised figures
 		onTable = onTable.FindAll(o => MuseumData.Figures.ContainsKey(o.SymbolID));
 
+		// Keep current slideshow stable even when camera briefly loses tracking.
+		if (_slideshowLocked)
+		{
+			return;
+		}
+
+		// After a locked slideshow ends, require the table to clear once to avoid
+		// instant re-trigger with the same markers still present.
+		if (_waitForClearAfterLockedShow)
+		{
+			if (onTable.Count > 0)
+			{
+				return;
+			}
+
+			_waitForClearAfterLockedShow = false;
+			Transition(AppState.Idle, null, null, null, null);
+			return;
+		}
+
 		if (onTable.Count == 0)
 		{
 			_recognitionTimer.Stop();
@@ -293,9 +336,20 @@ public class TuioDemo : Form, TuioListener
 			targetState = AppState.SingleFigure;
 			pendingFig  = MuseumData.Figures[onTable[0].SymbolID];
 			pendingA    = onTable[0];
+
+			if (_activeFigureSymbolId != pendingFig.SymbolId)
+			{
+				_activeFigureSymbolId = pendingFig.SymbolId;
+				_singleFigureIntroDone = false;
+				_activeObjectStory = null;
+			}
 		}
 		else
 		{
+			_activeFigureSymbolId = -1;
+			_singleFigureIntroDone = false;
+			_activeObjectStory = null;
+
 			TuioObject a    = onTable[0], b = onTable[1];
 			FigureDef  defA = MuseumData.Figures[a.SymbolID];
 			FigureDef  defB = MuseumData.Figures[b.SymbolID];
@@ -378,20 +432,53 @@ public class TuioDemo : Form, TuioListener
 		switch (ns)
 		{
 			case AppState.Idle:
-				if (stateChanged) { _slideShow.Stop(); _currentSlide = null; }
+					if (stateChanged)
+					{
+						_slideShow.Stop();
+						_currentSlide = null;
+						_hoverObject = null;
+						_activeObjectStory = null;
+						_objectHoldProgress = 0f;
+					}
 				break;
 			case AppState.Recognition:
 				break;
 			case AppState.SingleFigure:
 				if (stateChanged || figureChanged)
-					_slideShow.StartSlideShow(fig.SoloSlides);
+					{
+						_hoverObject = null;
+						_activeObjectStory = null;
+						_objectHoldProgress = 0f;
+
+						if (fig.SceneObjects != null && fig.SceneObjects.Count > 0)
+						{
+							if (!_singleFigureIntroDone)
+								StartLockedSlideShow(fig.SoloSlides, SlideShowContext.SingleFigureIntro);
+							else
+							{
+								_slideShow.Stop();
+								_currentSlide = null;
+							}
+						}
+						else
+						{
+							StartLockedSlideShow(fig.SoloSlides, SlideShowContext.SingleFigureIntro);
+						}
+					}
 				break;
 			case AppState.PairNotFacing:
-				if (stateChanged) { _slideShow.Stop(); _currentSlide = null; }
+					if (stateChanged)
+					{
+						_slideShow.Stop();
+						_currentSlide = null;
+						_hoverObject = null;
+						_activeObjectStory = null;
+						_objectHoldProgress = 0f;
+					}
 				break;
 			case AppState.PairFacing:
 				if ((stateChanged || relChanged) && rel != null)
-					_slideShow.StartSlideShow(rel.Slides);
+					StartLockedSlideShow(rel.Slides, SlideShowContext.Relationship);
 				break;
 		}
 		Invalidate();
@@ -406,6 +493,51 @@ public class TuioDemo : Form, TuioListener
 		return null;
 	}
 
+	private void StartLockedSlideShow(List<ContentSlide> slides, SlideShowContext context)
+	{
+		if (slides == null || slides.Count == 0) return;
+
+		_slideshowLocked = true;
+		_waitForClearAfterLockedShow = false;
+		_lockedContext = context;
+		_slideElapsedMs = 0;
+		_slideShow.StartSlideShow(slides, true);
+	}
+
+	private void OnSlideShowCompleted()
+	{
+		_slideshowLocked = false;
+		_slideElapsedMs = 0;
+		_currentSlide = null;
+		_hoverObject = null;
+		_objectHoldProgress = 0f;
+
+		if (_lockedContext == SlideShowContext.SingleFigureIntro)
+		{
+			_singleFigureIntroDone = true;
+			_activeObjectStory = null;
+			_lockedContext = SlideShowContext.None;
+			// Stay in SingleFigure so static object scene is shown next.
+			Invalidate();
+			return;
+		}
+
+		if (_lockedContext == SlideShowContext.SceneObjectStory)
+		{
+			_activeObjectStory = null;
+			_lockedContext = SlideShowContext.None;
+			// Return to object selection scene in same figure mode.
+			Invalidate();
+			return;
+		}
+
+		// Relationship: keep previous behavior (finish then require clear once).
+		_waitForClearAfterLockedShow = true;
+		_lockedContext = SlideShowContext.None;
+		_activeObjectStory = null;
+		Transition(AppState.Idle, null, null, null, null);
+	}
+
 	// ─────────────────────────────────────────────────────────────────────────
 	//  Animation timer
 	// ─────────────────────────────────────────────────────────────────────────
@@ -414,6 +546,12 @@ public class TuioDemo : Form, TuioListener
 	{
 		_idlePhase = (_idlePhase + 1.5f) % 360f;
 
+		if (_slideShow != null && _slideShow.IsRunning && _currentSlide != null)
+			_slideElapsedMs += _animTimer.Interval;
+
+		if (_state == AppState.SingleFigure)
+			UpdateSingleFigureObjectSelection();
+
 		if (_fadingIn)
 		{
 			_fadeAlpha = Math.Min(1f, _fadeAlpha + 0.08f);
@@ -421,8 +559,79 @@ public class TuioDemo : Form, TuioListener
 		}
 
 		if (_state == AppState.Idle || _state == AppState.Recognition ||
-			_state == AppState.PairNotFacing || _fadingIn)
+			_state == AppState.SingleFigure || _state == AppState.PairNotFacing || _fadingIn)
 			Invalidate();
+	}
+
+	private void UpdateSingleFigureObjectSelection()
+	{
+		if (_activeFig == null || _objA == null) return;
+		if (_activeFig.SceneObjects == null || _activeFig.SceneObjects.Count == 0) return;
+
+		// Only allow object selection after intro story has completed.
+		if (!_singleFigureIntroDone)
+		{
+			_hoverObject = null;
+			_objectHoldProgress = 0f;
+			return;
+		}
+
+		// Ignore orientation-based triggers while any locked slideshow is playing.
+		if (_slideshowLocked)
+		{
+			_hoverObject = null;
+			_objectHoldProgress = 0f;
+			return;
+		}
+
+		SceneObjectDef bestObj = null;
+		float bestDiff = float.MaxValue;
+
+		for (int i = 0; i < _activeFig.SceneObjects.Count; i++)
+		{
+			SceneObjectDef so = _activeFig.SceneObjects[i];
+			float dir = (float)Math.Atan2(so.Y - _objA.Y, so.X - _objA.X);
+			float eff = _objA.Angle + (_activeFig != null ? _activeFig.FacingAngleOffset : 0f);
+			float diff = AbsAngleDiff(eff, dir);
+
+			if (diff < bestDiff)
+			{
+				bestDiff = diff;
+				bestObj = so;
+			}
+		}
+
+		if (bestObj != null && bestDiff <= ObjectFacingThresholdRad)
+		{
+			if (_hoverObject != bestObj)
+			{
+				_hoverObject = bestObj;
+				_objectHoldProgress = 0f;
+			}
+			else
+			{
+				_objectHoldProgress = Math.Min(1f, _objectHoldProgress + (_animTimer.Interval / (float)ObjectHoldMs));
+				if (_objectHoldProgress >= 1f && _activeObjectStory != bestObj)
+				{
+					_activeObjectStory = bestObj;
+					if (bestObj.StorySlides != null && bestObj.StorySlides.Count > 0)
+						StartLockedSlideShow(bestObj.StorySlides, SlideShowContext.SceneObjectStory);
+				}
+			}
+		}
+		else
+		{
+			_hoverObject = null;
+			_objectHoldProgress = Math.Max(0f, _objectHoldProgress - 0.1f);
+		}
+	}
+
+	private static float AbsAngleDiff(float a, float b)
+	{
+		float d = a - b;
+		while (d > (float)Math.PI) d -= 2f * (float)Math.PI;
+		while (d < -(float)Math.PI) d += 2f * (float)Math.PI;
+		return Math.Abs(d);
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
@@ -523,9 +732,8 @@ public class TuioDemo : Form, TuioListener
 	/// a circle + facing arrow for a single marker.</summary>
 	private void DrawMarkerOnSurface(Graphics g, TuioObject obj)
 	{
-		int margin = 80;
-		int sx = margin + (int)(obj.X * (_W - margin * 2));
-		int sy = margin + (int)(obj.Y * (_H - margin * 2));
+		int sx, sy;
+		MapSurfacePoint(obj.X, obj.Y, out sx, out sy);
 
 		FigureDef def = MuseumData.Figures.ContainsKey(obj.SymbolID)
 			? MuseumData.Figures[obj.SymbolID] : null;
@@ -568,6 +776,13 @@ public class TuioDemo : Form, TuioListener
 				new RectangleF(sx - 140, sy + R + 42, 280, 22));
 	}
 
+	private void MapSurfacePoint(float nx, float ny, out int sx, out int sy)
+	{
+		int margin = 80;
+		sx = margin + (int)(nx * (_W - margin * 2));
+		sy = margin + (int)(ny * (_H - margin * 2));
+	}
+
 	private void DrawCountdownArc(Graphics g, int cx, int cy, int r, float progress)
 	{
 		// Background track
@@ -587,6 +802,25 @@ public class TuioDemo : Form, TuioListener
 		int pct = (int)(progress * 100);
 		DrawCentered(g, pct + "%", _fontSmall, CGoldLight,
 			new RectangleF(cx - r, cy - r, r * 2, r * 2));
+	}
+
+	private void DrawHeaderProgressBar(Graphics g, int x, int y, int width, int height, float progress, Color accent)
+	{
+		if (width <= 0 || height <= 0) return;
+		progress = Math.Max(0f, Math.Min(1f, progress));
+
+		using (Brush bg = new SolidBrush(Color.FromArgb(45, Color.White)))
+			g.FillRectangle(bg, x, y, width, height);
+
+		int fillW = (int)(width * progress);
+		if (fillW > 0)
+		{
+			using (Brush fg = new SolidBrush(accent))
+				g.FillRectangle(fg, x, y, fillW, height);
+		}
+
+		using (Pen border = new Pen(Color.FromArgb(130, Color.White), 1))
+			g.DrawRectangle(border, x, y, width, height);
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
@@ -612,12 +846,129 @@ public class TuioDemo : Form, TuioListener
 		DrawHeaderSep(g, headerH + 6, accent);
 
 		var contentArea = new Rectangle(50, headerH + 22, _W - 100, _H - headerH - 70);
-		if (_currentSlide != null)
+
+		bool hasSceneObjects = _activeFig.SceneObjects != null && _activeFig.SceneObjects.Count > 0;
+		bool showIntroOnly = hasSceneObjects && !_singleFigureIntroDone;
+
+		if (showIntroOnly)
+		{
+			if (_currentSlide != null)
+				DrawSlide(g, _currentSlide, contentArea, accent, _fadeAlpha);
+
+			float p = 0f;
+			if (_currentSlide != null && _currentSlide.DurationMs > 0)
+				p = Math.Min(1f, _slideElapsedMs / (float)_currentSlide.DurationMs);
+
+			DrawHeaderProgressBar(g, 36, headerH - 22, _W - 72, 8, p, accent);
+		}
+		else if (hasSceneObjects)
+		{
+			bool isObjectStoryPlaying = _lockedContext == SlideShowContext.SceneObjectStory && _currentSlide != null;
+			if (isObjectStoryPlaying)
+			{
+				// Match intro/relationship style: story slide only, no scene visible behind.
+				DrawSlide(g, _currentSlide, contentArea, accent, _fadeAlpha);
+			}
+			else
+			{
+				DrawSingleFigureObjectScene(g, contentArea, _activeFig);
+			}
+		}
+		else if (_currentSlide != null)
+		{
 			DrawSlide(g, _currentSlide, contentArea, accent, _fadeAlpha);
+		}
 
 		DrawProgressDots(g, _slideShow.CurrentIndex, _slideShow.TotalSlides,
 						 _W / 2, _H - 26, accent);
 		DrawOuterBorder(g);
+	}
+
+	private void DrawSingleFigureObjectScene(Graphics g, Rectangle area, FigureDef fig)
+	{
+		using (var veil = new SolidBrush(Color.FromArgb(90, 0, 0, 0)))
+			g.FillRectangle(veil, area);
+
+		for (int i = 0; i < fig.SceneObjects.Count; i++)
+			DrawSceneObject(g, fig.SceneObjects[i], fig.AccentColor);
+
+		if (_objA != null)
+			DrawMarkerOnSurface(g, _objA);
+
+		string hint = "Rotate " + fig.Name + " toward an object and hold for 1.5 seconds";
+		DrawCentered(g, hint, _fontHint, Color.White,
+			new RectangleF(area.X + 20, area.Bottom - 44, area.Width - 40, 28));
+	}
+
+	private void DrawSceneObject(Graphics g, SceneObjectDef so, Color accent)
+	{
+		int sx, sy;
+		MapSurfacePoint(so.X, so.Y, out sx, out sy);
+
+		const int boxW = 150;
+		const int boxH = 120;
+		Rectangle box = new Rectangle(sx - boxW / 2, sy - boxH / 2, boxW, boxH);
+
+		Image img = TryLoadImage(so.ImagePath);
+		if (img != null)
+		{
+			Rectangle fit = FitRect(img.Width, img.Height, box);
+			g.DrawImage(img, fit);
+		}
+		else
+		{
+			using (var miss = new SolidBrush(Color.FromArgb(120, 20, 20, 20)))
+				g.FillRectangle(miss, box);
+			DrawCentered(g, "[PNG]", _fontSmall, Color.White,
+				new RectangleF(box.X, box.Y + box.Height / 2f - 11, box.Width, 22));
+		}
+
+		bool isHover = (_hoverObject == so);
+		bool isActive = (_activeObjectStory == so);
+		Color frame = isActive ? CGreen : (isHover ? CGoldLight : accent);
+
+		using (var pen = new Pen(frame, isHover || isActive ? 3 : 2))
+			g.DrawRectangle(pen, box);
+
+		DrawCentered(g, so.Name, _fontSmall, Color.White,
+			new RectangleF(box.X - 25, box.Bottom + 8, box.Width + 50, 22));
+
+		if (isHover)
+			DrawCountdownArc(g, sx, box.Bottom + 42, 14, _objectHoldProgress);
+	}
+
+	private void DrawObjectSceneStoryOverlay(Graphics g, ContentSlide slide, Rectangle area, Color accent, float alpha)
+	{
+		int a = Clamp255(alpha * 255f);
+		if (a == 0) return;
+
+		Rectangle panel = new Rectangle(
+			area.X + area.Width / 6,
+			area.Y + area.Height / 7,
+			area.Width * 4 / 6,
+			area.Height * 5 / 7);
+
+		using (var veil = new SolidBrush(Color.FromArgb(a * 180 / 255, 6, 6, 14)))
+			g.FillRectangle(veil, panel);
+
+		Color frame = (_activeObjectStory != null) ? GetAccent(_objA) : accent;
+		using (var pen = new Pen(Color.FromArgb(a, frame), 3))
+			g.DrawRectangle(pen, panel);
+
+		DrawCornerAccents(g, panel, Color.FromArgb(a, frame), 26);
+
+		Rectangle inner = new Rectangle(panel.X + 20, panel.Y + 22, panel.Width - 40, panel.Height - 60);
+
+		if (slide.Type == ContentType.Image)
+			DrawImageSlide(g, slide.Content, inner, a);
+		else if (slide.Type == ContentType.Text)
+			DrawTextSlide(g, slide.Content, inner, frame, a);
+		else
+			DrawVideoSlide(g, slide.Content, inner, frame, a);
+
+		string title = (_activeObjectStory != null) ? _activeObjectStory.Name : "Object Story";
+		DrawCentered(g, title, _fontSmall, Color.White,
+			new RectangleF(panel.X + 10, panel.Bottom - 30, panel.Width - 20, 22));
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
