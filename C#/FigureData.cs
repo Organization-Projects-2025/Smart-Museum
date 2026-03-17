@@ -49,6 +49,7 @@ public class FigureDef
     public string           Period           { get; set; }
     public string           ShortDescription { get; set; }
     public Color            AccentColor      { get; set; }
+    public string           MarkerImagePath  { get; set; }
 
     /// <summary>
     /// How much to add to the raw TUIO angle (radians) when computing facing direction.
@@ -124,6 +125,7 @@ public static class MuseumData
                 Period           = "69 BC – 30 BC",
                 ShortDescription = "Last Pharaoh of Ancient Egypt",
                 AccentColor      = Color.FromArgb(212, 175, 55),
+                MarkerImagePath  = "content/figures/0_cleopatra/marker_cleopatra.png",
                 SceneObjects     = new List<SceneObjectDef>
                 {
                     new SceneObjectDef
@@ -200,6 +202,7 @@ public static class MuseumData
                 Period           = "c. 1370 BC – 1330 BC",
                 ShortDescription = "Great Royal Wife of Akhenaten",
                 AccentColor      = Color.FromArgb(100, 190, 230),
+                MarkerImagePath  = "content/figures/1_nefertiti/marker_nefertiti.png",
                 SoloSlides       = new List<ContentSlide>
                 {
                     new ContentSlide { Type = ContentType.Image,
@@ -247,6 +250,7 @@ public static class MuseumData
                 Period           = "c. 1303 BC – 1213 BC",
                 ShortDescription = "Ramesses the Great",
                 AccentColor      = Color.FromArgb(210, 80, 50),
+                MarkerImagePath  = "content/figures/3_ramesses/marker_ramesses_ii.png",
                 SoloSlides       = new List<ContentSlide>
                 {
                     new ContentSlide { Type = ContentType.Image,
@@ -272,6 +276,7 @@ public static class MuseumData
                 Period           = "c. 1507 BC – 1458 BC",
                 ShortDescription = "Egypt's Longest-Reigning Female Pharaoh",
                 AccentColor      = Color.FromArgb(175, 130, 70),
+                MarkerImagePath  = "content/figures/4_hatshepsut/marker_hatshepsut.png",
                 SoloSlides       = new List<ContentSlide>
                 {
                     new ContentSlide { Type = ContentType.Image,

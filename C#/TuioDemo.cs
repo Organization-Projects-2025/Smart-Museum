@@ -757,27 +757,39 @@ public class TuioDemo : Form, TuioListener
 			? MuseumData.Figures[obj.SymbolID] : null;
 		Color accent = def != null ? def.AccentColor : CGold;
 		string name  = def != null ? def.Name : ("ID " + obj.SymbolID);
+		float effectiveAngle = obj.Angle + (def != null ? def.FacingAngleOffset : 0f);
 
 		const int R = 40;
+		Image markerImg = (def != null && !string.IsNullOrEmpty(def.MarkerImagePath))
+			? TryLoadImage(def.MarkerImagePath)
+			: null;
 
-		// Glow ring
-		using (var glow = new Pen(Color.FromArgb(55, accent), 12))
-			g.DrawEllipse(glow, sx - R - 6, sy - R - 6, (R + 6) * 2, (R + 6) * 2);
+		// Keep approximately same area as the old placeholder circle.
+		if (markerImg != null)
+		{
+			GraphicsState gs = g.Save();
+			g.TranslateTransform(sx, sy);
+			g.RotateTransform((float)(effectiveAngle * 180.0 / Math.PI));
+			g.DrawImage(markerImg, new Rectangle(-R, -R, R * 2, R * 2));
+			g.Restore(gs);
+		}
+		else
+		{
+			// Fallback for figures that do not yet have marker images.
+			using (var glow = new Pen(Color.FromArgb(55, accent), 12))
+				g.DrawEllipse(glow, sx - R - 6, sy - R - 6, (R + 6) * 2, (R + 6) * 2);
 
-		// Solid ring
-		using (var p = new Pen(accent, 3))
-			g.DrawEllipse(p, sx - R, sy - R, R * 2, R * 2);
+			using (var p = new Pen(accent, 3))
+				g.DrawEllipse(p, sx - R, sy - R, R * 2, R * 2);
 
-		// Fill
-		using (var fill = new SolidBrush(Color.FromArgb(80, accent)))
-			g.FillEllipse(fill, sx - R, sy - R, R * 2, R * 2);
+			using (var fill = new SolidBrush(Color.FromArgb(80, accent)))
+				g.FillEllipse(fill, sx - R, sy - R, R * 2, R * 2);
 
-		// ID label inside circle
-		DrawCentered(g, obj.SymbolID.ToString(), _fontSmall, Color.White,
-			new RectangleF(sx - R, sy - R, R * 2, R * 2));
+			DrawCentered(g, obj.SymbolID.ToString(), _fontSmall, Color.White,
+				new RectangleF(sx - R, sy - R, R * 2, R * 2));
+		}
 
 		// Facing direction arrow (thick, clearly visible)
-		float effectiveAngle = obj.Angle + (def != null ? def.FacingAngleOffset : 0f);
 		int   arrowLen = R + 30;
 		int   ax = (int)(sx + Math.Cos(effectiveAngle) * arrowLen);
 		int   ay = (int)(sy + Math.Sin(effectiveAngle) * arrowLen);
@@ -872,12 +884,6 @@ public class TuioDemo : Form, TuioListener
 		{
 			if (_currentSlide != null)
 				DrawSlide(g, _currentSlide, contentArea, accent, _fadeAlpha);
-
-			float p = 0f;
-			if (_currentSlide != null && _currentSlide.DurationMs > 0)
-				p = Math.Min(1f, _slideElapsedMs / (float)_currentSlide.DurationMs);
-
-			DrawHeaderProgressBar(g, 36, headerH - 22, _W - 72, 8, p, accent);
 		}
 		else if (hasSceneObjects)
 		{
