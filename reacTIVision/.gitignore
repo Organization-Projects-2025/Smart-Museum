@@ -1,0 +1,16 @@
+# reacTIVision specific
+
+# Configuration files (user-specific)
+camera.xml
+reacTIVision.xml
+
+# Logs
+*.log
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# Backup files
+*.bak
+*.backup

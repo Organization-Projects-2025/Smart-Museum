@@ -1,0 +1,91 @@
+# Root .gitignore for Smart Museum Project
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.pyc
+*.pyo
+
+# Virtual Environments
+.venv/
+venv/
+ENV/
+env/
+.virtualenv/
+
+# IDE & Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.vs/
+
+# OS Files
+.DS_Store
+.DS_Store*
+Thumbs.db
+ehthumbs.db
+Icon?
+
+# Logs
+*.log
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+*.ipynb_checkpoints/
+
+# Distribution / Packaging
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Test Coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Model Files (large files)
+*.task
+*.tflite
+*.pb
+*.h5
+*.onnx
+
+# Compiled Files
+*.exe
+*.dll
+*.so
+*.dylib
+*.pdb
+bin/
+obj/
+
+# User-specific files
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.userprefs
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+
+# Archives
+*.zip
+*.tar.gz
+*.rar
+*.7z

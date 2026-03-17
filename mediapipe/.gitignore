@@ -1,4 +1,26 @@
+# Python
 venv/
+.venv/
 __pycache__/
 *.pyc
 *.pyo
+*.py[cod]
+
+# Model files (if downloaded/generated)
+*.task
+*.tflite
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Test outputs
+test_output/
+output/
