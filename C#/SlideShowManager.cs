@@ -22,6 +22,7 @@ public class SlideShowManager
     private List<ContentSlide> _slides;
     private int                _currentIndex;
     private Timer              _timer;
+    private bool               _playOnce;
 
     // ─── Properties ──────────────────────────────────────────────────────────
 
@@ -59,6 +60,7 @@ public class SlideShowManager
     /// The argument is the new ContentSlide to display.
     /// </summary>
     public event Action<ContentSlide> SlideChanged;
+    public event Action SlideShowCompleted;
 
     // ─── Constructor ─────────────────────────────────────────────────────────
 
@@ -76,7 +78,17 @@ public class SlideShowManager
     /// </summary>
     public void StartSlideShow(List<ContentSlide> slides)
     {
+        StartSlideShow(slides, false);
+    }
+
+    /// <summary>
+    /// Start (or restart) the slideshow with optional play-once behavior.
+    /// When playOnce is true, SlideShowCompleted fires after the final slide.
+    /// </summary>
+    public void StartSlideShow(List<ContentSlide> slides, bool playOnce)
+    {
         _timer.Stop();
+        _playOnce = playOnce;
 
         if (slides == null || slides.Count == 0)
         {
@@ -99,6 +111,7 @@ public class SlideShowManager
         _timer.Stop();
         _slides       = null;
         _currentIndex = 0;
+        _playOnce     = false;
     }
 
     // ─── Private ─────────────────────────────────────────────────────────────
@@ -106,6 +119,17 @@ public class SlideShowManager
     private void OnTimerTick(object sender, EventArgs e)
     {
         if (_slides == null || _slides.Count == 0) return;
+
+        if (_playOnce && _currentIndex >= _slides.Count - 1)
+        {
+            _timer.Stop();
+            _slides = null;
+            _currentIndex = 0;
+            _playOnce = false;
+
+            if (SlideShowCompleted != null) SlideShowCompleted();
+            return;
+        }
 
         _currentIndex = (_currentIndex + 1) % _slides.Count;
 

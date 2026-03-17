@@ -58,6 +58,26 @@ public class FigureDef
 
     /// <summary>Slides shown when this figure is alone on the table.</summary>
     public List<ContentSlide> SoloSlides { get; set; }
+
+    /// <summary>
+    /// Optional interactive objects shown in single-figure mode.
+    /// If the user rotates the figure to face one object for enough time,
+    /// that object's StorySlides are started.
+    /// </summary>
+    public List<SceneObjectDef> SceneObjects { get; set; }
+}
+
+/// <summary>
+/// A static object rendered in single-figure mode for directional selection.
+/// X/Y are normalized table coordinates in range 0..1.
+/// </summary>
+public class SceneObjectDef
+{
+    public string Name { get; set; }
+    public string ImagePath { get; set; }
+    public float X { get; set; }
+    public float Y { get; set; }
+    public List<ContentSlide> StorySlides { get; set; }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -104,6 +124,57 @@ public static class MuseumData
                 Period           = "69 BC – 30 BC",
                 ShortDescription = "Last Pharaoh of Ancient Egypt",
                 AccentColor      = Color.FromArgb(212, 175, 55),
+                SceneObjects     = new List<SceneObjectDef>
+                {
+                    new SceneObjectDef
+                    {
+                        Name      = "Royal Cobra Crown",
+                        ImagePath = "content/objects/0_cleopatra/royal_cobra_crown.png",
+                        X         = 0.18f,
+                        Y         = 0.30f,
+                        StorySlides = new List<ContentSlide>
+                        {
+                            new ContentSlide { Type = ContentType.Image,
+                                Content    = "content/objects/0_cleopatra/royal_cobra_crown.png",
+                                DurationMs = 6000 },
+                            new ContentSlide { Type = ContentType.Text,
+                                Content    = "The uraeus cobra on Cleopatra's crown symbolized divine kingship and protection. By presenting herself with this iconography, Cleopatra linked her rule to ancient Egyptian royal legitimacy, not only to her Greek Ptolemaic heritage.",
+                                DurationMs = 8500 },
+                        }
+                    },
+                    new SceneObjectDef
+                    {
+                        Name      = "Alexandrian Coin",
+                        ImagePath = "content/objects/0_cleopatra/alexandrian_coin.png",
+                        X         = 0.78f,
+                        Y         = 0.33f,
+                        StorySlides = new List<ContentSlide>
+                        {
+                            new ContentSlide { Type = ContentType.Image,
+                                Content    = "content/objects/0_cleopatra/alexandrian_coin.png",
+                                DurationMs = 6000 },
+                            new ContentSlide { Type = ContentType.Text,
+                                Content    = "Coins minted in Alexandria carried Cleopatra's portrait and political messages. Through coinage, she projected authority across the Mediterranean, shaping how allies and rivals in Rome perceived Egypt's final pharaoh.",
+                                DurationMs = 8500 },
+                        }
+                    },
+                    new SceneObjectDef
+                    {
+                        Name      = "Nile Barge",
+                        ImagePath = "content/objects/0_cleopatra/nile_barge.png",
+                        X         = 0.52f,
+                        Y         = 0.74f,
+                        StorySlides = new List<ContentSlide>
+                        {
+                            new ContentSlide { Type = ContentType.Image,
+                                Content    = "content/objects/0_cleopatra/nile_barge.png",
+                                DurationMs = 6000 },
+                            new ContentSlide { Type = ContentType.Text,
+                                Content    = "Ancient sources describe Cleopatra's ceremonial barge as a floating stage of power. Her theatrical Nile appearances fused diplomacy, religion, and spectacle, reinforcing her image as a sovereign equal to Rome's strongest leaders.",
+                                DurationMs = 9000 },
+                        }
+                    }
+                },
                 SoloSlides       = new List<ContentSlide>
                 {
                     new ContentSlide { Type = ContentType.Image,
