@@ -8,7 +8,6 @@ using System.Linq;
 using System.Net.Sockets;
 using System.Text;
 
-// Simple Socket Client - follows pattern from Code Samples/CSharpClient.txt
 public class SocketClient
 {
     public NetworkStream stream;
@@ -16,7 +15,6 @@ public class SocketClient
 
     public bool connectToSocket(string host, int portNumber)
     {
-        // Connect to Python server
         try
         {
             client = new TcpClient(host, portNumber);
@@ -33,10 +31,8 @@ public class SocketClient
 
     public void sendMessage(string msg)
     {
-        // Send string message to server
         try
         {
-            // Add newline if not present - many socket protocols expect line-terminated messages
             if (!msg.EndsWith("\n"))
                 msg = msg + "\n";
             
@@ -52,7 +48,6 @@ public class SocketClient
 
     public string recieveMessage()
     {
-        // Receive string message from server
         try
         {
             byte[] receiveBuffer = new byte[1024];
@@ -70,7 +65,6 @@ public class SocketClient
 
     public void closeConnection()
     {
-        // Close the connection
         try
         {
             stream.Close();
@@ -85,7 +79,6 @@ public class SocketClient
 
     public string sendCommandAndWait(string cmd)
     {
-        // Send command and wait for response
         try
         {
             sendMessage(cmd);
@@ -140,8 +133,6 @@ public static class CsvUserDatabase
 {
     public static List<CsvUserRecord> Load(string csvPath)
     {
-        EnsureCsvExists(csvPath);
-
         var rows = new List<CsvUserRecord>();
         var lines = File.ReadAllLines(csvPath);
         for (int i = 1; i < lines.Length; i++)
@@ -167,31 +158,6 @@ public static class CsvUserDatabase
             rows.Add(rec);
         }
         return rows;
-    }
-
-    public static void EnsureCsvExists(string csvPath)
-    {
-        string dir = Path.GetDirectoryName(csvPath);
-        if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
-
-        if (File.Exists(csvPath)) return;
-
-        var lines = new List<string>();
-        lines.Add("face_user_id,first_name,last_name,age,gender,race,preferred_bluetooth_name");
-        lines.Add("user0,Ali,Hassan,10,male,black,AliPhone");
-        lines.Add("user1,Sara,Nabil,11,female,white,SaraWatch");
-        lines.Add("user2,Omar,Farid,16,male,asian,OmarBuds");
-        lines.Add("user3,Lina,Adel,22,female,indian,LinaPhone");
-        lines.Add("user4,Mark,Stone,30,male,white,MarkLaptop");
-        lines.Add("user5,Ana,Lopez,34,female,latino,AnaPhone");
-        lines.Add("user6,Yousef,Kamal,45,male,indian,YousefCar");
-        lines.Add("user7,Nour,Salem,52,female,asian,NourTablet");
-        lines.Add("user8,Ibrahim,Saad,66,male,black,IbrahimPhone");
-        lines.Add("user9,Mona,Fouad,71,female,white,MonaWatch");
-        lines.Add("user10,Carlos,Diaz,28,male,latino,CarlosPhone");
-        lines.Add("user11,Mei,Lin,67,female,asian,MeiPhone");
-
-        File.WriteAllLines(csvPath, lines.ToArray());
     }
 }
 
@@ -259,7 +225,7 @@ public static class ProfileMapper
 public class BluetoothTwoFactorService
 {
     // Connect via socket to Python server running on localhost:5000
-    // See python_server.py for server implementation
+    // See python/server/python_server.py for server implementation
     
     public bool Verify(string targetMac, out string status)
     {
@@ -334,7 +300,7 @@ public class BluetoothTwoFactorService
 public class FaceIdService
 {
     // Connect to Python server running on localhost:5000
-    // See python_server.py for server implementation (face_id_scan command)
+    // See python/server/python_server.py for server implementation (face_id_scan command)
 
     public bool Scan(out string userId, out string status)
     {

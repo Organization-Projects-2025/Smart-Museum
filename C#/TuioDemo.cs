@@ -1,17 +1,4 @@
-/*
- * TuioDemo.cs  (completely rewritten)
- * Smart Grand Egyptian Museum -- HCI Interactive Table
- *
- * Place one figure  -> solo content slideshow for that character
- * Place two figures -> hint to rotate them face-to-face
- * Two figures facing each other -> relationship content slideshow
- *
- * Keyboard: F1 = full-screen, Escape = exit
- *
- * Requires: FigureData.cs, SlideShowManager.cs, TUIO library, OSC.NET
- * Content: place images in content/figures/ and content/relationships/
- *          relative to the .exe. Missing images show placeholders.
- */
+// Keyboard shortcuts: F1 = full-screen, Escape = exit
 
 using System;
 using System.Collections.Generic;
@@ -27,30 +14,19 @@ using System.Windows.Forms;
 using TUIO;
 using HandTracking;
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Application state machine
-// ─────────────────────────────────────────────────────────────────────────────
 public enum AppState
 {
 	Idle,           // No markers on the table
-	Recognition,    // Marker(s) just placed -- countdown before slideshow starts
-	SingleFigure,   // Exactly one known marker -- solo content
-	PairNotFacing,  // Two known markers but not facing each other -- hint to rotate
-	PairFacing      // Two known markers facing each other -- relationship content
+	Recognition,    // A figure is detected and the start condition is being validated
+	SingleFigure,   // Exactly one known figure is active
+	PairNotFacing,  // Two known figures are present but not facing each other
+	PairFacing      // Two known figures are facing each other
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Facing detection helper
-// ─────────────────────────────────────────────────────────────────────────────
 public static class FacingDetector
 {
-	// Tolerance window: 45 degrees either side of the ideal facing angle.
 	private const float ThresholdRad = (float)(Math.PI / 4.0);
 
-	/// <summary>
-	/// Returns true when marker A and marker B are oriented so that they
-	/// point toward each other (within the tolerance window).
-	/// </summary>
 	public static bool AreFacing(TuioObject a, FigureDef defA,
 								  TuioObject b, FigureDef defB)
 	{
@@ -67,7 +43,6 @@ public static class FacingDetector
 		return Math.Abs(diffA) < ThresholdRad && Math.Abs(diffB) < ThresholdRad;
 	}
 
-	/// <summary>Returns how far A needs to rotate (radians) to face B.</summary>
 	public static float FacingDeviation(TuioObject a, FigureDef defA, TuioObject b)
 	{
 		float dx = b.X - a.X;
@@ -85,35 +60,28 @@ public static class FacingDetector
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Main application form
-// ─────────────────────────────────────────────────────────────────────────────
 public class TuioDemo : Form, TuioListener
 {
-	// ── TUIO ─────────────────────────────────────────────────────────────────
-	private TuioClient                            _client;
-	private readonly Dictionary<long, TuioObject> _objectList = new Dictionary<long, TuioObject>(64);
+	private TuioClient                            client;
+	private Dictionary<long, TuioObject> objectList = new Dictionary<long, TuioObject>(64);
 
-	// ── Hand Tracking ─────────────────────────────────────────────────────────
-	private HandTrackingReceiver          _handReceiver;
-	private volatile List<HandData>       _latestHands = new List<HandData>();
+	private HandTrackingReceiver          handReceiver;
+	private List<HandData>       latestHands = new List<HandData>();
 
-	// ── State ─────────────────────────────────────────────────────────────────
 	private struct StarPoint { public int X, Y, S; }
 		
-	private AppState        _state       = AppState.Idle;
-	private FigureDef       _activeFig;
-	private RelationshipDef _activeRel;
-	private TuioObject      _objA, _objB;
+	private AppState        state       = AppState.Idle;
+	private FigureDef       activeFig;
+	private RelationshipDef activeRel;
+	private TuioObject      objA, objB;
 
-	// ── Slideshow ─────────────────────────────────────────────────────────────
-	private SlideShowManager _slideShow;
-	private ContentSlide     _currentSlide;
-	private bool             _slideshowLocked = false;
-	private bool             _waitForClearAfterLockedShow = false;
-	private int              _activeFigureSymbolId = -1;
-	private bool             _singleFigureIntroDone = false;
-	private int              _slideElapsedMs = 0;
+	private SlideShowManager slideShow;
+	private ContentSlide     currentSlide;
+	private bool             slideshowLocked = false;
+	private bool             waitForClearAfterLockedShow = false;
+	private int              activeFigureSymbolId = -1;
+	private bool             singleFigureIntroDone = false;
+	private int              slideElapsedMs = 0;
 
 	private enum SlideShowContext
 	{
@@ -123,113 +91,99 @@ public class TuioDemo : Form, TuioListener
 		Relationship,
 		MenuStory
 	}
-	private SlideShowContext _lockedContext = SlideShowContext.None;
-	private string _activeStoryKey = null;
+	private SlideShowContext lockedContext = SlideShowContext.None;
+	private string activeStoryKey = null;
 
-	// ── Login + profile adaptation ───────────────────────────────────────────
-	private volatile bool _isLoggedIn = false;
-	private volatile bool _authInProgress = false;
-	private string _authStatus = "Waiting for Face ID";
-	private VisitorProfile _visitorProfile;
+	private bool isLoggedIn = false;
+	private bool authInProgress = false;
+	private string authStatus = "Waiting for Face ID";
+	private VisitorProfile visitorProfile;
 
-	private Color _themePrimary = Color.FromArgb(12, 12, 12);
-	private Color _themeSecondary = Color.FromArgb(212, 175, 55);
-	private Color _themeTertiary = Color.FromArgb(201, 166, 107);
+	private Color themePrimary = Color.FromArgb(12, 12, 12);
+	private Color themeSecondary = Color.FromArgb(212, 175, 55);
+	private Color themeTertiary = Color.FromArgb(201, 166, 107);
 
-	// ── Circular menu + story tracking ───────────────────────────────────────
-	private readonly CircularMenuController _circularMenu = new CircularMenuController();
-	private readonly Dictionary<string, List<ContentSlide>> _storySlidesByKey =
+	private CircularMenuController circularMenu = new CircularMenuController();
+	private Dictionary<string, List<ContentSlide>> storySlidesByKey =
 		new Dictionary<string, List<ContentSlide>>();
-	private readonly Dictionary<string, string> _storyTitleByKey =
+	private Dictionary<string, string> storyTitleByKey =
 		new Dictionary<string, string>();
-	private readonly Dictionary<string, string> _storyKeyByTitle =
+	private Dictionary<string, string> storyKeyByTitle =
 		new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-	private bool _menuGestureArmed = true;
-	private bool _hasLastMenuMarkerY = false;
-	private float _lastMenuMarkerY = 0.5f;
-	private float _menuGestureAccumY = 0f;
-	private DateTime _lastTouchTime = DateTime.MinValue;
-	private readonly Dictionary<string, int> _lastPalmX = new Dictionary<string, int>();
-	private readonly Dictionary<string, DateTime> _lastPalmTime = new Dictionary<string, DateTime>();
-	private DateTime _lastWaveTime = DateTime.MinValue;
+	private bool menuGestureArmed = true;
+	private bool hasLastMenuMarkerY = false;
+	private float lastMenuMarkerY = 0.5f;
+	private float menuGestureAccumY = 0f;
+	private DateTime lastTouchTime = DateTime.MinValue;
+	private Dictionary<string, int> lastPalmX = new Dictionary<string, int>();
+	private Dictionary<string, DateTime> lastPalmTime = new Dictionary<string, DateTime>();
+	private DateTime lastWaveTime = DateTime.MinValue;
 	private const int CircularMenuMarkerSymbolId = 0;
 	private const bool MenuUpIsPositiveY = true;
 	private const float MenuMoveTriggerDeltaY = 0.035f;
 	private const float MenuMoveNeutralBandY = 0.015f;
 
-	// ── Recognition countdown ────────────────────────────────────────────────
-	private System.Windows.Forms.Timer _recognitionTimer;
-	private float _recognitionProgress = 0f;   // 0..1
-	private const int RecognitionMs    = 2500; // ms before slideshow starts
+	private System.Windows.Forms.Timer recognitionTimer;
+	private float recognitionProgress = 0f;   // 0..1
+	private const int RecognitionMs    = 3000; // ms before slideshow starts
+	private const float CenterZoneHalfWidth = 0.12f;
+	private const float CenterZoneHalfHeight = 0.12f;
 
-	// ── Single-figure object interaction ────────────────────────────────────
-	private SceneObjectDef _hoverObject;
-	private SceneObjectDef _activeObjectStory;
-	private float          _objectHoldProgress = 0f; // 0..1
+	private SceneObjectDef hoverObject;
+	private SceneObjectDef activeObjectStory;
+	private float          objectHoldProgress = 0f; // 0..1
 	private const int      ObjectHoldMs        = 1500;
 	private const float    ObjectFacingThresholdRad = (float)(Math.PI / 6.0); // 30 degrees
 
-	// ── Window ───────────────────────────────────────────────────────────────
-	private int  _W, _H;
-	private int  _winW = 1280, _winH = 720;
-	private int  _winLeft, _winTop;
-	private bool _fullscreen;
+	private int  W, H;
+	private int  winW = 1280, winH = 720;
+	private int  winLeft, winTop;
+	private bool fullscreen;
 
-	// ── Animation ────────────────────────────────────────────────────────────
-	private System.Windows.Forms.Timer _animTimer;
-	private float _idlePhase = 0f;
-	private float _fadeAlpha = 1f;
-	private bool  _fadingIn  = false;
+	private System.Windows.Forms.Timer animTimer;
+	private float idlePhase = 0f;
+	private float fadeAlpha = 1f;
+	private bool  fadingIn  = false;
 
-	// ── Image cache ──────────────────────────────────────────────────────────
-	private readonly Dictionary<string, Image> _imgCache =
+	private Dictionary<string, Image> imgCache =
 		new Dictionary<string, Image>(StringComparer.OrdinalIgnoreCase);
 
-	// ── Fonts ────────────────────────────────────────────────────────────────
-	private Font _fontTitle;
-	private Font _fontSubtitle;
-	private Font _fontBody;
-	private Font _fontSmall;
-	private Font _fontHint;
+	private Font fontTitle;
+	private Font fontSubtitle;
+	private Font fontBody;
+	private Font fontSmall;
+	private Font fontHint;
 
-	// ── Palette ──────────────────────────────────────────────────────────────
-	private static readonly Color CGold      = Color.FromArgb(212, 175,  55);
-	private static readonly Color CGoldLight = Color.FromArgb(255, 220, 100);
-	private static readonly Color CGoldDim   = Color.FromArgb( 90,  70,  20);
-	private static readonly Color CPapyrus   = Color.FromArgb(240, 220, 165);
-	private static readonly Color CBg        = Color.FromArgb( 10,   8,  25);
-	private static readonly Color CGreen     = Color.FromArgb( 80, 210, 100);
+	private static Color CGold      = Color.FromArgb(212, 175,  55);
+	private static Color CGoldLight = Color.FromArgb(255, 220, 100);
+	private static Color CGoldDim   = Color.FromArgb( 90,  70,  20);
+	private static Color CPapyrus   = Color.FromArgb(240, 220, 165);
+	private static Color CBg        = Color.FromArgb( 10,   8,  25);
+	private static Color CGreen     = Color.FromArgb( 80, 210, 100);
 
-	// ── Star field (pre-computed, frame-stable) ───────────────────────────────
-	private readonly StarPoint[] _stars;
+	private StarPoint[] stars;
 
-	// ─────────────────────────────────────────────────────────────────────────
-	//  Constructor
-	// ─────────────────────────────────────────────────────────────────────────
 	public TuioDemo(int port)
 	{
-		// Pre-compute deterministic star positions
 		var rng = new Random(1337);
-		_stars  = new StarPoint[100];
-		for (int i = 0; i < _stars.Length; i++)
+		stars  = new StarPoint[100];
+		for (int i = 0; i < stars.Length; i++)
 		{
 			StarPoint sp;
 			sp.X = rng.Next(1280);
 			sp.Y = rng.Next(720);
 			sp.S = rng.Next(1, 3);
-			_stars[i] = sp;
+			stars[i] = sp;
 		}
 
-		// Fonts
-		_fontTitle    = new Font("Georgia", 48f, FontStyle.Bold,    GraphicsUnit.Pixel);
-		_fontSubtitle = new Font("Georgia", 28f, FontStyle.Italic,  GraphicsUnit.Pixel);
-		_fontBody     = new Font("Georgia", 22f, FontStyle.Regular, GraphicsUnit.Pixel);
-		_fontSmall    = new Font("Georgia", 15f, FontStyle.Regular, GraphicsUnit.Pixel);
-		_fontHint     = new Font("Georgia", 18f, FontStyle.Italic,  GraphicsUnit.Pixel);
+		fontTitle    = new Font("Georgia", 48f, FontStyle.Bold,    GraphicsUnit.Pixel);
+		fontSubtitle = new Font("Georgia", 28f, FontStyle.Italic,  GraphicsUnit.Pixel);
+		fontBody     = new Font("Georgia", 22f, FontStyle.Regular, GraphicsUnit.Pixel);
+		fontSmall    = new Font("Georgia", 15f, FontStyle.Regular, GraphicsUnit.Pixel);
+		fontHint     = new Font("Georgia", 18f, FontStyle.Italic,  GraphicsUnit.Pixel);
 
-		// Window
-		_W = _winW; _H = _winH;
-		this.ClientSize = new Size(_W, _H);
+		W = winW; H = winH;
+		this.ClientSize = new Size(W, H);
 		this.Text       = "Smart Grand Egyptian Museum";
 		this.BackColor  = CBg;
 		this.Cursor     = Cursors.Default;
@@ -242,41 +196,35 @@ public class TuioDemo : Form, TuioListener
 		this.KeyDown += OnKeyDown;
 		this.Closing += OnClosing;
 
-		// Slideshow
-		_slideShow = new SlideShowManager();
-		_slideShow.SlideChanged += slide =>
+		slideShow = new SlideShowManager();
+		slideShow.SlideChanged += slide =>
 		{
-			_currentSlide = slide;
-			_fadeAlpha    = 0f;
-			_fadingIn     = true;
-			_slideElapsedMs = 0;
+			currentSlide = slide;
+			fadeAlpha    = 0f;
+			fadingIn     = true;
+			slideElapsedMs = 0;
 			SafeInvalidate();
 		};
-		_slideShow.SlideShowCompleted += OnSlideShowCompleted;
+		slideShow.SlideShowCompleted += OnSlideShowCompleted;
 
-		// Recognition countdown timer
-		_recognitionTimer          = new System.Windows.Forms.Timer { Interval = 50 };
-		_recognitionTimer.Tick    += OnRecognitionTick;
+		recognitionTimer          = new System.Windows.Forms.Timer { Interval = 50 };
+		recognitionTimer.Tick    += OnRecognitionTick;
 
-		// Animation timer (~30 fps)
-		_animTimer       = new System.Windows.Forms.Timer { Interval = 33 };
-		_animTimer.Tick += OnAnimTick;
-		_animTimer.Start();
+		animTimer       = new System.Windows.Forms.Timer { Interval = 33 };
+		animTimer.Tick += OnAnimTick;
+		animTimer.Start();
 
-		// TUIO
-		_client = new TuioClient(port);
-		_client.addTuioListener(this);
-		_client.connect();
+		client = new TuioClient(port);
+		client.addTuioListener(this);
+		client.connect();
 
-		// Hand tracking receiver
-		_handReceiver = new HandTrackingReceiver("127.0.0.1", 5555);
-		_handReceiver.HandDataReceived += hands =>
+		handReceiver = new HandTrackingReceiver("127.0.0.1", 5555);
+		handReceiver.HandDataReceived += hands =>
 		{
-			_latestHands = hands;
-			// Optionally trigger a repaint so hand data overlays update live
+			latestHands = hands;
 			SafeInvalidate();
 		};
-		_handReceiver.Start();
+		handReceiver.Start();
 
 		InitializeStoryLibrary();
 		InitializeCircularMenu();
@@ -285,9 +233,9 @@ public class TuioDemo : Form, TuioListener
 
 	private void StartLoginFlow()
 	{
-		_authInProgress = true;
-		_isLoggedIn = false;
-		_authStatus = "Face ID (DeepFace) is starting...";
+		authInProgress = true;
+		isLoggedIn = false;
+		authStatus = "Face ID is starting...";
 
 		Thread t = new Thread(() =>
 		{
@@ -297,18 +245,17 @@ public class TuioDemo : Form, TuioListener
 				string baseDir = AppDomain.CurrentDomain.BaseDirectory;
 
 				string csvPath = Path.Combine(workspaceRoot, "C#", "content", "auth", "users.csv");
-				CsvUserDatabase.EnsureCsvExists(csvPath);
 				List<CsvUserRecord> users = CsvUserDatabase.Load(csvPath);
 
 				var faceService = new FaceIdService();
 				string faceUserId;
 				string faceStatus;
 				bool faceOk = faceService.Scan(out faceUserId, out faceStatus);
-				_authStatus = faceStatus;
+				authStatus = faceStatus;
 
 				if (!faceOk || string.IsNullOrEmpty(faceUserId))
 				{
-					_authInProgress = false;
+					authInProgress = false;
 					SafeInvalidate();
 					return;
 				}
@@ -318,8 +265,8 @@ public class TuioDemo : Form, TuioListener
 
 				if (selected == null)
 				{
-					_authStatus = "Face ID user '" + faceUserId + "' is not found in CSV.";
-					_authInProgress = false;
+					authStatus = "Face ID user '" + faceUserId + "' is not found in CSV.";
+					authInProgress = false;
 					SafeInvalidate();
 					return;
 				}
@@ -327,25 +274,25 @@ public class TuioDemo : Form, TuioListener
 				var btService = new BluetoothTwoFactorService();
 				string btStatus;
 				bool btOk = btService.Verify(selected.PreferredBluetoothName, out btStatus);
-				_authStatus = btStatus;
+				authStatus = btStatus;
 
 				if (!btOk)
 				{
-					_authInProgress = false;
+					authInProgress = false;
 					SafeInvalidate();
 					return;
 				}
 
-				_visitorProfile = ProfileMapper.ToVisitorProfile(selected);
-				_authStatus = "Welcome " + _visitorProfile.FullName + " (" + _visitorProfile.Language + ")";
+				visitorProfile = ProfileMapper.ToVisitorProfile(selected);
+				authStatus = "Welcome " + visitorProfile.FullName + " (" + visitorProfile.Language + ")";
 
 				if (IsHandleCreated)
 				{
 					BeginInvoke(new Action(() =>
 					{
 						ApplyVisitorTheme();
-						_authInProgress = false;
-						_isLoggedIn = true;
+						authInProgress = false;
+						isLoggedIn = true;
 						Transition(AppState.Idle, null, null, null, null);
 						Invalidate();
 					}));
@@ -353,8 +300,8 @@ public class TuioDemo : Form, TuioListener
 			}
 			catch (Exception ex)
 			{
-				_authStatus = "Login failed: " + ex.Message;
-				_authInProgress = false;
+				authStatus = "Login failed: " + ex.Message;
+				authInProgress = false;
 				SafeInvalidate();
 			}
 		});
@@ -367,7 +314,6 @@ public class TuioDemo : Form, TuioListener
 	private string GetWorkspaceRoot()
 	{
 		DirectoryInfo d = new DirectoryInfo(AppDomain.CurrentDomain.BaseDirectory);
-		// bin/Debug -> C# -> workspace root
 		if (d.Parent != null) d = d.Parent;
 		if (d.Parent != null) d = d.Parent;
 		if (d.Parent != null) d = d.Parent;
@@ -376,23 +322,23 @@ public class TuioDemo : Form, TuioListener
 
 	private void ApplyVisitorTheme()
 	{
-		if (_visitorProfile == null) return;
+		if (visitorProfile == null) return;
 
-		_themePrimary = _visitorProfile.PrimaryColor;
-		_themeSecondary = _visitorProfile.SecondaryColor;
-		_themeTertiary = _visitorProfile.TertiaryColor;
+		themePrimary = visitorProfile.PrimaryColor;
+		themeSecondary = visitorProfile.SecondaryColor;
+		themeTertiary = visitorProfile.TertiaryColor;
 
-		if (_fontTitle != null) _fontTitle.Dispose();
-		if (_fontSubtitle != null) _fontSubtitle.Dispose();
-		if (_fontBody != null) _fontBody.Dispose();
-		if (_fontSmall != null) _fontSmall.Dispose();
-		if (_fontHint != null) _fontHint.Dispose();
+		if (fontTitle != null) fontTitle.Dispose();
+		if (fontSubtitle != null) fontSubtitle.Dispose();
+		if (fontBody != null) fontBody.Dispose();
+		if (fontSmall != null) fontSmall.Dispose();
+		if (fontHint != null) fontHint.Dispose();
 
-		_fontTitle    = new Font("Georgia", _visitorProfile.TitleSizePx, FontStyle.Bold,    GraphicsUnit.Pixel);
-		_fontSubtitle = new Font("Georgia", _visitorProfile.SubtitleSizePx, FontStyle.Italic,  GraphicsUnit.Pixel);
-		_fontBody     = new Font("Georgia", _visitorProfile.BodySizePx, FontStyle.Regular, GraphicsUnit.Pixel);
-		_fontSmall    = new Font("Georgia", _visitorProfile.SmallSizePx, FontStyle.Regular, GraphicsUnit.Pixel);
-		_fontHint     = new Font("Georgia", _visitorProfile.BodySizePx, FontStyle.Italic,  GraphicsUnit.Pixel);
+		fontTitle    = new Font("Georgia", visitorProfile.TitleSizePx, FontStyle.Bold,    GraphicsUnit.Pixel);
+		fontSubtitle = new Font("Georgia", visitorProfile.SubtitleSizePx, FontStyle.Italic,  GraphicsUnit.Pixel);
+		fontBody     = new Font("Georgia", visitorProfile.BodySizePx, FontStyle.Regular, GraphicsUnit.Pixel);
+		fontSmall    = new Font("Georgia", visitorProfile.SmallSizePx, FontStyle.Regular, GraphicsUnit.Pixel);
+		fontHint     = new Font("Georgia", visitorProfile.BodySizePx, FontStyle.Italic,  GraphicsUnit.Pixel);
 	}
 
 	private void InitializeStoryLibrary()
@@ -415,9 +361,8 @@ public class TuioDemo : Form, TuioListener
 
 	private void InitializeCircularMenu()
 	{
-		_circularMenu.OnAction = HandleMenuAction;
+		circularMenu.OnAction = HandleMenuAction;
 
-		// Seed favorites with stable defaults.
 		AddFavoriteIfExists("figure:1");
 		AddFavoriteIfExists("figure:2");
 		AddFavoriteIfExists("relationship:1_2");
@@ -428,25 +373,25 @@ public class TuioDemo : Form, TuioListener
 		if (string.IsNullOrEmpty(key) || string.IsNullOrEmpty(title) || slides == null || slides.Count == 0)
 			return;
 
-		_storySlidesByKey[key] = slides;
-		_storyTitleByKey[key] = title;
-		_storyKeyByTitle[title] = key;
+		storySlidesByKey[key] = slides;
+		storyTitleByKey[key] = title;
+		storyKeyByTitle[title] = key;
 	}
 
 	private void AddFavoriteIfExists(string key)
 	{
-		if (!_storyTitleByKey.ContainsKey(key)) return;
-		string title = _storyTitleByKey[key];
-		if (!_circularMenu.Favorites.Contains(title))
-			_circularMenu.Favorites.Add(title);
+		if (!storyTitleByKey.ContainsKey(key)) return;
+		string title = storyTitleByKey[key];
+		if (!circularMenu.Favorites.Contains(title))
+			circularMenu.Favorites.Add(title);
 	}
 
 	private void AddWatchedIfExists(string key)
 	{
-		if (!_storyTitleByKey.ContainsKey(key)) return;
-		string title = _storyTitleByKey[key];
-		if (!_circularMenu.Watched.Contains(title))
-			_circularMenu.Watched.Add(title);
+		if (!storyTitleByKey.ContainsKey(key)) return;
+		string title = storyTitleByKey[key];
+		if (!circularMenu.Watched.Contains(title))
+			circularMenu.Watched.Add(title);
 	}
 
 	private void HandleMenuAction(string action, string payload)
@@ -456,21 +401,21 @@ public class TuioDemo : Form, TuioListener
 			string key = GetCurrentFigureStoryKey();
 			if (string.IsNullOrEmpty(key))
 			{
-				_authStatus = "No active figure to favorite right now.";
+				authStatus = "No active figure to favorite right now.";
 				return;
 			}
 
-			if (_storyTitleByKey.ContainsKey(key))
+			if (storyTitleByKey.ContainsKey(key))
 			{
-				string title = _storyTitleByKey[key];
-				if (!_circularMenu.Favorites.Contains(title))
+				string title = storyTitleByKey[key];
+				if (!circularMenu.Favorites.Contains(title))
 				{
-					_circularMenu.Favorites.Add(title);
-					_authStatus = "Added to favorites: " + title;
+					circularMenu.Favorites.Add(title);
+					authStatus = "Added to favorites: " + title;
 				}
 				else
 				{
-					_authStatus = "Already in favorites: " + title;
+					authStatus = "Already in favorites: " + title;
 				}
 			}
 			return;
@@ -478,7 +423,7 @@ public class TuioDemo : Form, TuioListener
 
 		if (action == "Home")
 		{
-			_circularMenu.Hide();
+			circularMenu.Hide();
 			StopAndUnlockSlides();
 			Transition(AppState.Idle, null, null, null, null);
 			return;
@@ -486,10 +431,10 @@ public class TuioDemo : Form, TuioListener
 
 		if (action == "Logout")
 		{
-			_circularMenu.Hide();
+			circularMenu.Hide();
 			StopAndUnlockSlides();
-			_visitorProfile = null;
-			_authStatus = "Logged out.";
+			visitorProfile = null;
+			authStatus = "Logged out.";
 			StartLoginFlow();
 			return;
 		}
@@ -497,12 +442,12 @@ public class TuioDemo : Form, TuioListener
 		if (action == "FavoritesShow" && !string.IsNullOrEmpty(payload))
 		{
 			string key;
-			if (_storyKeyByTitle.TryGetValue(payload, out key))
+			if (storyKeyByTitle.TryGetValue(payload, out key))
 			{
 				List<ContentSlide> slides;
-				if (_storySlidesByKey.TryGetValue(key, out slides))
+				if (storySlidesByKey.TryGetValue(key, out slides))
 				{
-					_circularMenu.Hide();
+					circularMenu.Hide();
 					StartLockedSlideShow(slides, SlideShowContext.MenuStory, key);
 				}
 			}
@@ -511,21 +456,21 @@ public class TuioDemo : Form, TuioListener
 
 		if (action == "FavoritesUnfavorite" && !string.IsNullOrEmpty(payload))
 		{
-			_circularMenu.Favorites.Remove(payload);
-			_authStatus = "Removed from favorites: " + payload;
-			_circularMenu.MoveDownAction();
+			circularMenu.Favorites.Remove(payload);
+			authStatus = "Removed from favorites: " + payload;
+			circularMenu.MoveDownAction();
 			return;
 		}
 
 		if ((action == "Favorites" || action == "Watched") && !string.IsNullOrEmpty(payload))
 		{
 			string key;
-			if (_storyKeyByTitle.TryGetValue(payload, out key))
+			if (storyKeyByTitle.TryGetValue(payload, out key))
 			{
 				List<ContentSlide> slides;
-				if (_storySlidesByKey.TryGetValue(key, out slides))
+				if (storySlidesByKey.TryGetValue(key, out slides))
 				{
-					_circularMenu.Hide();
+					circularMenu.Hide();
 					StartLockedSlideShow(slides, SlideShowContext.MenuStory, key);
 				}
 			}
@@ -534,46 +479,44 @@ public class TuioDemo : Form, TuioListener
 
 	private string GetCurrentFigureStoryKey()
 	{
-		if (_activeFig != null)
-			return "figure:" + _activeFig.SymbolId;
+		if (activeFig != null)
+			return "figure:" + activeFig.SymbolId;
 
-		if (!string.IsNullOrEmpty(_activeStoryKey) && _activeStoryKey.StartsWith("figure:", StringComparison.OrdinalIgnoreCase))
-			return _activeStoryKey;
+		if (!string.IsNullOrEmpty(activeStoryKey) && activeStoryKey.StartsWith("figure:", StringComparison.OrdinalIgnoreCase))
+			return activeStoryKey;
 
 		return null;
 	}
 
 	private void StopAndUnlockSlides()
 	{
-		_slideShow.Stop();
-		_slideshowLocked = false;
-		_waitForClearAfterLockedShow = false;
-		_lockedContext = SlideShowContext.None;
-		_activeStoryKey = null;
-		_currentSlide = null;
-		_slideElapsedMs = 0;
-		_activeObjectStory = null;
-		_objectHoldProgress = 0f;
+		slideShow.Stop();
+		slideshowLocked = false;
+		waitForClearAfterLockedShow = false;
+		lockedContext = SlideShowContext.None;
+		activeStoryKey = null;
+		currentSlide = null;
+		slideElapsedMs = 0;
+		activeObjectStory = null;
+		objectHoldProgress = 0f;
 	}
 
-	// ─────────────────────────────────────────────────────────────────────────
-	//  TuioListener
-	// ─────────────────────────────────────────────────────────────────────────
+	// TuioListener
 
 	public void addTuioObject(TuioObject o)
 	{
-		lock (_objectList) _objectList[o.SessionID] = o;
+		lock (objectList) objectList[o.SessionID] = o;
 	}
 
 	public void updateTuioObject(TuioObject o)
 	{
-		lock (_objectList)
-			if (_objectList.ContainsKey(o.SessionID)) _objectList[o.SessionID] = o;
+		lock (objectList)
+			if (objectList.ContainsKey(o.SessionID)) objectList[o.SessionID] = o;
 	}
 
 	public void removeTuioObject(TuioObject o)
 	{
-		lock (_objectList) _objectList.Remove(o.SessionID);
+		lock (objectList) objectList.Remove(o.SessionID);
 	}
 
 	public void addTuioCursor(TuioCursor c)    { }
@@ -583,71 +526,69 @@ public class TuioDemo : Form, TuioListener
 	public void updateTuioBlob(TuioBlob b)     { }
 	public void removeTuioBlob(TuioBlob b)     { }
 
-	/// <summary>Called once per TUIO frame — triggers state evaluation on UI thread.</summary>
+	/// <summary>Called once per TUIO frame; updates state on the UI thread.</summary>
 	public void refresh(TuioTime frameTime)
 	{
 		if (IsHandleCreated)
 			this.BeginInvoke(new Action(EvaluateState));
 	}
 
-	// ─────────────────────────────────────────────────────────────────────────
-	//  State machine
-	// ─────────────────────────────────────────────────────────────────────────
+	// State machine
 
 	private void EvaluateState()
 	{
-		if (!_isLoggedIn || _authInProgress) return;
-		if (_circularMenu.IsVisible) return;
+		if (!isLoggedIn || authInProgress) return;
+		if (circularMenu.IsVisible) return;
 
 		List<TuioObject> onTable;
-		lock (_objectList) onTable = new List<TuioObject>(_objectList.Values);
+		lock (objectList) onTable = new List<TuioObject>(objectList.Values);
 
 		// Keep only recognised figures
 		onTable = onTable.FindAll(o => o.SymbolID != CircularMenuMarkerSymbolId && MuseumData.Figures.ContainsKey(o.SymbolID));
 
 		// Keep current slideshow stable even when camera briefly loses tracking.
-		if (_slideshowLocked)
+		if (slideshowLocked)
 		{
 			return;
 		}
 
 		// After a locked slideshow ends, require the table to clear once to avoid
 		// instant re-trigger with the same markers still present.
-		if (_waitForClearAfterLockedShow)
+		if (waitForClearAfterLockedShow)
 		{
 			if (onTable.Count > 0)
 			{
 				return;
 			}
 
-			_waitForClearAfterLockedShow = false;
+			waitForClearAfterLockedShow = false;
 			Transition(AppState.Idle, null, null, null, null);
 			return;
 		}
 
 		if (onTable.Count == 0)
 		{
-			_recognitionTimer.Stop();
-			_recognitionProgress = 0f;
+			recognitionTimer.Stop();
+			recognitionProgress = 0f;
 			Transition(AppState.Idle, null, null, null, null);
 			return;
 		}
 
 		// If we are currently in Recognition, don't re-trigger it — let the
 		// countdown finish naturally. Only update the live object references.
-		if (_state == AppState.Recognition)
+		if (state == AppState.Recognition)
 		{
-			lock (_objectList)
+			lock (objectList)
 			{
 				if (onTable.Count >= 2)
 				{
-					_objA = onTable[0];
-					_objB = onTable[1];
+					objA = onTable[0];
+					objB = onTable[1];
 				}
 				else
 				{
-					_objA = onTable[0];
-					_objB = null;
+					objA = onTable[0];
+					objB = null;
 				}
 			}
 			Invalidate();
@@ -656,36 +597,36 @@ public class TuioDemo : Form, TuioListener
 
 		// Determine what the final state should be
 		AppState targetState;
-		FigureDef  pendingFig = null;
-		RelationshipDef pendingRel = null;
+		FigureDef  pendingFigureLocal = null;
+		RelationshipDef pendingRelationshipLocal = null;
 		TuioObject pendingA = null, pendingB = null;
 
 		if (onTable.Count == 1)
 		{
 			targetState = AppState.SingleFigure;
-			pendingFig  = MuseumData.Figures[onTable[0].SymbolID];
+			pendingFigureLocal  = MuseumData.Figures[onTable[0].SymbolID];
 			pendingA    = onTable[0];
 
-			if (_activeFigureSymbolId != pendingFig.SymbolId)
+			if (activeFigureSymbolId != pendingFigureLocal.SymbolId)
 			{
-				_activeFigureSymbolId = pendingFig.SymbolId;
-				_singleFigureIntroDone = false;
-				_activeObjectStory = null;
+				activeFigureSymbolId = pendingFigureLocal.SymbolId;
+				singleFigureIntroDone = false;
+				activeObjectStory = null;
 			}
 		}
 		else
 		{
-			_activeFigureSymbolId = -1;
-			_singleFigureIntroDone = false;
-			_activeObjectStory = null;
+			activeFigureSymbolId = -1;
+			singleFigureIntroDone = false;
+			activeObjectStory = null;
 
 			TuioObject a    = onTable[0], b = onTable[1];
 			FigureDef  defA = MuseumData.Figures[a.SymbolID];
 			FigureDef  defB = MuseumData.Figures[b.SymbolID];
-			pendingRel      = FindRelationship(a.SymbolID, b.SymbolID);
+			pendingRelationshipLocal = FindRelationship(a.SymbolID, b.SymbolID);
 			pendingA = a; pendingB = b;
 
-			if (pendingRel != null && FacingDetector.AreFacing(a, defA, b, defB))
+			if (pendingRelationshipLocal != null && FacingDetector.AreFacing(a, defA, b, defB))
 				targetState = AppState.PairFacing;
 			else
 				targetState = AppState.PairNotFacing;
@@ -693,81 +634,113 @@ public class TuioDemo : Form, TuioListener
 
 		// If markers were already active and state is stable, transition directly
 		// (avoids re-triggering recognition on every update while figures are on table)
-		bool wasIdle = (_state == AppState.Idle);
+		bool wasIdle = (state == AppState.Idle);
 		if (!wasIdle)
 		{
 			if (targetState == AppState.SingleFigure)
-				Transition(targetState, pendingFig, null, pendingA, pendingB);
+				Transition(targetState, pendingFigureLocal, null, pendingA, pendingB);
 			else
-				Transition(targetState, null, pendingRel, pendingA, pendingB);
+				Transition(targetState, null, pendingRelationshipLocal, pendingA, pendingB);
 			return;
 		}
 
 		// Coming from Idle: start the recognition countdown
-		_pendingState  = targetState;
-		_pendingFig    = pendingFig;
-		_pendingRel    = pendingRel;
-		_objA          = pendingA;
-		_objB          = pendingB;
-		_recognitionProgress = 0f;
-		_state         = AppState.Recognition;
-		_recognitionTimer.Start();
+		pendingState  = targetState;
+		pendingFig    = pendingFigureLocal;
+		pendingRel    = pendingRelationshipLocal;
+		objA          = pendingA;
+		objB          = pendingB;
+		recognitionProgress = 0f;
+		state         = AppState.Recognition;
+		recognitionTimer.Start();
 		Invalidate();
 	}
 
 	// Stored pending state used by recognition countdown
-	private AppState        _pendingState;
-	private FigureDef       _pendingFig;
-	private RelationshipDef _pendingRel;
+	private AppState        pendingState;
+	private FigureDef       pendingFig;
+	private RelationshipDef pendingRel;
 
 	private void OnRecognitionTick(object sender, EventArgs e)
 	{
-		_recognitionProgress += 50f / RecognitionMs;
-		if (_recognitionProgress >= 1f)
+		// Update pending state from live markers.
+		List<TuioObject> onTable;
+		lock (objectList) onTable = new List<TuioObject>(objectList.Values);
+		onTable = onTable.FindAll(o => o.SymbolID != CircularMenuMarkerSymbolId && MuseumData.Figures.ContainsKey(o.SymbolID));
+
+		if (onTable.Count == 0)
 		{
-			_recognitionProgress = 1f;
-			_recognitionTimer.Stop();
-			if (_pendingState == AppState.SingleFigure)
-				Transition(_pendingState, _pendingFig, null, _objA, _objB);
-			else
-				Transition(_pendingState, null, _pendingRel, _objA, _objB);
+			recognitionTimer.Stop();
+			recognitionProgress = 0f;
+			Transition(AppState.Idle, null, null, null, null);
+			return;
+		}
+
+		if (pendingState == AppState.SingleFigure)
+		{
+			if (onTable.Count != 1)
+			{
+				recognitionTimer.Stop();
+				recognitionProgress = 0f;
+				Transition(AppState.Idle, null, null, null, null);
+				return;
+			}
+
+			objA = onTable[0];
+			objB = null;
+
+			// Timer only runs while the figure remains in the centre zone.
+			if (!IsInCenterZone(objA))
+			{
+				recognitionProgress = 0f;
+				Invalidate();
+				return;
+			}
 		}
 		else
 		{
-			// Update pending state in case markers moved
-			List<TuioObject> onTable;
-			lock (_objectList) onTable = new List<TuioObject>(_objectList.Values);
-			onTable = onTable.FindAll(o => o.SymbolID != CircularMenuMarkerSymbolId && MuseumData.Figures.ContainsKey(o.SymbolID));
-			if (onTable.Count == 0) { _recognitionTimer.Stop(); _recognitionProgress = 0f; Transition(AppState.Idle, null, null, null, null); return; }
-			_objA = onTable[0];
-			_objB = onTable.Count >= 2 ? onTable[1] : null;
-			Invalidate();
+			objA = onTable[0];
+			objB = onTable.Count >= 2 ? onTable[1] : null;
 		}
+
+		recognitionProgress += 50f / RecognitionMs;
+		if (recognitionProgress >= 1f)
+		{
+			recognitionProgress = 1f;
+			recognitionTimer.Stop();
+			if (pendingState == AppState.SingleFigure)
+				Transition(pendingState, pendingFig, null, objA, objB);
+			else
+				Transition(pendingState, null, pendingRel, objA, objB);
+			return;
+		}
+
+		Invalidate();
 	}
 
 	private void Transition(AppState ns, FigureDef fig, RelationshipDef rel,
 							 TuioObject a, TuioObject b)
 	{
-		bool stateChanged  = ns  != _state;
-		bool figureChanged = fig != _activeFig;
-		bool relChanged    = rel != _activeRel;
+		bool stateChanged  = ns  != state;
+		bool figureChanged = fig != activeFig;
+		bool relChanged    = rel != activeRel;
 
-		_state     = ns;
-		_activeFig = fig;
-		_activeRel = rel;
-		_objA      = a;
-		_objB      = b;
+		state     = ns;
+		activeFig = fig;
+		activeRel = rel;
+		objA      = a;
+		objB      = b;
 
 		switch (ns)
 		{
 			case AppState.Idle:
 					if (stateChanged)
 					{
-						_slideShow.Stop();
-						_currentSlide = null;
-						_hoverObject = null;
-						_activeObjectStory = null;
-						_objectHoldProgress = 0f;
+						slideShow.Stop();
+						currentSlide = null;
+						hoverObject = null;
+						activeObjectStory = null;
+						objectHoldProgress = 0f;
 					}
 				break;
 			case AppState.Recognition:
@@ -778,18 +751,18 @@ public class TuioDemo : Form, TuioListener
 						if (fig != null)
 							AddWatchedIfExists("figure:" + fig.SymbolId);
 
-						_hoverObject = null;
-						_activeObjectStory = null;
-						_objectHoldProgress = 0f;
+						hoverObject = null;
+						activeObjectStory = null;
+						objectHoldProgress = 0f;
 
 						if (fig.SceneObjects != null && fig.SceneObjects.Count > 0)
 						{
-							if (!_singleFigureIntroDone)
+							if (!singleFigureIntroDone)
 								StartLockedSlideShow(fig.SoloSlides, SlideShowContext.SingleFigureIntro, "figure:" + fig.SymbolId);
 							else
 							{
-								_slideShow.Stop();
-								_currentSlide = null;
+								slideShow.Stop();
+								currentSlide = null;
 							}
 						}
 						else
@@ -801,11 +774,11 @@ public class TuioDemo : Form, TuioListener
 			case AppState.PairNotFacing:
 					if (stateChanged)
 					{
-						_slideShow.Stop();
-						_currentSlide = null;
-						_hoverObject = null;
-						_activeObjectStory = null;
-						_objectHoldProgress = 0f;
+						slideShow.Stop();
+						currentSlide = null;
+						hoverObject = null;
+						activeObjectStory = null;
+						objectHoldProgress = 0f;
 					}
 				break;
 			case AppState.PairFacing:
@@ -833,115 +806,113 @@ public class TuioDemo : Form, TuioListener
 	{
 		if (slides == null || slides.Count == 0) return;
 
-		_slideshowLocked = true;
-		_waitForClearAfterLockedShow = false;
-		_lockedContext = context;
-		_activeStoryKey = storyKey;
-		_slideElapsedMs = 0;
-		_slideShow.StartSlideShow(slides, true);
+		slideshowLocked = true;
+		waitForClearAfterLockedShow = false;
+		lockedContext = context;
+		activeStoryKey = storyKey;
+		slideElapsedMs = 0;
+		slideShow.StartSlideShow(slides, true);
 	}
 
 	private void OnSlideShowCompleted()
 	{
-		_slideshowLocked = false;
-		_slideElapsedMs = 0;
-		_currentSlide = null;
-		_hoverObject = null;
-		_objectHoldProgress = 0f;
+		slideshowLocked = false;
+		slideElapsedMs = 0;
+		currentSlide = null;
+		hoverObject = null;
+		objectHoldProgress = 0f;
 
-		if (_lockedContext == SlideShowContext.SingleFigureIntro)
+		if (lockedContext == SlideShowContext.SingleFigureIntro)
 		{
-			_singleFigureIntroDone = true;
-			_activeObjectStory = null;
-			_lockedContext = SlideShowContext.None;
+			singleFigureIntroDone = true;
+			activeObjectStory = null;
+			lockedContext = SlideShowContext.None;
 			// Stay in SingleFigure so static object scene is shown next.
 			Invalidate();
 			return;
 		}
 
-		if (_lockedContext == SlideShowContext.SceneObjectStory)
+		if (lockedContext == SlideShowContext.SceneObjectStory)
 		{
-			_activeObjectStory = null;
-			_lockedContext = SlideShowContext.None;
+			activeObjectStory = null;
+			lockedContext = SlideShowContext.None;
 			// Return to object selection scene in same figure mode.
 			Invalidate();
 			return;
 		}
 
-		if (_lockedContext == SlideShowContext.MenuStory)
+		if (lockedContext == SlideShowContext.MenuStory)
 		{
-			_lockedContext = SlideShowContext.None;
-			_activeStoryKey = null;
+			lockedContext = SlideShowContext.None;
+			activeStoryKey = null;
 			Transition(AppState.Idle, null, null, null, null);
 			Invalidate();
 			return;
 		}
 
 		// Relationship: keep previous behavior (finish then require clear once).
-		_waitForClearAfterLockedShow = true;
-		_lockedContext = SlideShowContext.None;
-		_activeStoryKey = null;
-		_activeObjectStory = null;
+		waitForClearAfterLockedShow = true;
+		lockedContext = SlideShowContext.None;
+		activeStoryKey = null;
+		activeObjectStory = null;
 		Transition(AppState.Idle, null, null, null, null);
 	}
 
-	// ─────────────────────────────────────────────────────────────────────────
-	//  Animation timer
-	// ─────────────────────────────────────────────────────────────────────────
+	// Animation timer
 
 	private void OnAnimTick(object sender, EventArgs e)
 	{
-		_idlePhase = (_idlePhase + 1.5f) % 360f;
+		idlePhase = (idlePhase + 1.5f) % 360f;
 		UpdateCircularMenuInput();
 
-		if (_slideShow != null && _slideShow.IsRunning && _currentSlide != null)
-			_slideElapsedMs += _animTimer.Interval;
+		if (slideShow != null && slideShow.IsRunning && currentSlide != null)
+			slideElapsedMs += animTimer.Interval;
 
-		if (_state == AppState.SingleFigure)
+		if (state == AppState.SingleFigure)
 			UpdateSingleFigureObjectSelection();
 
-		if (_fadingIn)
+		if (fadingIn)
 		{
-			_fadeAlpha = Math.Min(1f, _fadeAlpha + 0.08f);
-			if (_fadeAlpha >= 1f) _fadingIn = false;
+			fadeAlpha = Math.Min(1f, fadeAlpha + 0.08f);
+			if (fadeAlpha >= 1f) fadingIn = false;
 		}
 
-		if (_state == AppState.Idle || _state == AppState.Recognition ||
-			_state == AppState.SingleFigure || _state == AppState.PairNotFacing || _fadingIn || _circularMenu.IsVisible || !_isLoggedIn)
+		if (state == AppState.Idle || state == AppState.Recognition ||
+			state == AppState.SingleFigure || state == AppState.PairNotFacing || fadingIn || circularMenu.IsVisible || !isLoggedIn)
 			Invalidate();
 	}
 
 	private void UpdateSingleFigureObjectSelection()
 	{
-		if (_circularMenu.IsVisible) return;
+		if (circularMenu.IsVisible) return;
 
-		if (_activeFig == null || _objA == null) return;
-		if (_activeFig.SceneObjects == null || _activeFig.SceneObjects.Count == 0) return;
+		if (activeFig == null || objA == null) return;
+		if (activeFig.SceneObjects == null || activeFig.SceneObjects.Count == 0) return;
 
 		// Only allow object selection after intro story has completed.
-		if (!_singleFigureIntroDone)
+		if (!singleFigureIntroDone)
 		{
-			_hoverObject = null;
-			_objectHoldProgress = 0f;
+			hoverObject = null;
+			objectHoldProgress = 0f;
 			return;
 		}
 
 		// Ignore orientation-based triggers while any locked slideshow is playing.
-		if (_slideshowLocked)
+		if (slideshowLocked)
 		{
-			_hoverObject = null;
-			_objectHoldProgress = 0f;
+			hoverObject = null;
+			objectHoldProgress = 0f;
 			return;
 		}
 
 		SceneObjectDef bestObj = null;
 		float bestDiff = float.MaxValue;
 
-		for (int i = 0; i < _activeFig.SceneObjects.Count; i++)
+		for (int i = 0; i < activeFig.SceneObjects.Count; i++)
 		{
-			SceneObjectDef so = _activeFig.SceneObjects[i];
-			float dir = (float)Math.Atan2(so.Y - _objA.Y, so.X - _objA.X);
-			float eff = _objA.Angle + (_activeFig != null ? _activeFig.FacingAngleOffset : 0f);
+			SceneObjectDef so = activeFig.SceneObjects[i];
+			float dir = (float)Math.Atan2(so.Y - objA.Y, so.X - objA.X);
+			float eff = objA.Angle + (activeFig != null ? activeFig.FacingAngleOffset : 0f);
 			float diff = AbsAngleDiff(eff, dir);
 
 			if (diff < bestDiff)
@@ -953,43 +924,43 @@ public class TuioDemo : Form, TuioListener
 
 		if (bestObj != null && bestDiff <= ObjectFacingThresholdRad)
 		{
-			if (_hoverObject != bestObj)
+			if (hoverObject != bestObj)
 			{
-				_hoverObject = bestObj;
-				_objectHoldProgress = 0f;
+				hoverObject = bestObj;
+				objectHoldProgress = 0f;
 			}
 			else
 			{
-				_objectHoldProgress = Math.Min(1f, _objectHoldProgress + (_animTimer.Interval / (float)ObjectHoldMs));
-				if (_objectHoldProgress >= 1f && _activeObjectStory != bestObj)
+				objectHoldProgress = Math.Min(1f, objectHoldProgress + (animTimer.Interval / (float)ObjectHoldMs));
+				if (objectHoldProgress >= 1f && activeObjectStory != bestObj)
 				{
-					_activeObjectStory = bestObj;
-					if (_activeFig != null && bestObj != null)
+					activeObjectStory = bestObj;
+					if (activeFig != null && bestObj != null)
 					{
-						string objectKey = "object:" + _activeFig.SymbolId + ":" + bestObj.Name;
-						string objectTitle = "Object: " + _activeFig.Name + " - " + bestObj.Name;
+						string objectKey = "object:" + activeFig.SymbolId + ":" + bestObj.Name;
+						string objectTitle = "Object: " + activeFig.Name + " - " + bestObj.Name;
 						RegisterStory(objectKey, objectTitle, bestObj.StorySlides);
 						AddWatchedIfExists(objectKey);
 					}
 					if (bestObj.StorySlides != null && bestObj.StorySlides.Count > 0)
 						StartLockedSlideShow(bestObj.StorySlides, SlideShowContext.SceneObjectStory,
-							"object:" + _activeFig.SymbolId + ":" + bestObj.Name);
+							"object:" + activeFig.SymbolId + ":" + bestObj.Name);
 				}
 			}
 		}
 		else
 		{
-			_hoverObject = null;
-			_objectHoldProgress = Math.Max(0f, _objectHoldProgress - 0.1f);
+			hoverObject = null;
+			objectHoldProgress = Math.Max(0f, objectHoldProgress - 0.1f);
 		}
 	}
 
 	private void UpdateCircularMenuInput()
 	{
-		if (!_isLoggedIn || _authInProgress) return;
+		if (!isLoggedIn || authInProgress) return;
 
 		TuioObject marker = GetSingleMenuMarker();
-		List<HandData> hands = _latestHands != null ? new List<HandData>(_latestHands) : new List<HandData>();
+		List<HandData> hands = latestHands != null ? new List<HandData>(latestHands) : new List<HandData>();
 
 		if (hands.Count > 0)
 		{
@@ -999,97 +970,97 @@ public class TuioDemo : Form, TuioListener
 
 			if (allClosed)
 			{
-				_circularMenu.Hide();
-				_hasLastMenuMarkerY = false;
-				_menuGestureArmed = true;
-				_menuGestureAccumY = 0f;
+				circularMenu.Hide();
+				hasLastMenuMarkerY = false;
+				menuGestureArmed = true;
+				menuGestureAccumY = 0f;
 				return;
 			}
 		}
 
-		// Marker-first UX: placing marker ID 0 opens the menu immediately.
-		if (!_circularMenu.IsVisible && marker != null)
+		// Open the menu immediately when marker ID 0 appears.
+		if (!circularMenu.IsVisible && marker != null)
 		{
-			_circularMenu.Show();
-			_menuGestureArmed = true;
-			_menuGestureAccumY = 0f;
-			_hasLastMenuMarkerY = true;
-			_lastMenuMarkerY = marker.Y;
+			circularMenu.Show();
+			menuGestureArmed = true;
+			menuGestureAccumY = 0f;
+			hasLastMenuMarkerY = true;
+			lastMenuMarkerY = marker.Y;
 		}
 
 		// If menu was opened by marker control, hide when marker is removed.
-		if (_circularMenu.IsVisible && marker == null && hands.Count == 0)
+		if (circularMenu.IsVisible && marker == null && hands.Count == 0)
 		{
-			_circularMenu.Hide();
-			_hasLastMenuMarkerY = false;
-			_menuGestureArmed = true;
-			_menuGestureAccumY = 0f;
+			circularMenu.Hide();
+			hasLastMenuMarkerY = false;
+			menuGestureArmed = true;
+			menuGestureAccumY = 0f;
 			return;
 		}
 
-		if (!_circularMenu.IsVisible && DetectWaveHi(hands))
+		if (!circularMenu.IsVisible && DetectWaveHi(hands))
 		{
-			_circularMenu.Show();
-			_menuGestureArmed = true;
-			_menuGestureAccumY = 0f;
-			_hasLastMenuMarkerY = false;
+			circularMenu.Show();
+			menuGestureArmed = true;
+			menuGestureAccumY = 0f;
+			hasLastMenuMarkerY = false;
 			return;
 		}
 
-		if (!_circularMenu.IsVisible) return;
+		if (!circularMenu.IsVisible) return;
 
 		// Hide/show Favorite entry dynamically based on whether a figure context exists.
-		_circularMenu.ShowFavorite = !string.IsNullOrEmpty(GetCurrentFigureStoryKey());
+		circularMenu.ShowFavorite = !string.IsNullOrEmpty(GetCurrentFigureStoryKey());
 
 		if (marker != null)
 		{
 			float a = marker.Angle;
-			_circularMenu.UpdateRotation(a);
+			circularMenu.UpdateRotation(a);
 
-			if (!_hasLastMenuMarkerY)
+			if (!hasLastMenuMarkerY)
 			{
-				_hasLastMenuMarkerY = true;
-				_lastMenuMarkerY = marker.Y;
-				_menuGestureAccumY = 0f;
+				hasLastMenuMarkerY = true;
+				lastMenuMarkerY = marker.Y;
+				menuGestureAccumY = 0f;
 			}
 			else
 			{
-				float frameDy = marker.Y - _lastMenuMarkerY;
-				_menuGestureAccumY += frameDy;
+				float frameDy = marker.Y - lastMenuMarkerY;
+				menuGestureAccumY += frameDy;
 
 				// Rearm gestures when marker returns near neutral vertical band.
 				if (Math.Abs(marker.Y - 0.5f) <= MenuMoveNeutralBandY)
 				{
-					_menuGestureArmed = true;
-					_menuGestureAccumY = 0f;
+					menuGestureArmed = true;
+					menuGestureAccumY = 0f;
 				}
 
 				// upDelta is positive when marker moves UP (Y decreases towards top of screen).
 				// downDelta is positive when marker moves DOWN (Y increases towards bottom of screen).
-				float upDelta = MenuUpIsPositiveY ? (-_menuGestureAccumY) : _menuGestureAccumY;
+				float upDelta = MenuUpIsPositiveY ? (-menuGestureAccumY) : menuGestureAccumY;
 				float downDelta = -upDelta;
 
-				if (_menuGestureArmed && upDelta >= MenuMoveTriggerDeltaY)
+				if (menuGestureArmed && upDelta >= MenuMoveTriggerDeltaY)
 				{
-					_circularMenu.MoveUpAction();
-					_menuGestureArmed = false;
-					_menuGestureAccumY = 0f;
+					circularMenu.MoveUpAction();
+					menuGestureArmed = false;
+					menuGestureAccumY = 0f;
 				}
-				else if (_menuGestureArmed && downDelta >= MenuMoveTriggerDeltaY)
+				else if (menuGestureArmed && downDelta >= MenuMoveTriggerDeltaY)
 				{
-					_circularMenu.MoveDownAction();
-					_menuGestureArmed = false;
-					_menuGestureAccumY = 0f;
+					circularMenu.MoveDownAction();
+					menuGestureArmed = false;
+					menuGestureAccumY = 0f;
 				}
 
-				_lastMenuMarkerY = marker.Y;
+				lastMenuMarkerY = marker.Y;
 			}
 		}
 		else
 		{
-			_menuGestureArmed = true;
-			_menuGestureAccumY = 0f;
-			_hasLastMenuMarkerY = false;
+			menuGestureArmed = true;
+			menuGestureAccumY = 0f;
+			hasLastMenuMarkerY = false;
 		}
 
 		if (hands.Count > 0)
@@ -1100,15 +1071,15 @@ public class TuioDemo : Form, TuioListener
 				float dx = controlHand.PalmPosition.X - CamW / 2f;
 				float dy = controlHand.PalmPosition.Y - CamH / 2f;
 				float handAngle = (float)Math.Atan2(dy, dx);
-				_circularMenu.UpdateRotation(handAngle);
+				circularMenu.UpdateRotation(handAngle);
 			}
 
 			if (DetectTouch(hands))
 			{
-				if ((DateTime.Now - _lastTouchTime).TotalMilliseconds > 550)
+				if ((DateTime.Now - lastTouchTime).TotalMilliseconds > 550)
 				{
-					_circularMenu.MoveUpAction();
-					_lastTouchTime = DateTime.Now;
+					circularMenu.MoveUpAction();
+					lastTouchTime = DateTime.Now;
 				}
 			}
 		}
@@ -1117,7 +1088,7 @@ public class TuioDemo : Form, TuioListener
 	private TuioObject GetSingleMenuMarker()
 	{
 		List<TuioObject> onTable;
-		lock (_objectList) onTable = new List<TuioObject>(_objectList.Values);
+		lock (objectList) onTable = new List<TuioObject>(objectList.Values);
 		onTable = onTable.FindAll(o => o.SymbolID == CircularMenuMarkerSymbolId);
 		if (onTable.Count == 1) return onTable[0];
 		return null;
@@ -1145,24 +1116,24 @@ public class TuioDemo : Form, TuioListener
 
 			string key = h.Hand ?? "Unknown";
 			DateTime now = DateTime.Now;
-			if (_lastPalmX.ContainsKey(key))
+			if (lastPalmX.ContainsKey(key))
 			{
-				int dx = Math.Abs(h.PalmPosition.X - _lastPalmX[key]);
-				double dt = (now - _lastPalmTime[key]).TotalMilliseconds;
+				int dx = Math.Abs(h.PalmPosition.X - lastPalmX[key]);
+				double dt = (now - lastPalmTime[key]).TotalMilliseconds;
 				if (dt < 450 && dx > 110)
 				{
-					if ((now - _lastWaveTime).TotalMilliseconds > 800)
+					if ((now - lastWaveTime).TotalMilliseconds > 800)
 					{
-						_lastWaveTime = now;
-						_lastPalmX[key] = h.PalmPosition.X;
-						_lastPalmTime[key] = now;
+						lastWaveTime = now;
+						lastPalmX[key] = h.PalmPosition.X;
+						lastPalmTime[key] = now;
 						return true;
 					}
 				}
 			}
 
-			_lastPalmX[key] = h.PalmPosition.X;
-			_lastPalmTime[key] = now;
+			lastPalmX[key] = h.PalmPosition.X;
+			lastPalmTime[key] = now;
 		}
 
 		return false;
@@ -1176,9 +1147,7 @@ public class TuioDemo : Form, TuioListener
 		return Math.Abs(d);
 	}
 
-	// ─────────────────────────────────────────────────────────────────────────
-	//  Rendering — top level
-	// ─────────────────────────────────────────────────────────────────────────
+	// Rendering: top level
 
 	protected override void OnPaintBackground(PaintEventArgs e) { /* suppress */ }
 
@@ -1189,11 +1158,11 @@ public class TuioDemo : Form, TuioListener
 		g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
 		g.InterpolationMode = InterpolationMode.HighQualityBicubic;
 
-		Color bgColor = _visitorProfile != null ? _themePrimary : CBg;
+		Color bgColor = visitorProfile != null ? themePrimary : CBg;
 		using (var bg = new SolidBrush(bgColor))
-			g.FillRectangle(bg, 0, 0, _W, _H);
+			g.FillRectangle(bg, 0, 0, W, H);
 
-		if (!_isLoggedIn || _authInProgress)
+		if (!isLoggedIn || authInProgress)
 		{
 			DrawLoginScreen(g);
 			DrawHandOverlay(g);
@@ -1202,7 +1171,7 @@ public class TuioDemo : Form, TuioListener
 
 		DrawStarField(g);
 
-		switch (_state)
+		switch (state)
 		{
 			case AppState.Idle:          DrawIdle(g);          break;
 			case AppState.Recognition:   DrawRecognition(g);   break;
@@ -1211,8 +1180,8 @@ public class TuioDemo : Form, TuioListener
 			case AppState.PairFacing:    DrawPairFacing(g);    break;
 		}
 
-		if (_circularMenu.IsVisible)
-			_circularMenu.Draw(g, _W, _H, _themeSecondary, _themeTertiary, _fontSubtitle, _fontSmall);
+		if (circularMenu.IsVisible)
+			circularMenu.Draw(g, W, H, themeSecondary, themeTertiary, fontSubtitle, fontSmall);
 
 		// Hand overlay always drawn on top regardless of app state
 		DrawHandOverlay(g);
@@ -1221,86 +1190,90 @@ public class TuioDemo : Form, TuioListener
 	private void DrawLoginScreen(Graphics g)
 	{
 		using (var veil = new SolidBrush(Color.FromArgb(170, 0, 0, 0)))
-			g.FillRectangle(veil, 0, 0, _W, _H);
+			g.FillRectangle(veil, 0, 0, W, H);
 
-		DrawCentered(g, "LOGIN WITH FACE ID", _fontTitle, _themeSecondary,
-			new RectangleF(0, _H / 2f - 150, _W, 66));
+		DrawCentered(g, "LOGIN WITH FACE ID", fontTitle, themeSecondary,
+			new RectangleF(0, H / 2f - 150, W, 66));
 
 		DrawCentered(g, "Two Factor Authentication: Face ID + Bluetooth",
-			_fontSubtitle, Color.FromArgb(220, CPapyrus),
-			new RectangleF(40, _H / 2f - 78, _W - 80, 40));
+			fontSubtitle, Color.FromArgb(220, CPapyrus),
+			new RectangleF(40, H / 2f - 78, W - 80, 40));
 
-		DrawCentered(g, _authStatus, _fontBody, Color.White,
-			new RectangleF(40, _H / 2f - 8, _W - 80, 44));
+		DrawCentered(g, authStatus, fontBody, Color.White,
+			new RectangleF(40, H / 2f - 8, W - 80, 44));
 
-		DrawCentered(g, "Press L to retry login if needed", _fontSmall, Color.FromArgb(190, CPapyrus),
-			new RectangleF(40, _H / 2f + 48, _W - 80, 32));
+		DrawCentered(g, "Press L to retry login if needed", fontSmall, Color.FromArgb(190, CPapyrus),
+			new RectangleF(40, H / 2f + 48, W - 80, 32));
 
 		DrawOuterBorder(g);
 	}
 
-	// ─────────────────────────────────────────────────────────────────────────
-	//  Rendering — IDLE
-	// ─────────────────────────────────────────────────────────────────────────
+	// Rendering: idle
 
 	private void DrawIdle(Graphics g)
 	{
-		DrawAnimatedSunRing(g, _W / 2, _H / 2, _idlePhase);
-		DrawEyeOfRa(g, _W / 2, _H / 2);
+		DrawAnimatedSunRing(g, W / 2, H / 2, idlePhase);
+		DrawEyeOfRa(g, W / 2, H / 2);
 
 		DrawCentered(g, "SMART GRAND EGYPTIAN MUSEUM",
-			_fontTitle, CGold,
-			new RectangleF(0, _H / 2 - 168, _W, 60));
+			fontTitle, CGold,
+			new RectangleF(0, H / 2 - 168, W, 60));
 
 		DrawCentered(g, "Interactive Tangible Table Experience",
-			_fontSubtitle, CPapyrus,
-			new RectangleF(0, _H / 2 - 98, _W, 38));
+			fontSubtitle, CPapyrus,
+			new RectangleF(0, H / 2 - 98, W, 38));
 
-		DrawGoldDivider(g, _W / 2 - 260, _H / 2 - 46, 520);
+		DrawGoldDivider(g, W / 2 - 260, H / 2 - 46, 520);
 
 		DrawCentered(g,
 			"Place a figure on the table to begin your journey through ancient Egypt",
-			_fontHint, Color.FromArgb(210, CPapyrus),
-			new RectangleF(60, _H / 2 + 20, _W - 120, 38));
+			fontHint, Color.FromArgb(210, CPapyrus),
+			new RectangleF(60, H / 2 + 20, W - 120, 38));
 
 		DrawCentered(g,
 			"Place two figures facing each other to discover their historical connection",
-			_fontHint, Color.FromArgb(145, CPapyrus),
-			new RectangleF(60, _H / 2 + 68, _W - 120, 36));
+			fontHint, Color.FromArgb(145, CPapyrus),
+			new RectangleF(60, H / 2 + 68, W - 120, 36));
 
 		DrawOuterBorder(g);
 	}
 
-	// ─────────────────────────────────────────────────────────────────────────
-	//  Rendering — RECOGNITION
-	// ─────────────────────────────────────────────────────────────────────────
+	// Rendering: recognition
 
 	private void DrawRecognition(Graphics g)
 	{
 		// Dim background overlay
 		using (var bg = new SolidBrush(Color.FromArgb(200, CBg)))
-			g.FillRectangle(bg, 0, 0, _W, _H);
+			g.FillRectangle(bg, 0, 0, W, H);
+
+		bool singleFigureMode = objB == null;
+		bool isSingleInCenter = singleFigureMode && objA != null && IsInCenterZone(objA);
+
+		if (singleFigureMode)
+			DrawCenterTarget(g, isSingleInCenter);
 
 		// Draw markers on the table surface
-		if (_objA != null) DrawMarkerOnSurface(g, _objA);
-		if (_objB != null) DrawMarkerOnSurface(g, _objB);
+		if (objA != null) DrawMarkerOnSurface(g, objA);
+		if (objB != null) DrawMarkerOnSurface(g, objB);
 
 		// Title
-		string title = (_objB == null)
-			? GetName(_objA) + " detected"
-			: GetName(_objA) + "  &  " + GetName(_objB) + " detected";
-		DrawCentered(g, title.ToUpper(), _fontTitle, CGold,
-			new RectangleF(0, 24, _W, 64));
+		string title = (objB == null)
+			? GetName(objA) + " detected"
+			: GetName(objA) + "  &  " + GetName(objB) + " detected";
+		DrawCentered(g, title.ToUpper(), fontTitle, CGold,
+			new RectangleF(0, 24, W, 64));
 
 		// Hint line
-		string hint = (_objB == null)
-			? "Rotate the figure to face a direction, then wait for the story to begin"
+		string hint = (objB == null)
+			? (isSingleInCenter
+				? "Hold the figure in the center for 3 seconds to start"
+				: "Move the figure to the center and hold for 3 seconds")
 			: "Rotate the figures to face each other to discover their connection";
-		DrawCentered(g, hint, _fontHint, Color.FromArgb(210, CPapyrus),
-			new RectangleF(60, 96, _W - 120, 36));
+		DrawCentered(g, hint, fontHint, Color.FromArgb(210, CPapyrus),
+			new RectangleF(60, 96, W - 120, 36));
 
 		// Circular countdown bar at centre-bottom
-		DrawCountdownArc(g, _W / 2, _H - 72, 38, _recognitionProgress);
+		DrawCountdownArc(g, W / 2, H - 72, 38, recognitionProgress);
 
 		DrawOuterBorder(g);
 	}
@@ -1344,7 +1317,7 @@ public class TuioDemo : Form, TuioListener
 			using (var fill = new SolidBrush(Color.FromArgb(80, accent)))
 				g.FillEllipse(fill, sx - R, sy - R, R * 2, R * 2);
 
-			DrawCentered(g, obj.SymbolID.ToString(), _fontSmall, Color.White,
+			DrawCentered(g, obj.SymbolID.ToString(), fontSmall, Color.White,
 				new RectangleF(sx - R, sy - R, R * 2, R * 2));
 		}
 
@@ -1356,20 +1329,20 @@ public class TuioDemo : Form, TuioListener
 			g.DrawLine(arrowPen, sx, sy, ax, ay);
 
 		// Name label below
-		DrawCentered(g, name, _fontSubtitle, accent,
+		DrawCentered(g, name, fontSubtitle, accent,
 			new RectangleF(sx - 140, sy + R + 8, 280, 34));
 
 		// Period label
 		if (def != null)
-			DrawCentered(g, def.Period, _fontSmall, Color.FromArgb(190, CPapyrus),
+			DrawCentered(g, def.Period, fontSmall, Color.FromArgb(190, CPapyrus),
 				new RectangleF(sx - 140, sy + R + 42, 280, 22));
 	}
 
 	private void MapSurfacePoint(float nx, float ny, out int sx, out int sy)
 	{
 		int margin = 80;
-		sx = margin + (int)(nx * (_W - margin * 2));
-		sy = margin + (int)(ny * (_H - margin * 2));
+		sx = margin + (int)(nx * (W - margin * 2));
+		sy = margin + (int)(ny * (H - margin * 2));
 	}
 
 	private void DrawCountdownArc(Graphics g, int cx, int cy, int r, float progress)
@@ -1389,8 +1362,35 @@ public class TuioDemo : Form, TuioListener
 
 		// Percentage text
 		int pct = (int)(progress * 100);
-		DrawCentered(g, pct + "%", _fontSmall, CGoldLight,
+		DrawCentered(g, pct + "%", fontSmall, CGoldLight,
 			new RectangleF(cx - r, cy - r, r * 2, r * 2));
+	}
+
+	private bool IsInCenterZone(TuioObject obj)
+	{
+		if (obj == null) return false;
+		return Math.Abs(obj.X - 0.5f) <= CenterZoneHalfWidth &&
+			   Math.Abs(obj.Y - 0.5f) <= CenterZoneHalfHeight;
+	}
+
+	private void DrawCenterTarget(Graphics g, bool active)
+	{
+		int cx = W / 2;
+		int cy = H / 2;
+		int r = 78;
+		Color target = active ? Color.FromArgb(220, 80, 220, 120) : Color.FromArgb(170, 220, 190, 90);
+
+		using (var p1 = new Pen(Color.FromArgb(120, target), 2f))
+			g.DrawEllipse(p1, cx - r - 18, cy - r - 18, (r + 18) * 2, (r + 18) * 2);
+
+		using (var p2 = new Pen(target, 3f))
+			g.DrawEllipse(p2, cx - r, cy - r, r * 2, r * 2);
+
+		using (var h = new Pen(Color.FromArgb(150, target), 2f))
+		{
+			g.DrawLine(h, cx - r - 28, cy, cx + r + 28, cy);
+			g.DrawLine(h, cx, cy - r - 28, cx, cy + r + 28);
+		}
 	}
 
 	private void DrawHeaderProgressBar(Graphics g, int x, int y, int width, int height, float progress, Color accent)
@@ -1412,58 +1412,56 @@ public class TuioDemo : Form, TuioListener
 			g.DrawRectangle(border, x, y, width, height);
 	}
 
-	// ─────────────────────────────────────────────────────────────────────────
-	//  Rendering — SINGLE FIGURE
-	// ─────────────────────────────────────────────────────────────────────────
+	// Rendering: single figure
 
 	private void DrawSingleFigure(Graphics g)
 	{
-		if (_activeFig == null) return;
-		Color accent = _activeFig.AccentColor;
+		if (activeFig == null) return;
+		Color accent = activeFig.AccentColor;
 
 		int headerH = 95;
 		DrawTopGradientBar(g, headerH,
 			Color.FromArgb(180, ScaleBrightness(accent, 0.4f)));
 
-		DrawCentered(g, _activeFig.Name.ToUpper(), _fontTitle, accent,
-			new RectangleF(0, 8, _W, 58));
+		DrawCentered(g, activeFig.Name.ToUpper(), fontTitle, accent,
+			new RectangleF(0, 8, W, 58));
 
-		DrawCentered(g, _activeFig.Period + "   \u00B7   " + _activeFig.ShortDescription,
-			_fontSmall, Color.FromArgb(200, CPapyrus),
-			new RectangleF(0, 68, _W, 24));
+		DrawCentered(g, activeFig.Period + "   \u00B7   " + activeFig.ShortDescription,
+			fontSmall, Color.FromArgb(200, CPapyrus),
+			new RectangleF(0, 68, W, 24));
 
 		DrawHeaderSep(g, headerH + 6, accent);
 
-		var contentArea = new Rectangle(50, headerH + 22, _W - 100, _H - headerH - 70);
+		var contentArea = new Rectangle(50, headerH + 22, W - 100, H - headerH - 70);
 
-		bool hasSceneObjects = _activeFig.SceneObjects != null && _activeFig.SceneObjects.Count > 0;
-		bool showIntroOnly = hasSceneObjects && !_singleFigureIntroDone;
+		bool hasSceneObjects = activeFig.SceneObjects != null && activeFig.SceneObjects.Count > 0;
+		bool showIntroOnly = hasSceneObjects && !singleFigureIntroDone;
 
 		if (showIntroOnly)
 		{
-			if (_currentSlide != null)
-				DrawSlide(g, _currentSlide, contentArea, accent, _fadeAlpha);
+			if (currentSlide != null)
+				DrawSlide(g, currentSlide, contentArea, accent, fadeAlpha);
 		}
 		else if (hasSceneObjects)
 		{
-			bool isObjectStoryPlaying = _lockedContext == SlideShowContext.SceneObjectStory && _currentSlide != null;
+			bool isObjectStoryPlaying = lockedContext == SlideShowContext.SceneObjectStory && currentSlide != null;
 			if (isObjectStoryPlaying)
 			{
 				// Match intro/relationship style: story slide only, no scene visible behind.
-				DrawSlide(g, _currentSlide, contentArea, accent, _fadeAlpha);
+				DrawSlide(g, currentSlide, contentArea, accent, fadeAlpha);
 			}
 			else
 			{
-				DrawSingleFigureObjectScene(g, contentArea, _activeFig);
+				DrawSingleFigureObjectScene(g, contentArea, activeFig);
 			}
 		}
-		else if (_currentSlide != null)
+		else if (currentSlide != null)
 		{
-			DrawSlide(g, _currentSlide, contentArea, accent, _fadeAlpha);
+			DrawSlide(g, currentSlide, contentArea, accent, fadeAlpha);
 		}
 
-		DrawProgressDots(g, _slideShow.CurrentIndex, _slideShow.TotalSlides,
-						 _W / 2, _H - 26, accent);
+		DrawProgressDots(g, slideShow.CurrentIndex, slideShow.TotalSlides,
+						 W / 2, H - 26, accent);
 		DrawOuterBorder(g);
 	}
 
@@ -1475,11 +1473,11 @@ public class TuioDemo : Form, TuioListener
 		for (int i = 0; i < fig.SceneObjects.Count; i++)
 			DrawSceneObject(g, fig.SceneObjects[i], fig.AccentColor);
 
-		if (_objA != null)
-			DrawMarkerOnSurface(g, _objA);
+		if (objA != null)
+			DrawMarkerOnSurface(g, objA);
 
 		string hint = "Rotate " + fig.Name + " toward an object and hold for 1.5 seconds";
-		DrawCentered(g, hint, _fontHint, Color.White,
+		DrawCentered(g, hint, fontHint, Color.White,
 			new RectangleF(area.X + 20, area.Bottom - 44, area.Width - 40, 28));
 	}
 
@@ -1502,22 +1500,22 @@ public class TuioDemo : Form, TuioListener
 		{
 			using (var miss = new SolidBrush(Color.FromArgb(120, 20, 20, 20)))
 				g.FillRectangle(miss, box);
-			DrawCentered(g, "[PNG]", _fontSmall, Color.White,
+			DrawCentered(g, "[PNG]", fontSmall, Color.White,
 				new RectangleF(box.X, box.Y + box.Height / 2f - 11, box.Width, 22));
 		}
 
-		bool isHover = (_hoverObject == so);
-		bool isActive = (_activeObjectStory == so);
+		bool isHover = (hoverObject == so);
+		bool isActive = (activeObjectStory == so);
 		Color frame = isActive ? CGreen : (isHover ? CGoldLight : accent);
 
 		using (var pen = new Pen(frame, isHover || isActive ? 3 : 2))
 			g.DrawRectangle(pen, box);
 
-		DrawCentered(g, so.Name, _fontSmall, Color.White,
+		DrawCentered(g, so.Name, fontSmall, Color.White,
 			new RectangleF(box.X - 25, box.Bottom + 8, box.Width + 50, 22));
 
 		if (isHover)
-			DrawCountdownArc(g, sx, box.Bottom + 42, 14, _objectHoldProgress);
+			DrawCountdownArc(g, sx, box.Bottom + 42, 14, objectHoldProgress);
 	}
 
 	private void DrawObjectSceneStoryOverlay(Graphics g, ContentSlide slide, Rectangle area, Color accent, float alpha)
@@ -1534,7 +1532,7 @@ public class TuioDemo : Form, TuioListener
 		using (var veil = new SolidBrush(Color.FromArgb(a * 180 / 255, 6, 6, 14)))
 			g.FillRectangle(veil, panel);
 
-		Color frame = (_activeObjectStory != null) ? GetAccent(_objA) : accent;
+		Color frame = (activeObjectStory != null) ? GetAccent(objA) : accent;
 		using (var pen = new Pen(Color.FromArgb(a, frame), 3))
 			g.DrawRectangle(pen, panel);
 
@@ -1549,80 +1547,76 @@ public class TuioDemo : Form, TuioListener
 		else
 			DrawVideoSlide(g, slide.Content, inner, frame, a);
 
-		string title = (_activeObjectStory != null) ? _activeObjectStory.Name : "Object Story";
-		DrawCentered(g, title, _fontSmall, Color.White,
+		string title = (activeObjectStory != null) ? activeObjectStory.Name : "Object Story";
+		DrawCentered(g, title, fontSmall, Color.White,
 			new RectangleF(panel.X + 10, panel.Bottom - 30, panel.Width - 20, 22));
 	}
 
-	// ─────────────────────────────────────────────────────────────────────────
-	//  Rendering — PAIR NOT FACING
-	// ─────────────────────────────────────────────────────────────────────────
+	// Rendering: pair not facing
 
 	private void DrawPairNotFacing(Graphics g)
 	{
-		if (_objA == null || _objB == null) return;
+		if (objA == null || objB == null) return;
 
-		string nameA = GetName(_objA);
-		string nameB = GetName(_objB);
-		Color  accA  = GetAccent(_objA);
-		Color  accB  = GetAccent(_objB);
+		string nameA = GetName(objA);
+		string nameB = GetName(objB);
+		Color  accA  = GetAccent(objA);
+		Color  accB  = GetAccent(objB);
 
-		DrawCentered(g, "TWO FIGURES DETECTED", _fontTitle, CGold,
-			new RectangleF(0, 28, _W, 60));
-		DrawCentered(g, nameA + "  &  " + nameB, _fontSubtitle, CPapyrus,
-			new RectangleF(0, 96, _W, 38));
-		DrawGoldDivider(g, _W / 2 - 260, 144, 520);
+		DrawCentered(g, "TWO FIGURES DETECTED", fontTitle, CGold,
+			new RectangleF(0, 28, W, 60));
+		DrawCentered(g, nameA + "  &  " + nameB, fontSubtitle, CPapyrus,
+			new RectangleF(0, 96, W, 38));
+		DrawGoldDivider(g, W / 2 - 260, 144, 520);
 
 		// Facing compasses
-		int cy = _H / 2 + 10;
-		FigureDef defA = MuseumData.Figures.ContainsKey(_objA.SymbolID)
-			? MuseumData.Figures[_objA.SymbolID] : null;
-		FigureDef defB = MuseumData.Figures.ContainsKey(_objB.SymbolID)
-			? MuseumData.Figures[_objB.SymbolID] : null;
+		int cy = H / 2 + 10;
+		FigureDef defA = MuseumData.Figures.ContainsKey(objA.SymbolID)
+			? MuseumData.Figures[objA.SymbolID] : null;
+		FigureDef defB = MuseumData.Figures.ContainsKey(objB.SymbolID)
+			? MuseumData.Figures[objB.SymbolID] : null;
 
-		float devA = FacingDetector.FacingDeviation(_objA, defA, _objB);
-		float devB = FacingDetector.FacingDeviation(_objB, defB, _objA);
+		float devA = FacingDetector.FacingDeviation(objA, defA, objB);
+		float devB = FacingDetector.FacingDeviation(objB, defB, objA);
 
-		DrawFacingCompass(g, _W / 2 - 185, cy,
-			_objA.Angle + (defA != null ? defA.FacingAngleOffset : 0f),
+		DrawFacingCompass(g, W / 2 - 185, cy,
+			objA.Angle + (defA != null ? defA.FacingAngleOffset : 0f),
 			devA, nameA, accA);
-		DrawFacingCompass(g, _W / 2 + 185, cy,
-			_objB.Angle + (defB != null ? defB.FacingAngleOffset : 0f),
+		DrawFacingCompass(g, W / 2 + 185, cy,
+			objB.Angle + (defB != null ? defB.FacingAngleOffset : 0f),
 			devB, nameB, accB);
 
 		using (var pen = new Pen(Color.FromArgb(70, CGold), 1)
 			   { DashStyle = DashStyle.Dash })
-			g.DrawLine(pen, _W / 2 - 110, cy, _W / 2 + 110, cy);
+			g.DrawLine(pen, W / 2 - 110, cy, W / 2 + 110, cy);
 
-		string hint = _activeRel != null
+		string hint = activeRel != null
 			? "Rotate the figures so they face each other to uncover their historical connection!"
 			: "These two figures share no direct historical connection in our records.";
-		int hintAlpha = _activeRel != null ? 210 : 140;
-		DrawCentered(g, hint, _fontHint, Color.FromArgb(hintAlpha, CPapyrus),
-			new RectangleF(60, _H - 96, _W - 120, 56));
+		int hintAlpha = activeRel != null ? 210 : 140;
+		DrawCentered(g, hint, fontHint, Color.FromArgb(hintAlpha, CPapyrus),
+			new RectangleF(60, H - 96, W - 120, 56));
 
-		if (_activeRel != null)
-			DrawCentered(g, "[ " + _activeRel.ConnectionTitle + " ]",
-				_fontSmall, Color.FromArgb(150, CGold),
-				new RectangleF(60, _H - 48, _W - 120, 28));
+		if (activeRel != null)
+			DrawCentered(g, "[ " + activeRel.ConnectionTitle + " ]",
+				fontSmall, Color.FromArgb(150, CGold),
+				new RectangleF(60, H - 48, W - 120, 28));
 
 		DrawOuterBorder(g);
 	}
 
-	// ─────────────────────────────────────────────────────────────────────────
-	//  Rendering — PAIR FACING
-	// ─────────────────────────────────────────────────────────────────────────
+	// Rendering: pair facing
 
 	private void DrawPairFacing(Graphics g)
 	{
-		if (_activeRel == null)
+		if (activeRel == null)
 		{
-			DrawCentered(g, GetName(_objA) + "  &  " + GetName(_objB),
-				_fontTitle, CGold, new RectangleF(0, 50, _W, 60));
+			DrawCentered(g, GetName(objA) + "  &  " + GetName(objB),
+				fontTitle, CGold, new RectangleF(0, 50, W, 60));
 			DrawCentered(g,
 				"These figures face each other, but no historical connection has been recorded.",
-				_fontBody, CPapyrus,
-				new RectangleF(60, _H / 2 - 30, _W - 120, 60));
+				fontBody, CPapyrus,
+				new RectangleF(60, H / 2 - 30, W - 120, 60));
 			DrawOuterBorder(g);
 			return;
 		}
@@ -1631,32 +1625,30 @@ public class TuioDemo : Form, TuioListener
 		DrawTopGradientBar(g, headerH, Color.FromArgb(155, 80, 20, 0));
 
 		// Shimmer sweep
-		float shimX = (_idlePhase / 360f) * (_W + 200) - 100;
+		float shimX = (idlePhase / 360f) * (W + 200) - 100;
 		using (var sh = new LinearGradientBrush(
 			new PointF(shimX - 40, 0), new PointF(shimX + 40, 0),
 			Color.Transparent, Color.FromArgb(50, Color.White)))
-			g.FillRectangle(sh, 0, 0, _W, headerH);
+			g.FillRectangle(sh, 0, 0, W, headerH);
 
 		DrawCentered(g, "\u2736   CONNECTION DISCOVERED   \u2736",
-			_fontTitle, CGoldLight,
-			new RectangleF(0, 8, _W, 58));
-		DrawCentered(g, _activeRel.ConnectionTitle,
-			_fontSubtitle, CPapyrus,
-			new RectangleF(0, 68, _W, 36));
+			fontTitle, CGoldLight,
+			new RectangleF(0, 8, W, 58));
+		DrawCentered(g, activeRel.ConnectionTitle,
+			fontSubtitle, CPapyrus,
+			new RectangleF(0, 68, W, 36));
 		DrawHeaderSep(g, headerH + 6, CGold);
 
-		var contentArea = new Rectangle(50, headerH + 22, _W - 100, _H - headerH - 70);
-		if (_currentSlide != null)
-			DrawSlide(g, _currentSlide, contentArea, CGold, _fadeAlpha);
+		var contentArea = new Rectangle(50, headerH + 22, W - 100, H - headerH - 70);
+		if (currentSlide != null)
+			DrawSlide(g, currentSlide, contentArea, CGold, fadeAlpha);
 
-		DrawProgressDots(g, _slideShow.CurrentIndex, _slideShow.TotalSlides,
-						 _W / 2, _H - 26, CGoldLight);
+		DrawProgressDots(g, slideShow.CurrentIndex, slideShow.TotalSlides,
+						 W / 2, H - 26, CGoldLight);
 		DrawOuterBorder(g);
 	}
 
-	// ─────────────────────────────────────────────────────────────────────────
-	//  Rendering — Slide content
-	// ─────────────────────────────────────────────────────────────────────────
+	// Rendering: slide content
 
 	private void DrawSlide(Graphics g, ContentSlide slide, Rectangle area,
 						   Color accent, float alpha)
@@ -1693,7 +1685,7 @@ public class TuioDemo : Form, TuioListener
 				g.DrawRectangle(pen, area);
 			DrawCentered(g,
 				"[ Image: " + Path.GetFileName(path) + " ]",
-				_fontHint, Color.FromArgb(alpha, Color.FromArgb(160, CPapyrus)),
+				fontHint, Color.FromArgb(alpha, Color.FromArgb(160, CPapyrus)),
 				new RectangleF(area.X, area.Y + area.Height / 2f - 18, area.Width, 36));
 		}
 	}
@@ -1733,13 +1725,13 @@ public class TuioDemo : Form, TuioListener
 
 		// Shadow pass (offset 2px) for extra pop
 		using (var shadow = new SolidBrush(Color.FromArgb(alpha * 180 / 255, 0, 0, 0)))
-			g.DrawString(text, _fontBody, shadow,
+			g.DrawString(text, fontBody, shadow,
 				new RectangleF(textRect.X + 2, textRect.Y + 2,
 							   textRect.Width, textRect.Height), sf);
 
 		// Main text — full white for maximum legibility
 		using (var br = new SolidBrush(Color.FromArgb(alpha, Color.White)))
-			g.DrawString(text, _fontBody, br, textRect, sf);
+			g.DrawString(text, fontBody, br, textRect, sf);
 	}
 
 	private void DrawVideoSlide(Graphics g, string path, Rectangle area,
@@ -1759,13 +1751,11 @@ public class TuioDemo : Form, TuioListener
 		int by = panel.Y + panel.Height / 2;
 		DrawPlayTriangle(g, bx, by - 20, 36, Color.FromArgb(alpha, accent));
 		DrawCentered(g, Path.GetFileNameWithoutExtension(path),
-			_fontSmall, Color.FromArgb(alpha, CPapyrus),
+			fontSmall, Color.FromArgb(alpha, CPapyrus),
 			new RectangleF(panel.X, by + 28, panel.Width, 24));
 	}
 
-	// ─────────────────────────────────────────────────────────────────────────
-	//  Rendering — Decorative helpers
-	// ─────────────────────────────────────────────────────────────────────────
+	// Rendering: decorative helpers
 
 	private void DrawAnimatedSunRing(Graphics g, int cx, int cy, float phase)
 	{
@@ -1824,11 +1814,11 @@ public class TuioDemo : Form, TuioListener
 		using (var p = new Pen(Color.FromArgb(220, accent), 3) { EndCap = LineCap.ArrowAnchor })
 			g.DrawLine(p, cx, cy, ax, ay);
 
-		DrawCentered(g, name, _fontSmall, accent,
+		DrawCentered(g, name, fontSmall, accent,
 			new RectangleF(cx - 135, cy + R + 8, 270, 24));
 
 		string deg = ((int)(deviation * 180 / Math.PI)).ToString("+#;-#;0") + "\u00B0";
-		DrawCentered(g, deg, _fontSmall,
+		DrawCentered(g, deg, fontSmall,
 			Color.FromArgb(Clamp255(quality * 255f + 60), CGreen),
 			new RectangleF(cx - 45, cy + R + 32, 90, 22));
 	}
@@ -1838,19 +1828,17 @@ public class TuioDemo : Form, TuioListener
 		using (var dim    = new SolidBrush(Color.FromArgb(50, 255, 255, 255)))
 		using (var bright = new SolidBrush(Color.FromArgb(105, 255, 255, 215)))
 		{
-			foreach (StarPoint star in _stars)
+			foreach (StarPoint star in stars)
 			{
-				int sx = star.X * _W / 1280;
-				int sy = star.Y * _H / 720;
+				int sx = star.X * W / 1280;
+				int sy = star.Y * H / 720;
 				SolidBrush br = (star.S > 1) ? bright : dim;
 				g.FillEllipse(br, sx, sy, star.S, star.S);
 			}
 		}
 	}
 
-	// ─────────────────────────────────────────────────────────────────────────
-	//  Hand overlay — draws finger-count image at palm position
-	// ─────────────────────────────────────────────────────────────────────────
+	// Hand overlay: draw finger-count image at palm position
 
 	// Image size for the finger indicator drawn at the palm
 	private const int HandImgSize = 120;
@@ -1862,7 +1850,7 @@ public class TuioDemo : Form, TuioListener
 
 	private void DrawHandOverlay(Graphics g)
 	{
-		List<HandData> hands = _latestHands;
+		List<HandData> hands = latestHands;
 		if (hands == null || hands.Count == 0) return;
 
 		foreach (HandData hand in hands)
@@ -1870,8 +1858,8 @@ public class TuioDemo : Form, TuioListener
 			if (hand.PalmPosition == null) continue;
 
 			// Map camera pixel coords → window coords
-			int wx = hand.PalmPosition.X * _W / CamW;
-			int wy = hand.PalmPosition.Y * _H / CamH;
+			int wx = hand.PalmPosition.X * W / CamW;
+			int wy = hand.PalmPosition.Y * H / CamH;
 
 			int count = hand.FingersUp;  // 0–5
 
@@ -1901,7 +1889,7 @@ public class TuioDemo : Form, TuioListener
 
 			// Label below the image: hand side
 			DrawCentered(g, hand.Hand,
-				_fontSmall, Color.FromArgb(200, CGold),
+				fontSmall, Color.FromArgb(200, CGold),
 				new RectangleF(wx - 50, wy + half + 4, 100, 22));
 		}
 	}
@@ -1945,16 +1933,16 @@ public class TuioDemo : Form, TuioListener
 	private void DrawTopGradientBar(Graphics g, int height, Color top)
 	{
 		using (var br = new LinearGradientBrush(
-			new Rectangle(0, 0, _W, height), top, Color.Transparent,
+			new Rectangle(0, 0, W, height), top, Color.Transparent,
 			LinearGradientMode.Vertical))
-			g.FillRectangle(br, 0, 0, _W, height);
+			g.FillRectangle(br, 0, 0, W, height);
 	}
 
 	private void DrawHeaderSep(Graphics g, int y, Color color)
 	{
 		using (var p = new Pen(Color.FromArgb(175, color), 1))
-			g.DrawLine(p, 50, y, _W - 50, y);
-		DrawDiamond(g, _W / 2, y, 5, color);
+			g.DrawLine(p, 50, y, W - 50, y);
+		DrawDiamond(g, W / 2, y, 5, color);
 	}
 
 	private void DrawGoldDivider(Graphics g, int x, int y, int length)
@@ -1980,10 +1968,10 @@ public class TuioDemo : Form, TuioListener
 		int m = 16;
 		using (var p = new Pen(CGoldDim, 1))
 		{
-			g.DrawRectangle(p, m, m, _W - m * 2, _H - m * 2);
-			g.DrawRectangle(p, m + 5, m + 5, _W - m * 2 - 10, _H - m * 2 - 10);
+			g.DrawRectangle(p, m, m, W - m * 2, H - m * 2);
+			g.DrawRectangle(p, m + 5, m + 5, W - m * 2 - 10, H - m * 2 - 10);
 		}
-		DrawCornerAccents(g, new Rectangle(m, m, _W - m * 2, _H - m * 2), CGoldDim, 28);
+		DrawCornerAccents(g, new Rectangle(m, m, W - m * 2, H - m * 2), CGoldDim, 28);
 	}
 
 	private void DrawCornerAccents(Graphics g, Rectangle r, Color color, int size)
@@ -2026,14 +2014,12 @@ public class TuioDemo : Form, TuioListener
 		using (var p = new Pen(color, 3)) g.DrawPolygon(p, pts);
 	}
 
-	// ─────────────────────────────────────────────────────────────────────────
-	//  Image loading with cache
-	// ─────────────────────────────────────────────────────────────────────────
+	// Image loading with cache
 
 	private Image TryLoadImage(string relativePath)
 	{
 		Image cached;
-		if (_imgCache.TryGetValue(relativePath, out cached)) return cached;
+		if (imgCache.TryGetValue(relativePath, out cached)) return cached;
 
 		string full = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, relativePath);
 		Image  img  = null;
@@ -2042,13 +2028,11 @@ public class TuioDemo : Form, TuioListener
 			try { img = Image.FromFile(full); }
 			catch { }
 		}
-		_imgCache[relativePath] = img;
+		imgCache[relativePath] = img;
 		return img;
 	}
 
-	// ─────────────────────────────────────────────────────────────────────────
-	//  Utility helpers
-	// ─────────────────────────────────────────────────────────────────────────
+	// Utility helpers
 
 	private void DrawCentered(Graphics g, string text, Font font, Color color,
 							  RectangleF bounds)
@@ -2119,46 +2103,42 @@ public class TuioDemo : Form, TuioListener
 		if (IsHandleCreated) this.BeginInvoke(new Action(this.Invalidate));
 	}
 
-	// ─────────────────────────────────────────────────────────────────────────
-	//  Resize
-	// ─────────────────────────────────────────────────────────────────────────
+	// Resize
 
 	protected override void OnResize(EventArgs e)
 	{
 		base.OnResize(e);
 		if (this.ClientSize.Width > 0 && this.ClientSize.Height > 0)
 		{
-			_W = this.ClientSize.Width;
-			_H = this.ClientSize.Height;
+			W = this.ClientSize.Width;
+			H = this.ClientSize.Height;
 		}
 	}
 
-	// ─────────────────────────────────────────────────────────────────────────
-	//  Keyboard & Form events
-	// ─────────────────────────────────────────────────────────────────────────
+	// Keyboard and form events
 
 	private void OnKeyDown(object sender, KeyEventArgs e)
 	{
 		if (e.KeyCode == Keys.F1)
 		{
-			if (!_fullscreen)
+			if (!fullscreen)
 			{
-				_winW = _W; _winH = _H;
-				_winLeft = this.Left; _winTop = this.Top;
-				_W = Screen.PrimaryScreen.Bounds.Width;
-				_H = Screen.PrimaryScreen.Bounds.Height;
+				winW = W; winH = H;
+				winLeft = this.Left; winTop = this.Top;
+				W = Screen.PrimaryScreen.Bounds.Width;
+				H = Screen.PrimaryScreen.Bounds.Height;
 				this.FormBorderStyle = FormBorderStyle.None;
 				this.Left = 0; this.Top = 0;
-				this.Width = _W; this.Height = _H;
-				_fullscreen = true;
+				this.Width = W; this.Height = H;
+				fullscreen = true;
 			}
 			else
 			{
-				_W = _winW; _H = _winH;
+				W = winW; H = winH;
 				this.FormBorderStyle = FormBorderStyle.Sizable;
-				this.Left = _winLeft; this.Top = _winTop;
-				this.Width = _W + 16; this.Height = _H + 39;
-				_fullscreen = false;
+				this.Left = winLeft; this.Top = winTop;
+				this.Width = W + 16; this.Height = H + 39;
+				fullscreen = false;
 			}
 		}
 		else if (e.KeyCode == Keys.Escape || e.KeyCode == Keys.Q)
@@ -2167,36 +2147,34 @@ public class TuioDemo : Form, TuioListener
 		}
 		else if (e.KeyCode == Keys.L)
 		{
-			if (!_authInProgress)
+			if (!authInProgress)
 				StartLoginFlow();
 		}
 		else if (e.KeyCode == Keys.M)
 		{
-			if (_isLoggedIn)
+			if (isLoggedIn)
 			{
-				if (_circularMenu.IsVisible) _circularMenu.Hide();
-				else _circularMenu.Show();
+				if (circularMenu.IsVisible) circularMenu.Hide();
+				else circularMenu.Show();
 			}
 		}
 	}
 
 	private void OnClosing(object sender, CancelEventArgs e)
 	{
-		_animTimer.Stop();
-		_recognitionTimer.Stop();
-		_slideShow.Stop();
-		if (_client != null)
+		animTimer.Stop();
+		recognitionTimer.Stop();
+		slideShow.Stop();
+		if (client != null)
 		{
-			_client.removeTuioListener(this);
-			_client.disconnect();
+			client.removeTuioListener(this);
+			client.disconnect();
 		}
-		_handReceiver?.Stop();
+		handReceiver?.Stop();
 		Environment.Exit(0);
 	}
 
-	// ─────────────────────────────────────────────────────────────────────────
-	//  Entry point
-	// ─────────────────────────────────────────────────────────────────────────
+	// Entry point
 
 	[STAThread]
 	static void Main(string[] args)
@@ -2209,3 +2187,5 @@ public class TuioDemo : Form, TuioListener
 		Application.Run(new TuioDemo(port));
 	}
 }
+
+

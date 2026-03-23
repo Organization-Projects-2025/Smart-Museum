@@ -60,7 +60,6 @@
     <Compile Include="SlideShowManager.cs" />
     <Compile Include="AuthIntegration.cs" />
     <Compile Include="CircularMenuController.cs" />
-    <Compile Include="CodeSampleSocketClient.cs" />
     <Compile Include="TUIO\TuioClient.cs" />
     <Compile Include="TUIO\TuioContainer.cs" />
     <Compile Include="TUIO\TuioCursor.cs" />
