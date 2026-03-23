@@ -1662,7 +1662,6 @@ public class TuioDemo : Form, TuioListener
         using (var p = new Pen(ringColor, 3))
             g.DrawEllipse(p, cx - R, cy - R, R * 2, R * 2);
 
-        // Target arc
         float idealAngle = angle - deviation;
         float startDeg = (float)(idealAngle * 180f / Math.PI) - 15f;
         using (var p = new Pen(Color.FromArgb(100, CGreen), 3)
@@ -1670,7 +1669,6 @@ public class TuioDemo : Form, TuioListener
             g.DrawArc(p, cx - (R + 10), cy - (R + 10), (R + 10) * 2, (R + 10) * 2,
                       startDeg, 30f);
 
-        // Current direction arrow
         int ax = (int)(cx + Math.Cos(angle) * (R - 10));
         int ay = (int)(cy + Math.Sin(angle) * (R - 10));
         using (var p = new Pen(Color.FromArgb(220, accent), 3) { EndCap = LineCap.ArrowAnchor })
@@ -1744,7 +1742,8 @@ public class TuioDemo : Form, TuioListener
         DrawCornerAccents(g, new Rectangle(m, m, W - m * 2, H - m * 2), CGoldDim, 28);
     }
 
-    private void DrawCornerAccents(Graphics g, Rectangle r, Color color, int size) {
+    private void DrawCornerAccents(Graphics g, Rectangle r, Color color, int size)
+    {
         using (var p = new Pen(color, 2))
         {
             g.DrawLine(p, r.Left, r.Top + size, r.Left, r.Top);
@@ -1783,8 +1782,6 @@ public class TuioDemo : Form, TuioListener
         using (var p = new Pen(color, 3)) g.DrawPolygon(p, pts);
     }
 
-    // Image loading with cache
-
     private Image TryLoadImage(string relativePath)
     {
         Image cached;
@@ -1800,8 +1797,6 @@ public class TuioDemo : Form, TuioListener
         imgCache[relativePath] = img;
         return img;
     }
-
-    // Utility helpers
 
     private void DrawCentered(Graphics g, string text, Font font, Color color,
         RectangleF bounds)
