@@ -199,6 +199,13 @@ public class BluetoothService
 {
     public bool Verify(string targetMac, out string status)
     {
+        // Skip 2FA if MAC address is "0" - user doesn't require Bluetooth verification
+        if (targetMac == "0")
+        {
+            status = "Bluetooth 2FA skipped (user has no device registered)";
+            return true;
+        }
+
         status = "Running Bluetooth scan...";
 
         if (string.IsNullOrWhiteSpace(targetMac))

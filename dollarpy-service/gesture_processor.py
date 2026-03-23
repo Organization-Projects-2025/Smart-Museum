@@ -11,11 +11,12 @@ class GestureProcessor:
     def __init__(self):
         self.mp_drawing = mp.solutions.drawing_utils
         self.mp_hands = mp.solutions.hands
+        # Use same configuration as real-time recognition
         self.hands = self.mp_hands.Hands(
             static_image_mode=False,
-            max_num_hands=2,
-            min_detection_confidence=0.5,
-            min_tracking_confidence=0.5
+            max_num_hands=1,  # Match real-time (single hand)
+            min_detection_confidence=0.6,  # Match real-time
+            min_tracking_confidence=0.6  # Match real-time
         )
     
     def process_video(self, video_path, gesture_name):
@@ -37,7 +38,8 @@ class GestureProcessor:
             if not ret:
                 break
             
-            frame = cv2.resize(frame, (480, 320))
+            # Use same resolution as real-time recognition
+            frame = cv2.resize(frame, (640, 480))
             frame_count += 1
             
             # Convert to RGB for MediaPipe
@@ -48,16 +50,19 @@ class GestureProcessor:
                 image_height, image_width, _ = frame.shape
                 
                 for hand_landmarks in results.multi_hand_landmarks:
-                    # Extract MULTIPLE key landmarks (like the notebook example)
+                    # Extract MULTIPLE key landmarks (same as real-time)
                     # Track: wrist (0), thumb tip (4), index tip (8), middle tip (12), ring tip (16), pinky tip (20)
                     key_landmarks = [0, 4, 8, 12, 16, 20]
+                    
+                    # Use same stroke ID calculation as real-time: all 6 landmarks in same frame get same stroke ID
+                    stroke_id = len(points) // 6 + 1
                     
                     for landmark_id in key_landmarks:
                         landmark = hand_landmarks.landmark[landmark_id]
                         x = int(landmark.x * image_width)
                         y = int(landmark.y * image_height)
-                        # Use frame_count as stroke ID so all points in same frame are grouped
-                        points.append(Point(x, y, frame_count))
+                        # All points in same frame get same stroke ID (matches real-time)
+                        points.append(Point(x, y, stroke_id))
         
         cap.release()
         

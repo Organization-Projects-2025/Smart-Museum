@@ -78,12 +78,18 @@ class SmartMuseumGestureRecognizer:
                 return ("No movement detected - move your hand!", 0.0)
         
         try:
-            # Get ALL template scores for debugging
+            # First do the recognition to get the result
+            result = self.recognizer.recognize(points)
+            
+            # Get ALL template scores for debugging by comparing with each template
             all_scores = []
             for template in self.recognizer.templates:
                 try:
-                    score = self.recognizer.recognizer._calculate_score(points, template.points)
-                    all_scores.append((template.name, score))
+                    # Use the same distance calculation as dollarpy
+                    from dollarpy import Recognizer
+                    temp_recognizer = Recognizer([template])
+                    temp_result = temp_recognizer.recognize(points)
+                    all_scores.append((template.name, temp_result[1]))
                 except:
                     pass
             
@@ -94,9 +100,9 @@ class SmartMuseumGestureRecognizer:
             print("\n=== Top 5 Recognition Matches ===")
             for i, (name, score) in enumerate(all_scores[:5]):
                 base_name = self.get_gesture_base_name(name)
-                print(f"{i+1}. {base_name:15s} - Score: {score:.4f}")
+                print(f"{i+1}. {base_name:20s} - Score: {score:.4f}")
+            print()
             
-            result = self.recognizer.recognize(points)
             return result
         except ZeroDivisionError as e:
             print(f"Debug recognizer: ZeroDivisionError caught: {e}")

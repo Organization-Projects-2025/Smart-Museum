@@ -2,6 +2,34 @@
 
 Dynamic hand gesture recognition using $1 recognizer (dollarpy) and MediaPipe.
 
+## ⚠️ IMPORTANT: Preprocessing Consistency
+
+**CRITICAL**: After updating the code, you MUST rebuild templates to ensure consistency between template building and real-time recognition.
+
+### What Changed
+1. **Frame resolution**: Now consistent at 640x480 (was 480x320 in templates)
+2. **Stroke ID calculation**: Now uses `len(points)//6+1` everywhere (was `frame_count` in templates)
+3. **MediaPipe config**: Now consistent across all components (confidence 0.6, single hand)
+
+### Why This Matters
+The $1 algorithm compares point sequences. If templates are built with different preprocessing than real-time recognition, even identical gestures won't match well. This was causing low confidence scores (0.15-0.30) even for correct gestures.
+
+### Action Required
+**Rebuild templates now:**
+
+```bash
+cd dollarpy-service
+..\.venv\Scripts\python.exe build_templates.py "C:\Projects\Museum\Smart-Museum\Public\Data\Videos\Moves"
+```
+
+Expected improvement:
+- Before: Scores 0.15-0.30 (inconsistent preprocessing)
+- After: Scores 0.60-0.90 (consistent preprocessing)
+
+See `PREPROCESSING_CONSISTENCY.md` for detailed technical explanation.
+
+---
+
 ## Quick Start
 
 ```bash

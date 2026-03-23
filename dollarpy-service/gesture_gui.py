@@ -20,14 +20,14 @@ class GestureRecognitionGUI:
         # Initialize recognizer
         self.recognizer = SmartMuseumGestureRecognizer()
         
-        # MediaPipe setup
+        # MediaPipe setup - match template building and service configuration
         self.mp_hands = mp.solutions.hands
         self.mp_drawing = mp.solutions.drawing_utils
         self.hands = self.mp_hands.Hands(
             static_image_mode=False,
-            max_num_hands=2,
-            min_detection_confidence=0.5,
-            min_tracking_confidence=0.5
+            max_num_hands=1,  # Single hand for consistency
+            min_detection_confidence=0.6,  # Match service
+            min_tracking_confidence=0.6  # Match service
         )
         
         # Video capture
@@ -76,6 +76,34 @@ class GestureRecognitionGUI:
         self.recognize_btn = ttk.Button(control_frame, text="Recognize", 
                                         command=self.recognize_gesture, state=tk.DISABLED)
         self.recognize_btn.pack(side=tk.LEFT, padx=5)
+        
+        ttk.Separator(control_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=10)
+        
+        # Real-time detection
+        self.realtime_btn = ttk.Button(control_frame, text="Start Real-Time Detection", 
+                                        command=self.toggle_realtime, state=tk.DISABLED)
+        self.realtime_btn.pack(side=tk.LEFT, padx=5)
+        
+        ttk.Separator(control_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=10)
+        
+        # FPS control
+        ttk.Label(control_frame, text="FPS:", font=('Arial', 9)).pack(side=tk.LEFT, padx=(5, 2))
+        self.fps_var = tk.StringVar(value="30")
+        self.fps_combo = ttk.Combobox(control_frame, textvariable=self.fps_var, 
+                                       values=["10", "15", "20", "25", "30", "60"], 
+                                       width=5, state="readonly")
+        self.fps_combo.pack(side=tk.LEFT, padx=2)
+        self.fps_combo.bind("<<ComboboxSelected>>", self.on_fps_changed)
+        
+        # Real-time detection state
+        self.realtime_active = False
+        self.realtime_points = []
+        self.realtime_last_recognition = 0
+        self.realtime_cooldown = 2.0  # 2 seconds between recognitions
+        self.realtime_min_points = 80  # Minimum points before recognition (increased from 60)
+        self.realtime_max_points = 80  # Maximum points to collect (changed from 180)
+        self.realtime_no_hand_frames = 0  # Count frames without hand detection
+        self.frame_delay = 33  # milliseconds between frames (default ~30 FPS)
         
         # Main content area
         content_frame = ttk.Frame(self.root)
@@ -172,6 +200,12 @@ for accurate recognition.
             messagebox.showerror("Error", 
                                  "Templates file not found. Please build templates first.")
     
+    def on_fps_changed(self, event=None):
+        """Update frame delay when FPS is changed"""
+        fps = int(self.fps_var.get())
+        self.frame_delay = int(1000 / fps)  # Convert FPS to milliseconds
+        print(f"FPS changed to {fps} (delay: {self.frame_delay}ms)")
+    
     def start_camera(self):
         if self.recognizer.recognizer is None:
             messagebox.showwarning("Warning", 
@@ -187,6 +221,8 @@ for accurate recognition.
         self.start_btn.config(state=tk.DISABLED)
         self.stop_btn.config(state=tk.NORMAL)
         self.record_btn.config(state=tk.NORMAL)
+        self.realtime_btn.config(state=tk.NORMAL)
+        self.fps_combo.config(state=tk.DISABLED)  # Lock FPS during capture
         self.status_label.config(text="Camera running", foreground='green')
         
         self.update_frame()
@@ -194,6 +230,7 @@ for accurate recognition.
     def stop_camera(self):
         self.is_running = False
         self.is_recording = False
+        self.realtime_active = False
         
         if self.cap:
             self.cap.release()
@@ -202,6 +239,8 @@ for accurate recognition.
         self.stop_btn.config(state=tk.DISABLED)
         self.record_btn.config(state=tk.DISABLED)
         self.recognize_btn.config(state=tk.DISABLED)
+        self.realtime_btn.config(state=tk.DISABLED)
+        self.fps_combo.config(state="readonly")  # Unlock FPS when stopped
         self.status_label.config(text="Camera stopped", foreground='blue')
         
         # Clear video label
@@ -220,6 +259,24 @@ for accurate recognition.
             self.recognize_btn.config(state=tk.NORMAL)
             self.status_label.config(text=f"Recorded {len(self.recorded_points)} points", 
                                      foreground='blue')
+    
+    def toggle_realtime(self):
+        if not self.realtime_active:
+            self.realtime_active = True
+            self.realtime_points = []
+            self.realtime_last_recognition = 0
+            self.realtime_btn.config(text="Stop Real-Time Detection")
+            self.record_btn.config(state=tk.DISABLED)
+            self.recognize_btn.config(state=tk.DISABLED)
+            self.status_label.config(text="Real-time detection active", foreground='green')
+            self.result_label.config(text="Waiting for gesture...", foreground='blue')
+        else:
+            self.realtime_active = False
+            self.realtime_points = []
+            self.realtime_btn.config(text="Start Real-Time Detection")
+            self.record_btn.config(state=tk.NORMAL)
+            self.status_label.config(text="Real-time detection stopped", foreground='blue')
+            self.result_label.config(text="No gesture recognized", foreground='black')
     
     def recognize_gesture(self):
         if len(self.recorded_points) < 2:
@@ -295,7 +352,7 @@ for accurate recognition.
         ret, frame = self.cap.read()
         if ret:
             frame = cv2.resize(frame, (640, 480))
-            frame = cv2.flip(frame, 1)
+            # Removed flip - keep camera natural orientation
             
             # Process with MediaPipe
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -309,20 +366,23 @@ for accurate recognition.
                     self.mp_drawing.draw_landmarks(
                         frame, hand_landmarks, self.mp_hands.HAND_CONNECTIONS)
                     
-                    # Record MULTIPLE key points if recording (like the notebook example)
-                    if self.is_recording:
+                    # Track key landmarks for recording OR real-time detection
+                    if self.is_recording or self.realtime_active:
                         # Track wrist (0), thumb tip (4), index tip (8), middle tip (12), ring tip (16), pinky tip (20)
                         key_landmarks = [0, 4, 8, 12, 16, 20]
                         
+                        # Choose which points list to use
+                        points_list = self.recorded_points if self.is_recording else self.realtime_points
+                        
                         # Use current point count as stroke ID so all landmarks in same frame are grouped
-                        stroke_id = len(self.recorded_points) // 6 + 1
+                        stroke_id = len(points_list) // 6 + 1
                         
                         for landmark_id in key_landmarks:
                             landmark = hand_landmarks.landmark[landmark_id]
                             x = int(landmark.x * image_width)
                             y = int(landmark.y * image_height)
                             # All points in same frame get same stroke ID
-                            self.recorded_points.append(Point(x, y, stroke_id))
+                            points_list.append(Point(x, y, stroke_id))
                             
                             # Draw recording indicator on key points
                             if landmark_id == 8:  # Highlight index finger
@@ -330,8 +390,89 @@ for accurate recognition.
                             else:
                                 cv2.circle(frame, (x, y), 5, (255, 0, 0), -1)
             
+            # Real-time detection logic
+            if self.realtime_active:
+                import time
+                current_time = time.time()
+                
+                # Check if hand is detected in this frame
+                hand_detected = results.multi_hand_landmarks is not None
+                
+                if hand_detected:
+                    self.realtime_no_hand_frames = 0
+                else:
+                    self.realtime_no_hand_frames += 1
+                
+                # Trigger recognition when:
+                # 1. We have 80+ points (enough for recognition)
+                # 2. Cooldown has passed
+                should_recognize = (
+                    len(self.realtime_points) >= self.realtime_min_points and
+                    (current_time - self.realtime_last_recognition) > self.realtime_cooldown
+                )
+                
+                if should_recognize:
+                    # Try to recognize
+                    try:
+                        print(f"\n→ Real-time recognition with {len(self.realtime_points)} points")
+                        gesture_name, score = self.recognizer.recognize(self.realtime_points)
+                        
+                        # Show result if confidence is above minimum threshold (0.13)
+                        if score > 0.13:
+                            base_name = self.recognizer.get_gesture_base_name(gesture_name)
+                            
+                            # Update UI - always show the best match
+                            self.result_label.config(text=f"✓ {base_name.replace('_', ' ').title()}")
+                            self.score_label.config(text=f"Score: {score:.4f}")
+                            
+                            # Color based on confidence
+                            if score > 0.7:
+                                self.result_label.config(foreground='green')
+                            elif score > 0.4:
+                                self.result_label.config(foreground='orange')
+                            else:
+                                self.result_label.config(foreground='red')
+                            
+                            print(f"✓ DETECTED: {base_name} (score: {score:.4f})")
+                        else:
+                            print(f"✗ Too low confidence: {score:.4f} (minimum: 0.13)")
+                            self.result_label.config(text="No clear gesture", foreground='gray')
+                            self.score_label.config(text=f"Score: {score:.4f}")
+                        
+                        # Reset for next gesture
+                        self.realtime_last_recognition = current_time
+                        self.realtime_points = []
+                        self.realtime_no_hand_frames = 0
+                        
+                    except Exception as e:
+                        print(f"Real-time recognition error: {e}")
+                        self.realtime_points = []
+                        self.realtime_no_hand_frames = 0
+                
+                # Reset if we reach max points (gesture complete)
+                elif len(self.realtime_points) >= self.realtime_max_points:
+                    print(f"→ Resetting: reached max points ({len(self.realtime_points)})")
+                    self.realtime_points = []
+                    self.realtime_no_hand_frames = 0
+                
+                # Add real-time indicator
+                cv2.putText(frame, "REAL-TIME DETECTION", (10, 30), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                cv2.putText(frame, f"Points: {len(self.realtime_points)}", (10, 60), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                
+                # Show status
+                if len(self.realtime_points) < self.realtime_min_points:
+                    status_text = "Collecting..."
+                elif self.realtime_no_hand_frames > 0:
+                    status_text = f"Recognizing... ({self.realtime_no_hand_frames}/5)"
+                else:
+                    status_text = "Keep going..."
+                cv2.putText(frame, status_text, (10, 90), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+            
             # Add recording indicator
-            if self.is_recording:
+            elif self.is_recording:
                 cv2.putText(frame, "RECORDING", (10, 30), 
                             cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
                 cv2.putText(frame, f"Points: {len(self.recorded_points)}", (10, 60), 
@@ -345,7 +486,7 @@ for accurate recognition.
             self.video_label.imgtk = imgtk
             self.video_label.config(image=imgtk)
         
-        self.root.after(10, self.update_frame)
+        self.root.after(self.frame_delay, self.update_frame)
     
     def on_closing(self):
         self.stop_camera()
