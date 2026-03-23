@@ -1,4 +1,0 @@
-# Hand tracking dependencies
-mediapipe>=0.10.0
-opencv-python>=4.5.5
-numpy>=1.21.0

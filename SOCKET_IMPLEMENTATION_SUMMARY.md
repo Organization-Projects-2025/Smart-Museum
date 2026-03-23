@@ -9,14 +9,15 @@
 1. PYTHON SOCKET SERVER (Backend) - BOTH Bluetooth & Face ID
    ═══════════════════════════════════════════════════════════════════════════════
 
-📄 FILE: python_server.py
-LOCATION: C:\Personal Files\Education final\HCI\Project\Project\python_server.py
+📄 FILE: python/server/python_server.py
+LOCATION: C:\Personal Files\Education final\HCI\Project\Project\python\server\python_server.py
 
 BLUETOOTH COMPONENTS:
 ✓ Line 26-31: normalize_mac() function - Normalizes MAC addresses to uppercase with colons
 
-✓ Line 34-47: scan_bluetooth() function  
- - Scans for Bluetooth device with specific MAC - Returns "FOUND:Name:MAC" or "NOT_FOUND" or "ERROR:message"
+✓ Line 34-47: scan_bluetooth() function
+
+- Scans for Bluetooth device with specific MAC - Returns "FOUND:Name:MAC" or "NOT_FOUND" or "ERROR:message"
 
 FACE ID COMPONENTS (from Code Samples/simple_face_id.py):
 ✓ Line 50-67: load_known_faces() function - Loads face encodings from people/ directory - Uses face_recognition library
@@ -32,7 +33,7 @@ THREADING & CONNECTION HANDLING:
 ✓ Line 155-171: start_server() function - Binding to localhost:5000 - Listen for connections - Accept clients in loop, spawn thread for each
 
 HOW TO RUN:
-.\.venv\Scripts\python.exe python_server.py
+.\.venv\Scripts\python.exe python\server\python_server.py
 
 Server will output: "Server listening on localhost:5000"
 
@@ -136,7 +137,7 @@ Calls btService.Verify() which uses SocketClient
 PATTERN USED (from Code Samples/Threads.ipynb):
 
 Python Server Side:
-✓ python_server.py Line 141: threading.Thread() for each client
+✓ python/server/python_server.py Line 141: threading.Thread() for each client
 Line 143: client_thread.daemon = True
 
 C# Side:
@@ -179,7 +180,7 @@ FACE ID SETUP:
 ═══════════════════════════════════════════════════════════════════════════════
 
 1.  START PYTHON SERVER (once, in background):
-    .\.venv\Scripts\python.exe python_server.py
+    .\.venv\Scripts\python.exe python\server\python_server.py
 
 2.  RUN C# APPLICATION:
 

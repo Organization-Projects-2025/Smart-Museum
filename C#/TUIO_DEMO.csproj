@@ -60,7 +60,6 @@
     <Compile Include="SlideShowManager.cs" />
     <Compile Include="AuthIntegration.cs" />
     <Compile Include="CircularMenuController.cs" />
-    <Compile Include="CodeSampleSocketClient.cs" />
     <Compile Include="TUIO\TuioClient.cs" />
     <Compile Include="TUIO\TuioContainer.cs" />
     <Compile Include="TUIO\TuioCursor.cs" />
@@ -70,8 +69,6 @@
     <Compile Include="TUIO\TuioTime.cs" />
     <Compile Include="OSC.NET\OSCTimeTag.cs" />
     <Compile Include="TUIO\TuioBlob.cs" />
-    <Compile Include="HandTracking\HandTrackingData.cs" />
-    <Compile Include="HandTracking\HandTrackingReceiver.cs" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="System" />
