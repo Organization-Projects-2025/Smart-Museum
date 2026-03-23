@@ -2,6 +2,7 @@ import socket
 import threading
 import re
 import os
+import csv
 import cv2
 import numpy as np
 import bluetooth
@@ -10,7 +11,8 @@ import face_recognition
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PYTHON_ROOT_DIR = os.path.dirname(SCRIPT_DIR)
-PEOPLE_DIR = os.path.join(PYTHON_ROOT_DIR, "data", "faces")
+WORKSPACE_ROOT_DIR = os.path.dirname(PYTHON_ROOT_DIR)
+USERS_CSV_PATH = os.path.join(WORKSPACE_ROOT_DIR, "C#", "content", "auth", "users.csv")
 TOLERANCE = 0.60
 known_face_names = []
 known_face_encodings = []
@@ -30,21 +32,33 @@ def load_known_faces():
     known_face_names = []
     known_face_encodings = []
 
-    for name in os.listdir(PEOPLE_DIR):
-        low = name.lower()
-        if not (low.endswith(".jpg") or low.endswith(".jpeg") or low.endswith(".png")):
-            continue
-
-        path = os.path.join(PEOPLE_DIR, name)
+    if os.path.isfile(USERS_CSV_PATH):
         try:
-            image = face_recognition.load_image_file(path)
-            encodings = face_recognition.face_encodings(image)
-            if len(encodings) > 0:
-                known_face_encodings.append(encodings[0])
-                known_face_names.append(os.path.splitext(name)[0])
-        except Exception as e:
-            print(f"Error loading face {name}: {e}")
+            with open(USERS_CSV_PATH, "r", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    user_id = (row.get("face_user_id") or "").strip()
+                    image_path = (row.get("face_image_path") or "").strip()
+                    if not user_id or not image_path:
+                        continue
 
+                    abs_path = image_path
+                    if not os.path.isabs(abs_path):
+                        abs_path = os.path.join(WORKSPACE_ROOT_DIR, image_path)
+
+                    if not os.path.isfile(abs_path):
+                        continue
+
+                    try:
+                        image = face_recognition.load_image_file(abs_path)
+                        encodings = face_recognition.face_encodings(image)
+                        if len(encodings) > 0:
+                            known_face_encodings.append(encodings[0])
+                            known_face_names.append(user_id)
+                    except Exception as e:
+                        print(f"Error loading face {user_id} from {abs_path}: {e}")
+        except Exception as e:
+            print(f"Error reading users CSV {USERS_CSV_PATH}: {e}")
 
 def scan_face_id():
     try:
@@ -52,7 +66,7 @@ def scan_face_id():
             load_known_faces()
         
         if len(known_face_encodings) == 0:
-            return "ERROR:No known faces in people directory"
+            return "ERROR:No known faces loaded"
         
         video_capture = cv2.VideoCapture(0)
         if not video_capture.isOpened():
@@ -98,7 +112,6 @@ def scan_face_id():
     except Exception as e:
         return f"ERROR:{str(e)}"
 
-
 def handle_client(conn, addr):
     print(f"Client connected: {addr}")
     buffer = ""
@@ -135,9 +148,6 @@ def handle_client(conn, addr):
                 elif parts[0] == "exit":
                     conn.send(b"BYE")
                     break
-                
-                else:
-                    conn.send(b"ERROR:Unknown command")
     
     except Exception as e:
         print(f"Error: {e}")
@@ -146,10 +156,9 @@ def handle_client(conn, addr):
         conn.close()
         print(f"Client disconnected: {addr}")
 
-
 def start_server(host, port):
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server_socket = socket.socket()
+    # server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server_socket.bind((host, port))
     server_socket.listen(5)
     

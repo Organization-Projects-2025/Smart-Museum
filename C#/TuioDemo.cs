@@ -27,8 +27,8 @@ public static class FacingDetector
 {
 	private const float ThresholdRad = (float)(Math.PI / 4.0);
 
-	public static bool AreFacing(TuioObject a, FigureDef defA,
-								  TuioObject b, FigureDef defB)
+	public static bool AreFacing(TuioObject a, Figure defA,
+								  TuioObject b, Figure defB)
 	{
 		float dx = b.X - a.X;
 		float dy = b.Y - a.Y;
@@ -43,7 +43,7 @@ public static class FacingDetector
 		return Math.Abs(diffA) < ThresholdRad && Math.Abs(diffB) < ThresholdRad;
 	}
 
-	public static float FacingDeviation(TuioObject a, FigureDef defA, TuioObject b)
+	public static float FacingDeviation(TuioObject a, Figure defA, TuioObject b)
 	{
 		float dx = b.X - a.X;
 		float dy = b.Y - a.Y;
@@ -71,8 +71,8 @@ public class TuioDemo : Form, TuioListener
 	private struct StarPoint { public int X, Y, S; }
 		
 	private AppState        state       = AppState.Idle;
-	private FigureDef       activeFig;
-	private RelationshipDef activeRel;
+	private Figure       activeFig;
+	private Relationship activeRel;
 	private TuioObject      objA, objB;
 
 	private SlideShowManager slideShow;
@@ -129,8 +129,8 @@ public class TuioDemo : Form, TuioListener
 	private const float CenterZoneHalfWidth = 0.12f;
 	private const float CenterZoneHalfHeight = 0.12f;
 
-	private SceneObjectDef hoverObject;
-	private SceneObjectDef activeObjectStory;
+	private SceneObject hoverObject;
+	private SceneObject activeObjectStory;
 	private float          objectHoldProgress = 0f; // 0..1
 	private const int      ObjectHoldMs        = 1500;
 	private const float    ObjectFacingThresholdRad = (float)(Math.PI / 6.0); // 30 degrees
@@ -245,9 +245,9 @@ public class TuioDemo : Form, TuioListener
 				string baseDir = AppDomain.CurrentDomain.BaseDirectory;
 
 				string csvPath = Path.Combine(workspaceRoot, "C#", "content", "auth", "users.csv");
-				List<CsvUserRecord> users = CsvUserDatabase.Load(csvPath);
+				List<VisitorProfile> users = VisitorProfile.LoadFromCsv(csvPath);
 
-				var faceService = new FaceIdService();
+				var faceService = new FaceRecognitionService();
 				string faceUserId;
 				string faceStatus;
 				bool faceOk = faceService.Scan(out faceUserId, out faceStatus);
@@ -260,7 +260,7 @@ public class TuioDemo : Form, TuioListener
 					return;
 				}
 
-				CsvUserRecord selected = null;
+				VisitorProfile selected = null;
 				selected = users.Find(u => string.Equals(u.FaceUserId, faceUserId, StringComparison.OrdinalIgnoreCase));
 
 				if (selected == null)
@@ -271,9 +271,9 @@ public class TuioDemo : Form, TuioListener
 					return;
 				}
 
-				var btService = new BluetoothTwoFactorService();
+				var btService = new BluetoothService();
 				string btStatus;
-				bool btOk = btService.Verify(selected.PreferredBluetoothName, out btStatus);
+				bool btOk = btService.Verify(selected.BluetoothMacAddress, out btStatus);
 				authStatus = btStatus;
 
 				if (!btOk)
@@ -283,7 +283,7 @@ public class TuioDemo : Form, TuioListener
 					return;
 				}
 
-				visitorProfile = ProfileMapper.ToVisitorProfile(selected);
+				visitorProfile = selected;
 				authStatus = "Welcome " + visitorProfile.FullName + " (" + visitorProfile.Language + ")";
 
 				if (IsHandleCreated)
@@ -343,7 +343,7 @@ public class TuioDemo : Form, TuioListener
 
 	private void InitializeStoryLibrary()
 	{
-		foreach (FigureDef fig in MuseumData.Figures.Values)
+		foreach (Figure fig in MuseumData.Figures.Values)
 		{
 			string key = "figure:" + fig.SymbolId;
 			string title = "Figure: " + fig.Name;
@@ -352,7 +352,7 @@ public class TuioDemo : Form, TuioListener
 
 		for (int i = 0; i < MuseumData.Relationships.Count; i++)
 		{
-			RelationshipDef rel = MuseumData.Relationships[i];
+			Relationship rel = MuseumData.Relationships[i];
 			string key = "relationship:" + rel.SymbolIdA + "_" + rel.SymbolIdB;
 			string title = "Connection: " + rel.ConnectionTitle;
 			RegisterStory(key, title, rel.Slides);
@@ -597,8 +597,8 @@ public class TuioDemo : Form, TuioListener
 
 		// Determine what the final state should be
 		AppState targetState;
-		FigureDef  pendingFigureLocal = null;
-		RelationshipDef pendingRelationshipLocal = null;
+		Figure  pendingFigureLocal = null;
+		Relationship pendingRelationshipLocal = null;
 		TuioObject pendingA = null, pendingB = null;
 
 		if (onTable.Count == 1)
@@ -621,8 +621,8 @@ public class TuioDemo : Form, TuioListener
 			activeObjectStory = null;
 
 			TuioObject a    = onTable[0], b = onTable[1];
-			FigureDef  defA = MuseumData.Figures[a.SymbolID];
-			FigureDef  defB = MuseumData.Figures[b.SymbolID];
+			Figure  defA = MuseumData.Figures[a.SymbolID];
+			Figure  defB = MuseumData.Figures[b.SymbolID];
 			pendingRelationshipLocal = FindRelationship(a.SymbolID, b.SymbolID);
 			pendingA = a; pendingB = b;
 
@@ -658,8 +658,8 @@ public class TuioDemo : Form, TuioListener
 
 	// Stored pending state used by recognition countdown
 	private AppState        pendingState;
-	private FigureDef       pendingFig;
-	private RelationshipDef pendingRel;
+	private Figure       pendingFig;
+	private Relationship pendingRel;
 
 	private void OnRecognitionTick(object sender, EventArgs e)
 	{
@@ -718,7 +718,7 @@ public class TuioDemo : Form, TuioListener
 		Invalidate();
 	}
 
-	private void Transition(AppState ns, FigureDef fig, RelationshipDef rel,
+	private void Transition(AppState ns, Figure fig, Relationship rel,
 							 TuioObject a, TuioObject b)
 	{
 		bool stateChanged  = ns  != state;
@@ -793,7 +793,7 @@ public class TuioDemo : Form, TuioListener
 		Invalidate();
 	}
 
-	private static RelationshipDef FindRelationship(int idA, int idB)
+	private static Relationship FindRelationship(int idA, int idB)
 	{
 		foreach (var r in MuseumData.Relationships)
 			if ((r.SymbolIdA == idA && r.SymbolIdB == idB) ||
@@ -905,12 +905,12 @@ public class TuioDemo : Form, TuioListener
 			return;
 		}
 
-		SceneObjectDef bestObj = null;
+		SceneObject bestObj = null;
 		float bestDiff = float.MaxValue;
 
 		for (int i = 0; i < activeFig.SceneObjects.Count; i++)
 		{
-			SceneObjectDef so = activeFig.SceneObjects[i];
+			SceneObject so = activeFig.SceneObjects[i];
 			float dir = (float)Math.Atan2(so.Y - objA.Y, so.X - objA.X);
 			float eff = objA.Angle + (activeFig != null ? activeFig.FacingAngleOffset : 0f);
 			float diff = AbsAngleDiff(eff, dir);
@@ -1285,7 +1285,7 @@ public class TuioDemo : Form, TuioListener
 		int sx, sy;
 		MapSurfacePoint(obj.X, obj.Y, out sx, out sy);
 
-		FigureDef def = MuseumData.Figures.ContainsKey(obj.SymbolID)
+		Figure def = MuseumData.Figures.ContainsKey(obj.SymbolID)
 			? MuseumData.Figures[obj.SymbolID] : null;
 		Color accent = def != null ? def.AccentColor : CGold;
 		string name  = def != null ? def.Name : ("ID " + obj.SymbolID);
@@ -1465,7 +1465,7 @@ public class TuioDemo : Form, TuioListener
 		DrawOuterBorder(g);
 	}
 
-	private void DrawSingleFigureObjectScene(Graphics g, Rectangle area, FigureDef fig)
+	private void DrawSingleFigureObjectScene(Graphics g, Rectangle area, Figure fig)
 	{
 		using (var veil = new SolidBrush(Color.FromArgb(90, 0, 0, 0)))
 			g.FillRectangle(veil, area);
@@ -1481,7 +1481,7 @@ public class TuioDemo : Form, TuioListener
 			new RectangleF(area.X + 20, area.Bottom - 44, area.Width - 40, 28));
 	}
 
-	private void DrawSceneObject(Graphics g, SceneObjectDef so, Color accent)
+	private void DrawSceneObject(Graphics g, SceneObject so, Color accent)
 	{
 		int sx, sy;
 		MapSurfacePoint(so.X, so.Y, out sx, out sy);
@@ -1571,9 +1571,9 @@ public class TuioDemo : Form, TuioListener
 
 		// Facing compasses
 		int cy = H / 2 + 10;
-		FigureDef defA = MuseumData.Figures.ContainsKey(objA.SymbolID)
+		Figure defA = MuseumData.Figures.ContainsKey(objA.SymbolID)
 			? MuseumData.Figures[objA.SymbolID] : null;
-		FigureDef defB = MuseumData.Figures.ContainsKey(objB.SymbolID)
+		Figure defB = MuseumData.Figures.ContainsKey(objB.SymbolID)
 			? MuseumData.Figures[objB.SymbolID] : null;
 
 		float devA = FacingDetector.FacingDeviation(objA, defA, objB);
