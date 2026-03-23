@@ -69,8 +69,6 @@
     <Compile Include="TUIO\TuioTime.cs" />
     <Compile Include="OSC.NET\OSCTimeTag.cs" />
     <Compile Include="TUIO\TuioBlob.cs" />
-    <Compile Include="HandTracking\HandTrackingData.cs" />
-    <Compile Include="HandTracking\HandTrackingReceiver.cs" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="System" />
