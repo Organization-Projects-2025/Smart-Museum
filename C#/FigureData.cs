@@ -6,12 +6,13 @@
  * and the historical relationships between pairs of figures.
  *
  * TUIO Marker Assignments:
- *   ID 0 → Cleopatra VII
- *   ID 1 → Nefertiti
- *   ID 2 → Tutankhamun
- *   ID 3 → Ramesses II
- *   ID 4 → Hatshepsut
- *   ID 5 → Akhenaten
+ *   ID 0 → Circular Menu Controller
+ *   ID 1 → Cleopatra VII
+ *   ID 2 → Nefertiti
+ *   ID 3 → Tutankhamun
+ *   ID 4 → Ramesses II
+ *   ID 5 → Hatshepsut
+ *   ID 6 → Akhenaten
  */
 
 using System.Collections.Generic;
@@ -117,10 +118,10 @@ public static class MuseumData
 
         Figures = new Dictionary<int, FigureDef>
         {
-            // ── 0: Cleopatra VII ─────────────────────────────────────────────
-            { 0, new FigureDef
+            // ── 1: Cleopatra VII ─────────────────────────────────────────────
+            { 1, new FigureDef
             {
-                SymbolId         = 0,
+                SymbolId         = 1,
                 Name             = "Cleopatra VII",
                 Period           = "69 BC – 30 BC",
                 ShortDescription = "Last Pharaoh of Ancient Egypt",
@@ -194,10 +195,10 @@ public static class MuseumData
                 }
             }},
 
-            // ── 1: Nefertiti ─────────────────────────────────────────────────
-            { 1, new FigureDef
+            // ── 2: Nefertiti ─────────────────────────────────────────────────
+            { 2, new FigureDef
             {
-                SymbolId         = 1,
+                SymbolId         = 2,
                 Name             = "Nefertiti",
                 Period           = "c. 1370 BC – 1330 BC",
                 ShortDescription = "Great Royal Wife of Akhenaten",
@@ -220,10 +221,10 @@ public static class MuseumData
                 }
             }},
 
-            // ── 2: Tutankhamun ───────────────────────────────────────────────
-            { 2, new FigureDef
+            // ── 3: Tutankhamun ───────────────────────────────────────────────
+            { 3, new FigureDef
             {
-                SymbolId         = 2,
+                SymbolId         = 3,
                 Name             = "Tutankhamun",
                 Period           = "c. 1341 BC – 1323 BC",
                 ShortDescription = "The Boy King",
@@ -242,10 +243,10 @@ public static class MuseumData
                 }
             }},
 
-            // ── 3: Ramesses II ───────────────────────────────────────────────
-            { 3, new FigureDef
+            // ── 4: Ramesses II ───────────────────────────────────────────────
+            { 4, new FigureDef
             {
-                SymbolId         = 3,
+                SymbolId         = 4,
                 Name             = "Ramesses II",
                 Period           = "c. 1303 BC – 1213 BC",
                 ShortDescription = "Ramesses the Great",
@@ -268,10 +269,10 @@ public static class MuseumData
                 }
             }},
 
-            // ── 4: Hatshepsut ────────────────────────────────────────────────
-            { 4, new FigureDef
+            // ── 5: Hatshepsut ────────────────────────────────────────────────
+            { 5, new FigureDef
             {
-                SymbolId         = 4,
+                SymbolId         = 5,
                 Name             = "Hatshepsut",
                 Period           = "c. 1507 BC – 1458 BC",
                 ShortDescription = "Egypt's Longest-Reigning Female Pharaoh",
@@ -294,10 +295,10 @@ public static class MuseumData
                 }
             }},
 
-            // ── 5: Akhenaten ─────────────────────────────────────────────────
-            { 5, new FigureDef
+            // ── 6: Akhenaten ─────────────────────────────────────────────────
+            { 6, new FigureDef
             {
-                SymbolId         = 5,
+                SymbolId         = 6,
                 Name             = "Akhenaten",
                 Period           = "c. 1380 BC – 1336 BC",
                 ShortDescription = "The Heretic Pharaoh",
@@ -324,8 +325,8 @@ public static class MuseumData
             // ── Nefertiti + Akhenaten  (Royal Couple) ────────────────────────
             new RelationshipDef
             {
-                SymbolIdA       = 1,
-                SymbolIdB       = 5,
+                SymbolIdA       = 2,
+                SymbolIdB       = 6,
                 ConnectionTitle = "Husband & Wife — The Revolutionary Royal Couple",
                 Slides          = new List<ContentSlide>
                 {
@@ -344,8 +345,8 @@ public static class MuseumData
             // ── Tutankhamun + Akhenaten  (Father & Son) ──────────────────────
             new RelationshipDef
             {
-                SymbolIdA       = 2,
-                SymbolIdB       = 5,
+                SymbolIdA       = 3,
+                SymbolIdB       = 6,
                 ConnectionTitle = "Father & Son — A Legacy Reversed",
                 Slides          = new List<ContentSlide>
                 {
@@ -361,8 +362,8 @@ public static class MuseumData
             // ── Nefertiti + Tutankhamun  (Stepmother & Stepson) ──────────────
             new RelationshipDef
             {
-                SymbolIdA       = 1,
-                SymbolIdB       = 2,
+                SymbolIdA       = 2,
+                SymbolIdB       = 3,
                 ConnectionTitle = "Stepmother & Stepson — The Amarna Succession",
                 Slides          = new List<ContentSlide>
                 {
@@ -381,8 +382,8 @@ public static class MuseumData
             // ── Cleopatra + Nefertiti  (Queens of Egypt) ─────────────────────
             new RelationshipDef
             {
-                SymbolIdA       = 0,
-                SymbolIdB       = 1,
+                SymbolIdA       = 1,
+                SymbolIdB       = 2,
                 ConnectionTitle = "Queens of Egypt — Icons Across the Ages",
                 Slides          = new List<ContentSlide>
                 {
@@ -404,8 +405,8 @@ public static class MuseumData
             // ── Cleopatra + Ramesses II  (Last and Greatest) ─────────────────
             new RelationshipDef
             {
-                SymbolIdA       = 0,
-                SymbolIdB       = 3,
+                SymbolIdA       = 1,
+                SymbolIdB       = 4,
                 ConnectionTitle = "Egypt's Most Celebrated Rulers — 1,200 Years Apart",
                 Slides          = new List<ContentSlide>
                 {
@@ -427,8 +428,8 @@ public static class MuseumData
             // ── Hatshepsut + Ramesses II  (Great Builder Pharaohs) ───────────
             new RelationshipDef
             {
-                SymbolIdA       = 4,
-                SymbolIdB       = 3,
+                SymbolIdA       = 5,
+                SymbolIdB       = 4,
                 ConnectionTitle = "Egypt's Greatest Builder Pharaohs",
                 Slides          = new List<ContentSlide>
                 {
@@ -450,8 +451,8 @@ public static class MuseumData
             // ── Akhenaten + Hatshepsut  (Rebels Against Tradition) ───────────
             new RelationshipDef
             {
-                SymbolIdA       = 5,
-                SymbolIdB       = 4,
+                SymbolIdA       = 6,
+                SymbolIdB       = 5,
                 ConnectionTitle = "Rebels Against Tradition — Rulers Who Defied Convention",
                 Slides          = new List<ContentSlide>
                 {
@@ -470,8 +471,8 @@ public static class MuseumData
             // ── Ramesses II + Tutankhamun  (Two Kings of the 19th/18th Dynasty)
             new RelationshipDef
             {
-                SymbolIdA       = 3,
-                SymbolIdB       = 2,
+                SymbolIdA       = 4,
+                SymbolIdB       = 3,
                 ConnectionTitle = "New Kingdom Pharaohs — Different Dynasties, One Egypt",
                 Slides          = new List<ContentSlide>
                 {
