@@ -77,6 +77,7 @@ public class TuioDemo : Form, TuioListener
     private bool waitForClearAfterLockedShow = false;
     private int activeFigureSymbolId = -1;
     private bool singleFigureIntroDone = false;
+    private HashSet<int> recognizedFigureIds = new HashSet<int>();
     private int slideElapsedMs = 0;
 
     private enum SlideShowContext
@@ -461,6 +462,7 @@ public class TuioDemo : Form, TuioListener
         }
     }
 
+
     private string GetCurrentFigureStoryKey()
     {
         if (activeFig != null)
@@ -594,7 +596,7 @@ public class TuioDemo : Form, TuioListener
             if (activeFigureSymbolId != pendingFigureLocal.SymbolId)
             {
                 activeFigureSymbolId = pendingFigureLocal.SymbolId;
-                singleFigureIntroDone = false;
+                singleFigureIntroDone = recognizedFigureIds.Contains(activeFigureSymbolId);
                 activeObjectStory = null;
             }
         }
@@ -616,15 +618,40 @@ public class TuioDemo : Form, TuioListener
                 targetState = AppState.PairNotFacing;
         }
 
-        // If markers were already active and state is stable, transition directly
-        // (avoids re-triggering recognition on every update while figures are on table)
+        bool singleFigureNeedsRecognition =
+            targetState == AppState.SingleFigure &&
+            pendingFigureLocal != null &&
+            !recognizedFigureIds.Contains(pendingFigureLocal.SymbolId);
+
         bool wasIdle = (state == AppState.Idle);
         if (!wasIdle)
         {
-            if (targetState == AppState.SingleFigure)
-                Transition(targetState, pendingFigureLocal, null, pendingA, pendingB);
+            if (singleFigureNeedsRecognition)
+            {
+                pendingState = targetState;
+                pendingFig = pendingFigureLocal;
+                pendingRel = pendingRelationshipLocal;
+                objA = pendingA;
+                objB = pendingB;
+                recognitionProgress = 0f;
+                state = AppState.Recognition;
+                recognitionTimer.Start();
+                Invalidate();
+            }
             else
-                Transition(targetState, null, pendingRelationshipLocal, pendingA, pendingB);
+            {
+                if (targetState == AppState.SingleFigure)
+                    Transition(targetState, pendingFigureLocal, null, pendingA, pendingB);
+                else
+                    Transition(targetState, null, pendingRelationshipLocal, pendingA, pendingB);
+            }
+            return;
+        }
+
+        // Coming from Idle: skip recognition for figures already recognized once.
+        if (targetState == AppState.SingleFigure && !singleFigureNeedsRecognition)
+        {
+            Transition(targetState, pendingFigureLocal, null, pendingA, pendingB);
             return;
         }
 
@@ -808,6 +835,8 @@ public class TuioDemo : Form, TuioListener
 
         if (lockedContext == SlideShowContext.SingleFigureIntro)
         {
+            if (activeFigureSymbolId > 0)
+                recognizedFigureIds.Add(activeFigureSymbolId);
             singleFigureIntroDone = true;
             activeObjectStory = null;
             lockedContext = SlideShowContext.None;
@@ -1281,25 +1310,6 @@ public class TuioDemo : Form, TuioListener
         }
     }
 
-    private void DrawHeaderProgressBar(Graphics g, int x, int y, int width, int height, float progress, Color accent)
-    {
-        if (width <= 0 || height <= 0) return;
-        progress = Math.Max(0f, Math.Min(1f, progress));
-
-        using (Brush bg = new SolidBrush(Color.FromArgb(45, Color.White)))
-            g.FillRectangle(bg, x, y, width, height);
-
-        int fillW = (int)(width * progress);
-        if (fillW > 0)
-        {
-            using (Brush fg = new SolidBrush(accent))
-                g.FillRectangle(fg, x, y, fillW, height);
-        }
-
-        using (Pen border = new Pen(Color.FromArgb(130, Color.White), 1))
-            g.DrawRectangle(border, x, y, width, height);
-    }
-
     // Rendering: single figure
 
     private void DrawSingleFigure(Graphics g)
@@ -1404,40 +1414,6 @@ public class TuioDemo : Form, TuioListener
 
         if (isHover)
             DrawCountdownArc(g, sx, box.Bottom + 42, 14, objectHoldProgress);
-    }
-
-    private void DrawObjectSceneStoryOverlay(Graphics g, ContentSlide slide, Rectangle area, Color accent, float alpha)
-    {
-        int a = Clamp255(alpha * 255f);
-        if (a == 0) return;
-
-        Rectangle panel = new Rectangle(
-            area.X + area.Width / 6,
-            area.Y + area.Height / 7,
-            area.Width * 4 / 6,
-            area.Height * 5 / 7);
-
-        using (var veil = new SolidBrush(Color.FromArgb(a * 180 / 255, 6, 6, 14)))
-            g.FillRectangle(veil, panel);
-
-        Color frame = (activeObjectStory != null) ? GetAccent(objA) : accent;
-        using (var pen = new Pen(Color.FromArgb(a, frame), 3))
-            g.DrawRectangle(pen, panel);
-
-        DrawCornerAccents(g, panel, Color.FromArgb(a, frame), 26);
-
-        Rectangle inner = new Rectangle(panel.X + 20, panel.Y + 22, panel.Width - 40, panel.Height - 60);
-
-        if (slide.Type == ContentType.Image)
-            DrawImageSlide(g, slide.Content, inner, a);
-        else if (slide.Type == ContentType.Text)
-            DrawTextSlide(g, slide.Content, inner, frame, a);
-        else
-            DrawVideoSlide(g, slide.Content, inner, frame, a);
-
-        string title = (activeObjectStory != null) ? activeObjectStory.Name : "Object Story";
-        DrawCentered(g, title, fontSmall, Color.White,
-            new RectangleF(panel.X + 10, panel.Bottom - 30, panel.Width - 20, 22));
     }
 
     // Rendering: pair not facing
@@ -1578,8 +1554,7 @@ public class TuioDemo : Form, TuioListener
         }
     }
 
-    private void DrawTextSlide(Graphics g, string text, Rectangle area,
-        Color accent, int alpha)
+    private void DrawTextSlide(Graphics g, string text, Rectangle area, Color accent, int alpha)
     {
         int padX = Math.Min(60, area.Width / 8);
         var panel = new Rectangle(
@@ -1622,8 +1597,7 @@ public class TuioDemo : Form, TuioListener
             g.DrawString(text, fontBody, br, textRect, sf);
     }
 
-    private void DrawVideoSlide(Graphics g, string path, Rectangle area,
-        Color accent, int alpha)
+    private void DrawVideoSlide(Graphics g, string path, Rectangle area, Color accent, int alpha)
     {
         int padX = area.Width / 6;
         var panel = new Rectangle(
@@ -1770,8 +1744,7 @@ public class TuioDemo : Form, TuioListener
         DrawCornerAccents(g, new Rectangle(m, m, W - m * 2, H - m * 2), CGoldDim, 28);
     }
 
-    private void DrawCornerAccents(Graphics g, Rectangle r, Color color, int size)
-    {
+    private void DrawCornerAccents(Graphics g, Rectangle r, Color color, int size) {
         using (var p = new Pen(color, 2))
         {
             g.DrawLine(p, r.Left, r.Top + size, r.Left, r.Top);
@@ -1899,8 +1872,6 @@ public class TuioDemo : Form, TuioListener
         if (IsHandleCreated) this.BeginInvoke(new Action(this.Invalidate));
     }
 
-    // Resize
-
     protected override void OnResize(EventArgs e)
     {
         base.OnResize(e);
@@ -1910,8 +1881,6 @@ public class TuioDemo : Form, TuioListener
             H = this.ClientSize.Height;
         }
     }
-
-    // Keyboard and form events
 
     private void OnKeyDown(object sender, KeyEventArgs e)
     {
@@ -1968,8 +1937,6 @@ public class TuioDemo : Form, TuioListener
         }
         Environment.Exit(0);
     }
-
-    // Entry point
 
     [STAThread]
     static void Main(string[] args)
