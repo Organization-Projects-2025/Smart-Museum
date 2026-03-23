@@ -8,7 +8,12 @@ import pickle
 import os
 
 class SmartMuseumGestureRecognizer:
-    def __init__(self, templates_file='gesture_templates.pkl'):
+    def __init__(self, templates_file=None):
+        # If no templates_file specified, use default in dollarpy-service folder
+        if templates_file is None:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            templates_file = os.path.join(script_dir, 'gesture_templates.pkl')
+        
         self.templates_file = templates_file
         self.recognizer = None
         self.templates = []

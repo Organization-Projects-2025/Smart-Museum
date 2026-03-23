@@ -17,7 +17,7 @@ class GestureRecognitionGUI:
         self.root.title("Smart Museum - Gesture Recognition Tester")
         self.root.geometry("1000x700")
         
-        # Initialize recognizer
+        # Initialize recognizer (will use default path in dollarpy-service folder)
         self.recognizer = SmartMuseumGestureRecognizer()
         
         # MediaPipe setup - match template building and service configuration
@@ -168,9 +168,13 @@ for accurate recognition.
                   justify=tk.LEFT, wraplength=250).pack()
     
     def build_templates(self):
+        # Use default folder path
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        default_folder = os.path.join(os.path.dirname(script_dir), "Public", "Data", "Videos", "Moves")
+        
         folder = filedialog.askdirectory(
             title="Select Moves Folder",
-            initialdir="../Public/Data/Videos/Moves"
+            initialdir=default_folder
         )
         
         if folder:

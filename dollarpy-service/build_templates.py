@@ -10,14 +10,16 @@ def main():
     print("Smart Museum - Gesture Template Builder")
     print("=" * 60)
     
-    # Default path
-    default_path = "../Public/Data/Videos/Moves"
+    # Get script directory and construct absolute default path
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    default_path = os.path.join(os.path.dirname(script_dir), "Public", "Data", "Videos", "Moves")
     
     # Check if custom path provided
     if len(sys.argv) > 1:
         videos_path = sys.argv[1]
     else:
         videos_path = default_path
+        print(f"\nUsing default path: {videos_path}")
     
     # Verify path exists
     if not os.path.exists(videos_path):

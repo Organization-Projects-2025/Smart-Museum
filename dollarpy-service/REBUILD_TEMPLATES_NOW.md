@@ -3,33 +3,45 @@
 ## Why?
 The preprocessing code has been fixed to ensure consistency between template building and real-time recognition. Old templates were built with different settings and won't match well.
 
-## What to do?
+## Quick Start - Easiest Way!
 
-### Step 1: Rebuild Templates (REQUIRED)
+### Windows:
 ```bash
 cd dollarpy-service
-..\.venv\Scripts\python.exe build_templates.py "C:\Projects\Museum\Smart-Museum\Public\Data\Videos\Moves"
+rebuild_templates.bat
 ```
+
+### Linux/Mac:
+```bash
+cd dollarpy-service
+./rebuild_templates.sh
+```
+
+That's it! The script automatically uses the correct folder: `C:\Projects\Museum\Smart-Museum\Public\Data\Videos\Moves`
+
+## Manual Method (if needed)
+
+### Step 1: Rebuild Templates
+```bash
+cd dollarpy-service
+python build_templates.py
+```
+
+No arguments needed! It automatically uses: `C:\Projects\Museum\Smart-Museum\Public\Data\Videos\Moves`
 
 You should see:
 ```
 ============================================================
 Smart Museum - Gesture Template Builder
 ============================================================
-Processing videos from: C:\Projects\Museum\Smart-Museum\Public\Data\Videos\Moves
+Using default path: C:\Projects\Museum\Smart-Museum\Public\Data\Videos\Moves
 ------------------------------------------------------------
 Building templates...
 Found 4 gesture classes:
 - close -> close
-- RotateFingerRight -> rotatefingerright
 - swipeL -> swipel
 - swipeR -> swiper
-
-=== Processing close gestures ===
-Processing close (1).mp4 as close_1...
-Created 1 templates for close
-
-[... similar for other gestures ...]
+- thumbs -> thumbs
 
 ✓ Successfully created 4 templates
 ✓ Templates saved to: gesture_templates.pkl
@@ -37,24 +49,29 @@ Created 1 templates for close
 
 ### Step 2: Test in GUI
 ```bash
-..\.venv\Scripts\python.exe run_gesture_gui.py
+python run_gesture_gui.py
 ```
 
-1. Click "Start Camera"
-2. Click "Start Real-Time Detection"
-3. Perform gestures from your training videos
-4. **Check scores**: Should be 0.6-0.9 for correct gestures (was 0.15-0.30 before)
+The GUI now automatically:
+- Loads templates from `dollarpy-service/gesture_templates.pkl`
+- Uses the correct default folder when building templates
+
+1. Templates are auto-loaded on startup
+2. Click "Start Camera"
+3. Click "Start Real-Time Detection"
+4. Perform gestures from your training videos
+5. **Check scores**: Should be 0.6-0.9 for correct gestures (was 0.15-0.30 before)
 
 ### Step 3: Test in C# App
 
 Terminal 1 - Start gesture service:
 ```bash
-..\.venv\Scripts\python.exe gesture_service.py
+python gesture_service.py
 ```
 
 Terminal 2 - Run C# app (build and run TUIO_DEMO.csproj)
 
-Perform rotatefingerright gesture - menu should open reliably!
+Perform gestures - they should be recognized reliably!
 
 ## What Changed?
 
@@ -67,6 +84,13 @@ Perform rotatefingerright gesture - menu should open reliably!
 - Templates: 640x480 resolution, len//6+1 stroke IDs
 - Real-time: 640x480 resolution, len//6+1 stroke IDs
 - Result: Good matching, scores 0.6-0.9
+
+## New Features
+
+✅ **Auto-default folder**: `build_templates.py` uses correct folder automatically
+✅ **Auto-load templates**: GUI loads templates on startup
+✅ **Correct paths**: All components use `dollarpy-service/gesture_templates.pkl`
+✅ **Easy rebuild**: Just run `rebuild_templates.bat` (Windows) or `rebuild_templates.sh` (Linux/Mac)
 
 ## Checklist
 
