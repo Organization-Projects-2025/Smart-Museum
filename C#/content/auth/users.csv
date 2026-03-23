@@ -1,0 +1,13 @@
+face_user_id,first_name,last_name,age,gender,race,preferred_bluetooth_name
+user0,Ahmed,ElSherif,22,male,black,4C:7C:D9:B2:4A:55
+user1,Sara,Nabil,11,female,white,SaraWatch
+user2,Omar,Farid,16,male,asian,OmarBuds
+user3,Lina,Adel,22,female,indian,LinaPhone
+user4,Mark,Stone,30,male,white,MarkLaptop
+user5,Ana,Lopez,34,female,latino,AnaPhone
+user6,Yousef,Kamal,45,male,indian,YousefCar
+user7,Nour,Salem,52,female,asian,NourTablet
+user8,Ibrahim,Saad,66,male,black,IbrahimPhone
+user9,Mona,Fouad,71,female,white,MonaWatch
+user10,Carlos,Diaz,28,male,latino,CarlosPhone
+user11,Mei,Lin,67,female,asian,MeiPhone
