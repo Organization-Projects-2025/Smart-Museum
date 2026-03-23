@@ -1,0 +1,13 @@
+# Smart Museum - Dollarpy Gesture Recognition Service
+# Install with: pip install -r requirements.txt
+
+# Core dependencies
+opencv-python>=4.8,<5
+mediapipe==0.10.9
+numpy>=1.24,<3
+
+# Gesture recognition
+dollarpy>=0.1.0
+
+# GUI dependencies
+Pillow>=9.0.0

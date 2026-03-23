@@ -14,3 +14,4 @@ dlib-bin>=20.0.0; platform_system == "Windows"
 
 # Used by the separate hand-tracking pipeline (mediapipe/hand_tracker.py)
 mediapipe>=0.10.0
+
