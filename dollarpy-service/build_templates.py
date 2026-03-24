@@ -23,7 +23,7 @@ def main():
     
     # Verify path exists
     if not os.path.exists(videos_path):
-        print(f"\n✗ Error: Path does not exist: {videos_path}")
+        print(f"\nERROR: Path does not exist: {videos_path}")
         print("\nUsage:")
         print(f"  python build_templates.py [path_to_videos]")
         print(f"\nDefault path: {default_path}")
@@ -41,7 +41,7 @@ def main():
     
     if success:
         print("\n" + "=" * 60)
-        print(f"✓ Successfully created {len(recognizer.templates)} templates")
+        print(f"OK: Successfully created {len(recognizer.templates)} templates")
         print("=" * 60)
         
         # Show template breakdown
@@ -57,16 +57,16 @@ def main():
         # Save templates
         print("\nSaving templates...")
         recognizer.save_templates()
-        print(f"✓ Templates saved to: {recognizer.templates_file}")
+        print(f"OK: Templates saved to: {recognizer.templates_file}")
         
         print("\n" + "=" * 60)
-        print("✓ Template building complete!")
+        print("OK: Template building complete!")
         print("\nYou can now run the GUI:")
         print("  python run_gesture_gui.py")
         print("=" * 60)
     else:
         print("\n" + "=" * 60)
-        print("✗ Failed to build templates")
+        print("ERROR: Failed to build templates")
         print("=" * 60)
         print("\nPossible issues:")
         print("  - No video files found in the specified path")

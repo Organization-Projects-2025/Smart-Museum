@@ -466,18 +466,21 @@ public class TuioDemo : Form, TuioListener
             return;
         }
 
-        switch (gesture.ToLower())
+        // Normalize gesture name (remove underscores, lowercase)
+        string normalizedGesture = gesture.ToLower().Replace("_", "");
+
+        switch (normalizedGesture)
         {
-            case "rotatefingerright":
-            case "rotate_finger_right":
-                // Open the circular menu
-                Console.WriteLine("→ Matched rotatefingerright case");
+            case "thumbsup":
+            case "thumbup":
+                // Thumbs up opens the circular menu
+                Console.WriteLine("→ Matched thumbsup case");
                 if (!circularMenu.IsVisible)
                 {
                     Console.WriteLine("→ Opening menu...");
                     circularMenu.Show();
                     Invalidate(); // Force redraw
-                    Console.WriteLine("✓ Gesture: Menu opened");
+                    Console.WriteLine("✓ Gesture: Menu opened with thumbs up");
                 }
                 else
                 {
@@ -486,7 +489,7 @@ public class TuioDemo : Form, TuioListener
                 break;
 
             case "close":
-                // Close the circular menu
+                // Close gesture closes the circular menu
                 Console.WriteLine("→ Matched close case");
                 if (circularMenu.IsVisible)
                 {
@@ -500,40 +503,79 @@ public class TuioDemo : Form, TuioListener
                 }
                 break;
 
-            case "swipe_left":
+            case "swipeleft":
             case "swipel":
-                // Swipe left = Navigate to NEXT option (inverted, goes right in menu)
+                // Swipe left = Navigate to NEXT option in circular menu
+                Console.WriteLine("→ Matched swipe left case");
                 if (circularMenu.IsVisible)
                 {
-                    circularMenu.MoveUpAction();
-                    Invalidate(); // Force redraw
-                    Console.WriteLine("Gesture: Swipe left -> Next option");
+                    // Rotate menu selection counter-clockwise (next item)
+                    int currentIndex = circularMenu.TopIndex;
+                    int itemCount = circularMenu.IsInSecondLevel 
+                        ? (circularMenu.SelectedTop == "Favorites" ? circularMenu.Favorites.Count : circularMenu.Watched.Count)
+                        : circularMenu.TopItems.Count;
+                    
+                    if (itemCount > 0)
+                    {
+                        int newIndex = (currentIndex + 1) % itemCount;
+                        float angleStep = (float)(Math.PI * 2.0 / itemCount);
+                        float newAngle = newIndex * angleStep - (float)Math.PI / 2f;
+                        circularMenu.UpdateRotation(newAngle);
+                        Invalidate(); // Force redraw
+                        Console.WriteLine($"✓ Gesture: Swipe left -> Next option (index {currentIndex} → {newIndex})");
+                    }
+                }
+                else
+                {
+                    Console.WriteLine("→ Menu not visible, ignoring swipe");
                 }
                 break;
 
-            case "swipe_right":
+            case "swiperight":
             case "swiper":
-                // Swipe right = Navigate to PREVIOUS option (inverted, goes left in menu)
+                // Swipe right = Navigate to PREVIOUS option in circular menu
+                Console.WriteLine("→ Matched swipe right case");
                 if (circularMenu.IsVisible)
                 {
-                    circularMenu.MoveDownAction();
-                    Invalidate(); // Force redraw
-                    Console.WriteLine("Gesture: Swipe right -> Previous option");
+                    // Rotate menu selection clockwise (previous item)
+                    int currentIndex = circularMenu.TopIndex;
+                    int itemCount = circularMenu.IsInSecondLevel 
+                        ? (circularMenu.SelectedTop == "Favorites" ? circularMenu.Favorites.Count : circularMenu.Watched.Count)
+                        : circularMenu.TopItems.Count;
+                    
+                    if (itemCount > 0)
+                    {
+                        int newIndex = (currentIndex - 1 + itemCount) % itemCount;
+                        float angleStep = (float)(Math.PI * 2.0 / itemCount);
+                        float newAngle = newIndex * angleStep - (float)Math.PI / 2f;
+                        circularMenu.UpdateRotation(newAngle);
+                        Invalidate(); // Force redraw
+                        Console.WriteLine($"✓ Gesture: Swipe right -> Previous option (index {currentIndex} → {newIndex})");
+                    }
+                }
+                else
+                {
+                    Console.WriteLine("→ Menu not visible, ignoring swipe");
                 }
                 break;
 
             case "open":
-                // Select/Enter current menu item (only when menu is visible)
+                // Open gesture selects/enters current menu item (only when menu is visible)
+                Console.WriteLine("→ Matched open case");
                 if (circularMenu.IsVisible)
                 {
                     circularMenu.MoveUpAction();
                     Invalidate(); // Force redraw
-                    Console.WriteLine("Gesture: Open -> Select item");
+                    Console.WriteLine("✓ Gesture: Open -> Select item");
+                }
+                else
+                {
+                    Console.WriteLine("→ Menu not visible, ignoring open gesture");
                 }
                 break;
 
             default:
-                Console.WriteLine($"Unknown gesture: {gesture}");
+                Console.WriteLine($"✗ Unknown gesture: {gesture}");
                 break;
         }
     }

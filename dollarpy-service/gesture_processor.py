@@ -4,12 +4,12 @@ Processes video files to extract gesture templates using MediaPipe
 """
 import os
 import cv2
-import mediapipe as mp
 from dollarpy import Template, Point
+# Use compatibility layer for mediapipe 0.10.30+
+import mediapipe_compat as mp
 
 class GestureProcessor:
     def __init__(self):
-        self.mp_drawing = mp.solutions.drawing_utils
         self.mp_hands = mp.solutions.hands
         # Use same configuration as real-time recognition
         self.hands = self.mp_hands.Hands(
@@ -21,8 +21,10 @@ class GestureProcessor:
     
     def process_video(self, video_path, gesture_name):
         """
-        Process a single video file and extract hand tracking points
-        Returns a Template object for the gesture
+        Process a single video file and extract hand tracking points.
+        Subsamples frames to match the real-time 60 FPS capture rate so that
+        template point density is consistent with live recognition.
+        Returns a Template object for the gesture.
         """
         points = []
         cap = cv2.VideoCapture(video_path)
@@ -31,6 +33,12 @@ class GestureProcessor:
             print(f"Error: Could not open video {video_path}")
             return None
         
+        # Determine subsampling step so we process at ~60 FPS equivalent
+        TARGET_FPS = 60.0
+        video_fps = cap.get(cv2.CAP_PROP_FPS) or TARGET_FPS
+        # step=1 means every frame; step=2 means every other frame, etc.
+        step = max(1, round(video_fps / TARGET_FPS))
+        
         frame_count = 0
         
         while cap.isOpened():
@@ -38,9 +46,13 @@ class GestureProcessor:
             if not ret:
                 break
             
+            frame_count += 1
+            # Skip frames to match target FPS density
+            if (frame_count - 1) % step != 0:
+                continue
+            
             # Use same resolution as real-time recognition
             frame = cv2.resize(frame, (640, 480))
-            frame_count += 1
             
             # Convert to RGB for MediaPipe
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -50,18 +62,16 @@ class GestureProcessor:
                 image_height, image_width, _ = frame.shape
                 
                 for hand_landmarks in results.multi_hand_landmarks:
-                    # Extract MULTIPLE key landmarks (same as real-time)
                     # Track: wrist (0), thumb tip (4), index tip (8), middle tip (12), ring tip (16), pinky tip (20)
                     key_landmarks = [0, 4, 8, 12, 16, 20]
                     
-                    # Use same stroke ID calculation as real-time: all 6 landmarks in same frame get same stroke ID
+                    # All 6 landmarks in same frame share the same stroke ID (matches real-time)
                     stroke_id = len(points) // 6 + 1
                     
                     for landmark_id in key_landmarks:
                         landmark = hand_landmarks.landmark[landmark_id]
                         x = int(landmark.x * image_width)
                         y = int(landmark.y * image_height)
-                        # All points in same frame get same stroke ID (matches real-time)
                         points.append(Point(x, y, stroke_id))
         
         cap.release()

@@ -5,11 +5,12 @@ import os
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import cv2
-import mediapipe as mp
 from PIL import Image, ImageTk
 from dollarpy import Point
 from gesture_recognizer import SmartMuseumGestureRecognizer
 import threading
+# Use compatibility layer for mediapipe 0.10.30+
+import mediapipe_compat as mp
 
 class GestureRecognitionGUI:
     def __init__(self, root):
@@ -88,9 +89,9 @@ class GestureRecognitionGUI:
         
         # FPS control
         ttk.Label(control_frame, text="FPS:", font=('Arial', 9)).pack(side=tk.LEFT, padx=(5, 2))
-        self.fps_var = tk.StringVar(value="30")
+        self.fps_var = tk.StringVar(value="60")
         self.fps_combo = ttk.Combobox(control_frame, textvariable=self.fps_var, 
-                                       values=["10", "15", "20", "25", "30", "60"], 
+                                       values=["10", "15", "20", "25", "30", "45", "60"], 
                                        width=5, state="readonly")
         self.fps_combo.pack(side=tk.LEFT, padx=2)
         self.fps_combo.bind("<<ComboboxSelected>>", self.on_fps_changed)
@@ -99,11 +100,13 @@ class GestureRecognitionGUI:
         self.realtime_active = False
         self.realtime_points = []
         self.realtime_last_recognition = 0
-        self.realtime_cooldown = 2.0  # 2 seconds between recognitions
-        self.realtime_min_points = 80  # Minimum points before recognition (increased from 60)
-        self.realtime_max_points = 80  # Maximum points to collect (changed from 180)
+        self.realtime_cooldown = 1.0  # 1 second between recognitions for responsiveness
+        # Real-time recognition capture window. These defaults are overridden once
+        # templates are loaded (template point counts are typically ~500+).
+        self.realtime_min_points = 300
+        self.realtime_max_points = 700
         self.realtime_no_hand_frames = 0  # Count frames without hand detection
-        self.frame_delay = 33  # milliseconds between frames (default ~30 FPS)
+        self.frame_delay = 16  # milliseconds between frames (default ~60 FPS)
         
         # Main content area
         content_frame = ttk.Frame(self.root)
@@ -186,6 +189,7 @@ for accurate recognition.
             if success:
                 self.recognizer.save_templates()
                 self.status_label.config(text="Templates built successfully!", foreground='green')
+                self._configure_realtime_point_window()
                 messagebox.showinfo("Success", 
                                     f"Created {len(self.recognizer.templates)} gesture templates")
             else:
@@ -197,6 +201,7 @@ for accurate recognition.
         
         if success:
             self.status_label.config(text="Templates loaded successfully!", foreground='green')
+            self._configure_realtime_point_window()
             messagebox.showinfo("Success", 
                                 f"Loaded {len(self.recognizer.templates)} gesture templates")
         else:
@@ -418,7 +423,7 @@ for accurate recognition.
                 if should_recognize:
                     # Try to recognize
                     try:
-                        print(f"\n→ Real-time recognition with {len(self.realtime_points)} points")
+                        print(f"\nINFO: Real-time recognition with {len(self.realtime_points)} points")
                         gesture_name, score = self.recognizer.recognize(self.realtime_points)
                         
                         # Show result if confidence is above minimum threshold (0.13)
@@ -426,7 +431,7 @@ for accurate recognition.
                             base_name = self.recognizer.get_gesture_base_name(gesture_name)
                             
                             # Update UI - always show the best match
-                            self.result_label.config(text=f"✓ {base_name.replace('_', ' ').title()}")
+                            self.result_label.config(text=f"OK: {base_name.replace('_', ' ').title()}")
                             self.score_label.config(text=f"Score: {score:.4f}")
                             
                             # Color based on confidence
@@ -437,16 +442,19 @@ for accurate recognition.
                             else:
                                 self.result_label.config(foreground='red')
                             
-                            print(f"✓ DETECTED: {base_name} (score: {score:.4f})")
+                            print(f"OK: DETECTED: {base_name} (score: {score:.4f})")
                         else:
-                            print(f"✗ Too low confidence: {score:.4f} (minimum: 0.13)")
+                            print(f"LOW_CONFIDENCE: {score:.4f} (minimum: 0.13)")
                             self.result_label.config(text="No clear gesture", foreground='gray')
                             self.score_label.config(text=f"Score: {score:.4f}")
                         
-                        # Reset for next gesture
+                        # Only reset when we actually detect a clear gesture.
+                        # If confidence is too low, keep collecting so swipel/swiper
+                        # can reach the full point sequence length.
                         self.realtime_last_recognition = current_time
-                        self.realtime_points = []
                         self.realtime_no_hand_frames = 0
+                        if score > 0.13:
+                            self.realtime_points = []
                         
                     except Exception as e:
                         print(f"Real-time recognition error: {e}")
@@ -455,7 +463,7 @@ for accurate recognition.
                 
                 # Reset if we reach max points (gesture complete)
                 elif len(self.realtime_points) >= self.realtime_max_points:
-                    print(f"→ Resetting: reached max points ({len(self.realtime_points)})")
+                    print(f"INFO: Resetting: reached max points ({len(self.realtime_points)})")
                     self.realtime_points = []
                     self.realtime_no_hand_frames = 0
                 
@@ -504,8 +512,36 @@ for accurate recognition.
                 self.recognizer.load_templates()
                 self.status_label.config(text=f"Auto-loaded {len(self.recognizer.templates)} templates", 
                                          foreground='green')
+                self._configure_realtime_point_window()
             except Exception as e:
                 self.status_label.config(text="Ready - No templates loaded", foreground='blue')
+
+    def _configure_realtime_point_window(self):
+        """Match GUI real-time point capture window to the largest template length.
+
+        Using the *maximum* template length (not average) ensures the window is
+        wide enough to capture even the longest gesture.  Recognition starts as
+        soon as we have ~40 % of that length so shorter gestures are detected
+        quickly and the loop keeps re-testing iteratively until the window fills.
+        """
+        if not self.recognizer.templates:
+            return
+
+        template_lengths = [len(t) for t in self.recognizer.templates]
+        max_len = max(template_lengths)
+
+        def round_to_multiple(n, m):
+            return max(m, int(round(n / m)) * m)
+
+        # Start recognising at 40 % of the largest template so short gestures
+        # are caught early; the window grows up to 120 % of the largest template.
+        min_points = round_to_multiple(max_len * 0.40, 6)
+        max_points = round_to_multiple(max_len * 1.20, 6)
+
+        self.realtime_min_points = int(max(min_points, 60))
+        self.realtime_max_points = int(max(max_points, self.realtime_min_points + 60))
+        print(f"Point window: min={self.realtime_min_points}, max={self.realtime_max_points} "
+              f"(largest template: {max_len} pts)")
 
 def main():
     root = tk.Tk()

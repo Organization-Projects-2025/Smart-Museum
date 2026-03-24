@@ -5,11 +5,12 @@ Runs a socket server that C# can connect to for real-time gesture recognition
 import socket
 import json
 import cv2
-import mediapipe as mp
 from dollarpy import Point
 from gesture_recognizer import SmartMuseumGestureRecognizer
 import threading
 import time
+# Use compatibility layer for mediapipe 0.10.30+
+import mediapipe_compat as mp
 
 class GestureRecognitionService:
     def __init__(self, host='localhost', port=5001):
@@ -103,7 +104,7 @@ class GestureRecognitionService:
                             y = int(landmark.y * image_height)
                             gesture_points.append(Point(x, y, stroke_id))
                 
-                time.sleep(0.033)  # ~30 FPS
+                time.sleep(0.016)  # ~60 FPS
         
         def start_camera():
             """Start camera capture for this client"""
@@ -138,19 +139,19 @@ class GestureRecognitionService:
             
             elif command == "RECOGNIZE":
                 if len(gesture_points) < 10:
-                    print(f"  → Not enough points: {len(gesture_points)}")
+                    print(f"  INFO: Not enough points: {len(gesture_points)}")
                     return {"status": "error", "message": "Not enough points", "gesture": None, "score": 0.0}
                 
                 # Check cooldown
                 current_time = time.time()
                 if current_time - last_gesture_time < gesture_cooldown:
-                    print(f"  → Cooldown active")
+                    print(f"  INFO: Cooldown active")
                     return {"status": "cooldown", "message": "Gesture cooldown active", "gesture": None, "score": 0.0}
                 
                 # Recognize gesture
-                print(f"  → Recognizing with {len(gesture_points)} points...")
+                print(f"  INFO: Recognizing with {len(gesture_points)} points...")
                 gesture_name, score = self.recognizer.recognize(gesture_points)
-                print(f"  → Result: {gesture_name} (score: {score:.4f})")
+                print(f"  INFO: Result: {gesture_name} (score: {score:.4f})")
                 
                 # Only return if confidence is above minimum threshold (0.13)
                 if score > 0.13:
@@ -166,7 +167,7 @@ class GestureRecognitionService:
                     else:
                         confidence = "low"
                     
-                    print(f"  ✓ GESTURE DETECTED: {base_name} (confidence: {confidence})")
+                    print(f"  OK: GESTURE DETECTED: {base_name} (confidence: {confidence})")
                     
                     return {
                         "status": "ok",
@@ -175,7 +176,7 @@ class GestureRecognitionService:
                         "confidence": confidence
                     }
                 else:
-                    print(f"  ✗ Too low confidence: {score:.4f} (minimum: 0.13)")
+                    print(f"  LOW_CONFIDENCE: {score:.4f} (minimum: 0.13)")
                     return {
                         "status": "ok",
                         "gesture": None,
@@ -198,7 +199,7 @@ class GestureRecognitionService:
                 }
                 # Only print if tracking and has significant points (reduce spam)
                 if is_tracking and len(gesture_points) > 0 and len(gesture_points) % 30 == 0:
-                    print(f"  → Tracking: {len(gesture_points)} points collected")
+                    print(f"  INFO: Tracking: {len(gesture_points)} points collected")
                 return status_info
             
             elif command == "PING":

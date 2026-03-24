@@ -6,6 +6,7 @@ from dollarpy import Recognizer, Point
 from gesture_processor import GestureProcessor
 import pickle
 import os
+from copy import deepcopy
 
 class SmartMuseumGestureRecognizer:
     def __init__(self, templates_file=None):
@@ -63,8 +64,8 @@ class SmartMuseumGestureRecognizer:
         Recognize a gesture from a list of Point objects
         Returns (gesture_name, score)
         """
-        if self.recognizer is None:
-            return ("No recognizer loaded", 0.0)
+        if not self.templates:
+            return ("No templates loaded", 0.0)
         
         if len(points) < 2:
             return ("Insufficient points", 0.0)
@@ -83,32 +84,10 @@ class SmartMuseumGestureRecognizer:
                 return ("No movement detected - move your hand!", 0.0)
         
         try:
-            # First do the recognition to get the result
-            result = self.recognizer.recognize(points)
-            
-            # Get ALL template scores for debugging by comparing with each template
-            all_scores = []
-            for template in self.recognizer.templates:
-                try:
-                    # Use the same distance calculation as dollarpy
-                    from dollarpy import Recognizer
-                    temp_recognizer = Recognizer([template])
-                    temp_result = temp_recognizer.recognize(points)
-                    all_scores.append((template.name, temp_result[1]))
-                except:
-                    pass
-            
-            # Sort by score (higher is better)
-            all_scores.sort(key=lambda x: x[1], reverse=True)
-            
-            # Print top 5 matches
-            print("\n=== Top 5 Recognition Matches ===")
-            for i, (name, score) in enumerate(all_scores[:5]):
-                base_name = self.get_gesture_base_name(name)
-                print(f"{i+1}. {base_name:20s} - Score: {score:.4f}")
-            print()
-            
-            return result
+            # dollarpy's Recognizer mutates template objects during recognition.
+            # Use a deep-copied recognizer each call so templates on disk never drift.
+            fresh_recognizer = Recognizer(deepcopy(self.templates))
+            return fresh_recognizer.recognize(points)
         except ZeroDivisionError as e:
             print(f"Debug recognizer: ZeroDivisionError caught: {e}")
             return ("Recognition error - ZeroDivisionError", 0.0)
