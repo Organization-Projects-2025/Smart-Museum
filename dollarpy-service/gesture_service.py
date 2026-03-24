@@ -153,8 +153,8 @@ class GestureRecognitionService:
                 gesture_name, score = self.recognizer.recognize(gesture_points)
                 print(f"  INFO: Result: {gesture_name} (score: {score:.4f})")
                 
-                # Only return if confidence is above minimum threshold (0.13)
-                if score > 0.13:
+                # Only return if confidence is above minimum threshold (0.08 - lowered for better detection)
+                if score > 0.08:
                     base_name = self.recognizer.get_gesture_base_name(gesture_name)
                     last_gesture = base_name
                     last_gesture_time = current_time
@@ -176,7 +176,7 @@ class GestureRecognitionService:
                         "confidence": confidence
                     }
                 else:
-                    print(f"  LOW_CONFIDENCE: {score:.4f} (minimum: 0.13)")
+                    print(f"  LOW_CONFIDENCE: {score:.4f} (minimum: 0.08)")
                     return {
                         "status": "ok",
                         "gesture": None,

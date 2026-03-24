@@ -110,6 +110,7 @@ public class TuioDemo : Form, TuioListener
     private bool hasLastMenuMarkerY = false;
     private float lastMenuMarkerY = 0.5f;
     private float menuGestureAccumY = 0f;
+    private bool menuOpenedByGesture = false; // Track if menu was opened by hand gesture vs marker
     private const int CircularMenuMarkerSymbolId = 0;
     private const bool MenuUpIsPositiveY = true;
     private const float MenuMoveTriggerDeltaY = 0.035f;
@@ -119,6 +120,11 @@ public class TuioDemo : Form, TuioListener
     private GestureClient gestureClient;
     private System.Windows.Forms.Timer gestureCheckTimer;
     private bool isGestureActive = false;
+    
+    // Gesture overlay display
+    private string lastDetectedGesture = null;
+    private DateTime gestureDisplayTime = DateTime.MinValue;
+    private const double GESTURE_DISPLAY_DURATION = 2.0; // seconds
 
     private System.Windows.Forms.Timer recognitionTimer;
     private float recognitionProgress = 0f;   // 0..1
@@ -457,6 +463,11 @@ public class TuioDemo : Form, TuioListener
         Console.WriteLine($"Gesture: {gesture}");
         Console.WriteLine($"Menu visible: {circularMenu.IsVisible}");
         Console.WriteLine($"Logged in: {isLoggedIn}");
+        
+        // Update gesture overlay display
+        lastDetectedGesture = gesture;
+        gestureDisplayTime = DateTime.Now;
+        Invalidate(); // Trigger redraw to show overlay
 
         // Ensure UI updates happen on the UI thread
         if (InvokeRequired)
@@ -473,18 +484,23 @@ public class TuioDemo : Form, TuioListener
         {
             case "thumbsup":
             case "thumbup":
-                // Thumbs up opens the circular menu
+            case "thumbs":
+                // Thumbs up opens the circular menu OR selects item if menu is already open
                 Console.WriteLine("→ Matched thumbsup case");
                 if (!circularMenu.IsVisible)
                 {
                     Console.WriteLine("→ Opening menu...");
                     circularMenu.Show();
+                    menuOpenedByGesture = true; // Mark as gesture-opened
                     Invalidate(); // Force redraw
                     Console.WriteLine("✓ Gesture: Menu opened with thumbs up");
                 }
                 else
                 {
-                    Console.WriteLine("→ Menu already visible, skipping");
+                    Console.WriteLine("→ Menu already visible, selecting current item...");
+                    circularMenu.MoveUpAction(); // Select the current menu item
+                    Invalidate(); // Force redraw
+                    Console.WriteLine("✓ Gesture: Thumbs up -> Selected menu item");
                 }
                 break;
 
@@ -494,6 +510,7 @@ public class TuioDemo : Form, TuioListener
                 if (circularMenu.IsVisible)
                 {
                     circularMenu.Hide();
+                    menuOpenedByGesture = false; // Clear the flag
                     Invalidate(); // Force redraw
                     Console.WriteLine("✓ Gesture: Menu closed");
                 }
@@ -505,6 +522,7 @@ public class TuioDemo : Form, TuioListener
 
             case "swipeleft":
             case "swipel":
+            case "swipe_left":
                 // Swipe left = Navigate to NEXT option in circular menu
                 Console.WriteLine("→ Matched swipe left case");
                 if (circularMenu.IsVisible)
@@ -533,6 +551,7 @@ public class TuioDemo : Form, TuioListener
 
             case "swiperight":
             case "swiper":
+            case "swipe_right":
                 // Swipe right = Navigate to PREVIOUS option in circular menu
                 Console.WriteLine("→ Matched swipe right case");
                 if (circularMenu.IsVisible)
@@ -636,6 +655,7 @@ public class TuioDemo : Form, TuioListener
         if (action == "Home")
         {
             circularMenu.Hide();
+            menuOpenedByGesture = false; // Clear flag
             StopAndUnlockSlides();
             Transition(AppState.Idle, null, null, null, null);
             return;
@@ -644,6 +664,7 @@ public class TuioDemo : Form, TuioListener
         if (action == "Logout")
         {
             circularMenu.Hide();
+            menuOpenedByGesture = false; // Clear flag
             StopAndUnlockSlides();
             visitorProfile = null;
             authStatus = "Logged out.";
@@ -660,6 +681,7 @@ public class TuioDemo : Form, TuioListener
                 if (storySlidesByKey.TryGetValue(key, out slides))
                 {
                     circularMenu.Hide();
+                    menuOpenedByGesture = false; // Clear flag
                     StartLockedSlideShow(slides, SlideShowContext.MenuStory, key);
                 }
             }
@@ -683,6 +705,7 @@ public class TuioDemo : Form, TuioListener
                 if (storySlidesByKey.TryGetValue(key, out slides))
                 {
                     circularMenu.Hide();
+                    menuOpenedByGesture = false; // Clear flag
                     StartLockedSlideShow(slides, SlideShowContext.MenuStory, key);
                 }
             }
@@ -1177,6 +1200,7 @@ public class TuioDemo : Form, TuioListener
         if (!circularMenu.IsVisible && marker != null)
         {
             circularMenu.Show();
+            menuOpenedByGesture = false; // Opened by marker, not gesture
             menuGestureArmed = true;
             menuGestureAccumY = 0f;
             hasLastMenuMarkerY = true;
@@ -1184,7 +1208,8 @@ public class TuioDemo : Form, TuioListener
         }
 
         // If menu was opened by marker control, hide when marker is removed.
-        if (circularMenu.IsVisible && marker == null)
+        // BUT: Don't auto-close if menu was opened by hand gesture
+        if (circularMenu.IsVisible && marker == null && !menuOpenedByGesture)
         {
             circularMenu.Hide();
             hasLastMenuMarkerY = false;
@@ -1285,6 +1310,7 @@ public class TuioDemo : Form, TuioListener
         if (!isLoggedIn || authInProgress)
         {
             DrawLoginScreen(g);
+            DrawGestureOverlay(g); // Show gesture overlay even on login screen
             return;
         }
 
@@ -1301,6 +1327,82 @@ public class TuioDemo : Form, TuioListener
 
         if (circularMenu.IsVisible)
             circularMenu.Draw(g, W, H, themeSecondary, themeTertiary, fontSubtitle, fontSmall);
+        
+        // Draw gesture overlay on top of everything
+        DrawGestureOverlay(g);
+    }
+    
+    private void DrawGestureOverlay(Graphics g)
+    {
+        // Check if we should display the gesture
+        if (string.IsNullOrEmpty(lastDetectedGesture))
+            return;
+        
+        double elapsedSeconds = (DateTime.Now - gestureDisplayTime).TotalSeconds;
+        
+        // Hide after 2 seconds
+        if (elapsedSeconds > GESTURE_DISPLAY_DURATION)
+        {
+            lastDetectedGesture = null;
+            return;
+        }
+        
+        // Calculate fade-out alpha (fade in last 0.5 seconds)
+        int alpha = 255;
+        if (elapsedSeconds > GESTURE_DISPLAY_DURATION - 0.5)
+        {
+            double fadeProgress = (GESTURE_DISPLAY_DURATION - elapsedSeconds) / 0.5;
+            alpha = (int)(255 * fadeProgress);
+        }
+        
+        // Format gesture name for display (capitalize, replace underscores)
+        string displayText = lastDetectedGesture.Replace("_", " ").ToUpper();
+        
+        // Rename gestures for better user understanding
+        if (displayText == "SWIPEL" || displayText == "SWIPE LEFT")
+            displayText = "SWIPE RIGHT";
+        else if (displayText == "SWIPER" || displayText == "SWIPE RIGHT")
+            displayText = "SWIPE LEFT";
+        else if (displayText == "THUMBS" || displayText == "THUMBSUP" || displayText == "THUMBUP")
+            displayText = "THUMBS UP";
+        
+        // Position in top-right corner
+        int padding = 20;
+        int boxWidth = 250;
+        int boxHeight = 60;
+        int x = W - boxWidth - padding;
+        int y = padding;
+        
+        // Draw semi-transparent background
+        using (var bgBrush = new SolidBrush(Color.FromArgb(alpha * 180 / 255, 12, 12, 12)))
+        {
+            g.FillRectangle(bgBrush, x, y, boxWidth, boxHeight);
+        }
+        
+        // Draw border with theme color
+        using (var borderPen = new Pen(Color.FromArgb(alpha, themeSecondary), 2))
+        {
+            g.DrawRectangle(borderPen, x, y, boxWidth, boxHeight);
+        }
+        
+        // Draw gesture text
+        using (var textBrush = new SolidBrush(Color.FromArgb(alpha, themeSecondary)))
+        {
+            StringFormat format = new StringFormat
+            {
+                Alignment = StringAlignment.Center,
+                LineAlignment = StringAlignment.Center
+            };
+            
+            RectangleF textRect = new RectangleF(x, y, boxWidth, boxHeight);
+            g.DrawString(displayText, fontSubtitle, textBrush, textRect, format);
+        }
+        
+        // Request another redraw if still visible (for fade animation)
+        if (elapsedSeconds < GESTURE_DISPLAY_DURATION)
+        {
+            Invalidate();
+        }
     }
 
     private void DrawLoginScreen(Graphics g)
