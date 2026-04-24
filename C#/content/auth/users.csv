@@ -1,9 +1,9 @@
 face_user_id,first_name,last_name,age,gender,race,bluetooth_mac_address,face_image_path
 user0,Ahmed,ElSherif,22,male,black,4C:7C:D9:B2:4A:55,python/data/faces/user0.jpg
-user1,Sara,Nabil,11,female,white,SaraWatch,python/data/faces/user1.jpg
-user2,Omar,Farid,16,male,asian,OmarBuds,python/data/faces/user2.jpg
-user3,Lina,Adel,22,female,indian,LinaPhone,python/data/faces/user3.jpg
-user4,Mark,Stone,30,male,white,MarkLaptop,python/data/faces/user4.jpg
+user1,Sara,Nabil,11,female,white,0,python/data/faces/user1.jpg
+user2,Omar,Farid,16,male,asian,0,python/data/faces/user2.jpg
+user3,Youssef,Khalaf,22,male,indian,0,python/data/faces/user3.jpg
+user4,Youssef,Afifi,21,male,black,0,python/data/faces/user4.jpg
 user5,Ana,Lopez,34,female,latino,AnaPhone,python/data/faces/user5.jpg
 user6,Yousef,Kamal,45,male,indian,YousefCar,python/data/faces/user6.jpg
 user7,Nour,Salem,52,female,asian,NourTablet,python/data/faces/user7.jpg

@@ -5,7 +5,8 @@ import os
 import csv
 import cv2
 import numpy as np
-import bluetooth
+import asyncio
+from bleak import BleakScanner
 import face_recognition
 
 
@@ -18,11 +19,36 @@ known_face_names = []
 known_face_encodings = []
 
 def scan_bluetooth(target_mac):
+    """
+    Scan for Bluetooth devices using bleak (Windows-compatible)
+    """
     try:
-        devices = bluetooth.discover_devices(lookup_names=True, duration=8, flush_cache=True)
-        for addr, name in devices:
-            if addr == target_mac:
-                return f"FOUND:{name}:{addr}"
+        # Run async scan in sync context
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        result = loop.run_until_complete(_async_scan_bluetooth(target_mac))
+        loop.close()
+        return result
+    except Exception as e:
+        return f"ERROR:{str(e)}"
+
+async def _async_scan_bluetooth(target_mac):
+    """
+    Async Bluetooth scan using bleak
+    """
+    try:
+        # Normalize MAC address format (bleak uses uppercase with colons)
+        target_mac_normalized = target_mac.upper().replace("-", ":")
+        
+        # Scan for 8 seconds
+        devices = await BleakScanner.discover(timeout=8.0)
+        
+        for device in devices:
+            device_mac = device.address.upper().replace("-", ":")
+            if device_mac == target_mac_normalized:
+                device_name = device.name if device.name else "Unknown"
+                return f"FOUND:{device_name}:{device.address}"
+        
         return "NOT_FOUND"
     except Exception as e:
         return f"ERROR:{str(e)}"

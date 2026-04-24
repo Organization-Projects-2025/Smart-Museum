@@ -111,10 +111,21 @@ public class TuioDemo : Form, TuioListener
     private bool hasLastMenuMarkerY = false;
     private float lastMenuMarkerY = 0.5f;
     private float menuGestureAccumY = 0f;
+    private bool menuOpenedByGesture = false; // Track if menu was opened by hand gesture vs marker
     private const int CircularMenuMarkerSymbolId = 0;
     private const bool MenuUpIsPositiveY = true;
     private const float MenuMoveTriggerDeltaY = 0.035f;
     private const float MenuMoveNeutralBandY = 0.015f;
+
+    // Gesture recognition for circular menu
+    private GestureClient gestureClient;
+    private System.Windows.Forms.Timer gestureCheckTimer;
+    private bool isGestureActive = false;
+    
+    // Gesture overlay display
+    private string lastDetectedGesture = null;
+    private DateTime gestureDisplayTime = DateTime.MinValue;
+    private const double GESTURE_DISPLAY_DURATION = 2.0; // seconds
 
     private System.Windows.Forms.Timer recognitionTimer;
     private float recognitionProgress = 0f;   // 0..1
@@ -213,6 +224,7 @@ public class TuioDemo : Form, TuioListener
 
         InitializeStoryLibrary();
         InitializeCircularMenu();
+        InitializeGestureClient();
         StartLoginFlow();
     }
 
@@ -353,6 +365,241 @@ public class TuioDemo : Form, TuioListener
         AddFavoriteIfExists("relationship:1_2");
     }
 
+    private async void InitializeGestureClient()
+    {
+        try
+        {
+            gestureClient = new GestureClient("localhost", 5001);
+            
+            // Subscribe to gesture events
+            gestureClient.GestureRecognized += OnGestureRecognized;
+            gestureClient.StatusChanged += (s, status) => 
+            {
+                Console.WriteLine($"Gesture Status: {status}");
+            };
+
+            // Try to connect to gesture service
+            bool connected = await gestureClient.ConnectAsync();
+            
+            if (connected)
+            {
+                Console.WriteLine("Connected to gesture recognition service");
+                
+                // Start continuous gesture detection (check every 300ms instead of 100ms)
+                gestureCheckTimer = new System.Windows.Forms.Timer { Interval = 300 };
+                gestureCheckTimer.Tick += async (s, e) => await CheckForGesture();
+                gestureCheckTimer.Start();
+            }
+            else
+            {
+                Console.WriteLine("Gesture service not available - continuing without gesture control");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Gesture client initialization failed: {ex.Message}");
+        }
+    }
+
+    private async System.Threading.Tasks.Task CheckForGesture()
+    {
+        if (isGestureActive || !isLoggedIn || authInProgress) return;
+
+        try
+        {
+            var status = await gestureClient.GetStatusAsync();
+
+            // Wait for 80+ points for better accuracy
+            if (status != null && status.PointsCollected > 80)
+            {
+                isGestureActive = true;
+
+                Console.WriteLine($"→ Attempting recognition with {status.PointsCollected} points...");
+                
+                // Stop tracking and recognize
+                var result = await gestureClient.StopAndRecognizeAsync();
+
+                Console.WriteLine($"→ Recognition result: gesture={result.Gesture}, score={result.Score:F4}, confidence={result.Confidence}");
+
+                // Accept gestures with score > 0.13 (lowered threshold)
+                // Always use the highest confidence gesture returned
+                if (result.Score > 0.13 && !string.IsNullOrEmpty(result.Gesture))
+                {
+                    Console.WriteLine($"✓ Gesture recognized: {result.Gesture} (score: {result.Score:F4})");
+                    HandleGesture(result.Gesture);
+                }
+                else
+                {
+                    Console.WriteLine($"✗ Gesture too weak: score {result.Score:F4}");
+                }
+
+                // Reset and start tracking again
+                await gestureClient.ResetAsync();
+                await System.Threading.Tasks.Task.Delay(500);
+                await gestureClient.StartTrackingAsync();
+
+                isGestureActive = false;
+            }
+            else if (status != null && !status.IsTracking)
+            {
+                // Start tracking if not already tracking
+                await gestureClient.StartTrackingAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Gesture check error: {ex.Message}");
+            isGestureActive = false;
+        }
+    }
+
+    private void OnGestureRecognized(object sender, GestureRecognizedEventArgs e)
+    {
+        Console.WriteLine($"Gesture Event: {e.Result.Gesture} - Confidence: {e.Result.Confidence}");
+    }
+
+    private void HandleGesture(string gesture)
+    {
+        Console.WriteLine($"=== HandleGesture called ===");
+        Console.WriteLine($"Gesture: {gesture}");
+        Console.WriteLine($"Menu visible: {circularMenu.IsVisible}");
+        Console.WriteLine($"Logged in: {isLoggedIn}");
+        
+        // Update gesture overlay display
+        lastDetectedGesture = gesture;
+        gestureDisplayTime = DateTime.Now;
+        Invalidate(); // Trigger redraw to show overlay
+
+        // Ensure UI updates happen on the UI thread
+        if (InvokeRequired)
+        {
+            Console.WriteLine("→ Invoking on UI thread...");
+            BeginInvoke(new Action(() => HandleGesture(gesture)));
+            return;
+        }
+
+        // Normalize gesture name (remove underscores, lowercase)
+        string normalizedGesture = gesture.ToLower().Replace("_", "");
+
+        switch (normalizedGesture)
+        {
+            case "thumbsup":
+            case "thumbup":
+            case "thumbs":
+                // Thumbs up opens the circular menu OR selects item if menu is already open
+                Console.WriteLine("→ Matched thumbsup case");
+                if (!circularMenu.IsVisible)
+                {
+                    Console.WriteLine("→ Opening menu...");
+                    circularMenu.Show();
+                    menuOpenedByGesture = true; // Mark as gesture-opened
+                    Invalidate(); // Force redraw
+                    Console.WriteLine("✓ Gesture: Menu opened with thumbs up");
+                }
+                else
+                {
+                    Console.WriteLine("→ Menu already visible, selecting current item...");
+                    circularMenu.MoveUpAction(); // Select the current menu item
+                    Invalidate(); // Force redraw
+                    Console.WriteLine("✓ Gesture: Thumbs up -> Selected menu item");
+                }
+                break;
+
+            case "close":
+                // Close gesture closes the circular menu
+                Console.WriteLine("→ Matched close case");
+                if (circularMenu.IsVisible)
+                {
+                    circularMenu.Hide();
+                    menuOpenedByGesture = false; // Clear the flag
+                    Invalidate(); // Force redraw
+                    Console.WriteLine("✓ Gesture: Menu closed");
+                }
+                else
+                {
+                    Console.WriteLine("→ Menu already closed, skipping");
+                }
+                break;
+
+            case "swipeleft":
+            case "swipel":
+            case "swipe_left":
+                // Swipe left = Navigate to NEXT option in circular menu
+                Console.WriteLine("→ Matched swipe left case");
+                if (circularMenu.IsVisible)
+                {
+                    // Rotate menu selection counter-clockwise (next item)
+                    int currentIndex = circularMenu.TopIndex;
+                    int itemCount = circularMenu.IsInSecondLevel 
+                        ? (circularMenu.SelectedTop == "Favorites" ? circularMenu.Favorites.Count : circularMenu.Watched.Count)
+                        : circularMenu.TopItems.Count;
+                    
+                    if (itemCount > 0)
+                    {
+                        int newIndex = (currentIndex + 1) % itemCount;
+                        float angleStep = (float)(Math.PI * 2.0 / itemCount);
+                        float newAngle = newIndex * angleStep - (float)Math.PI / 2f;
+                        circularMenu.UpdateRotation(newAngle);
+                        Invalidate(); // Force redraw
+                        Console.WriteLine($"✓ Gesture: Swipe left -> Next option (index {currentIndex} → {newIndex})");
+                    }
+                }
+                else
+                {
+                    Console.WriteLine("→ Menu not visible, ignoring swipe");
+                }
+                break;
+
+            case "swiperight":
+            case "swiper":
+            case "swipe_right":
+                // Swipe right = Navigate to PREVIOUS option in circular menu
+                Console.WriteLine("→ Matched swipe right case");
+                if (circularMenu.IsVisible)
+                {
+                    // Rotate menu selection clockwise (previous item)
+                    int currentIndex = circularMenu.TopIndex;
+                    int itemCount = circularMenu.IsInSecondLevel 
+                        ? (circularMenu.SelectedTop == "Favorites" ? circularMenu.Favorites.Count : circularMenu.Watched.Count)
+                        : circularMenu.TopItems.Count;
+                    
+                    if (itemCount > 0)
+                    {
+                        int newIndex = (currentIndex - 1 + itemCount) % itemCount;
+                        float angleStep = (float)(Math.PI * 2.0 / itemCount);
+                        float newAngle = newIndex * angleStep - (float)Math.PI / 2f;
+                        circularMenu.UpdateRotation(newAngle);
+                        Invalidate(); // Force redraw
+                        Console.WriteLine($"✓ Gesture: Swipe right -> Previous option (index {currentIndex} → {newIndex})");
+                    }
+                }
+                else
+                {
+                    Console.WriteLine("→ Menu not visible, ignoring swipe");
+                }
+                break;
+
+            case "open":
+                // Open gesture selects/enters current menu item (only when menu is visible)
+                Console.WriteLine("→ Matched open case");
+                if (circularMenu.IsVisible)
+                {
+                    circularMenu.MoveUpAction();
+                    Invalidate(); // Force redraw
+                    Console.WriteLine("✓ Gesture: Open -> Select item");
+                }
+                else
+                {
+                    Console.WriteLine("→ Menu not visible, ignoring open gesture");
+                }
+                break;
+
+            default:
+                Console.WriteLine($"✗ Unknown gesture: {gesture}");
+                break;
+        }
+    }
+
     private void RegisterStory(string key, string title, List<ContentSlide> slides)
     {
         if (string.IsNullOrEmpty(key) || string.IsNullOrEmpty(title) || slides == null || slides.Count == 0)
@@ -409,6 +656,7 @@ public class TuioDemo : Form, TuioListener
         if (action == "Home")
         {
             circularMenu.Hide();
+            menuOpenedByGesture = false; // Clear flag
             StopAndUnlockSlides();
             Transition(AppState.Idle, null, null, null, null);
             return;
@@ -417,6 +665,7 @@ public class TuioDemo : Form, TuioListener
         if (action == "Logout")
         {
             circularMenu.Hide();
+            menuOpenedByGesture = false; // Clear flag
             StopAndUnlockSlides();
             visitorProfile = null;
             authStatus = "Logged out.";
@@ -433,6 +682,7 @@ public class TuioDemo : Form, TuioListener
                 if (storySlidesByKey.TryGetValue(key, out slides))
                 {
                     circularMenu.Hide();
+                    menuOpenedByGesture = false; // Clear flag
                     StartLockedSlideShow(slides, SlideShowContext.MenuStory, key);
                 }
             }
@@ -456,6 +706,7 @@ public class TuioDemo : Form, TuioListener
                 if (storySlidesByKey.TryGetValue(key, out slides))
                 {
                     circularMenu.Hide();
+                    menuOpenedByGesture = false; // Clear flag
                     StartLockedSlideShow(slides, SlideShowContext.MenuStory, key);
                 }
             }
@@ -978,6 +1229,7 @@ public class TuioDemo : Form, TuioListener
         if (!circularMenu.IsVisible && marker != null)
         {
             circularMenu.Show();
+            menuOpenedByGesture = false; // Opened by marker, not gesture
             menuGestureArmed = true;
             menuGestureAccumY = 0f;
             hasLastMenuMarkerY = true;
@@ -985,7 +1237,8 @@ public class TuioDemo : Form, TuioListener
         }
 
         // If menu was opened by marker control, hide when marker is removed.
-        if (circularMenu.IsVisible && marker == null)
+        // BUT: Don't auto-close if menu was opened by hand gesture
+        if (circularMenu.IsVisible && marker == null && !menuOpenedByGesture)
         {
             circularMenu.Hide();
             hasLastMenuMarkerY = false;
@@ -1086,6 +1339,7 @@ public class TuioDemo : Form, TuioListener
         if (!isLoggedIn || authInProgress)
         {
             DrawLoginScreen(g);
+            DrawGestureOverlay(g); // Show gesture overlay even on login screen
             return;
         }
 
@@ -1102,6 +1356,82 @@ public class TuioDemo : Form, TuioListener
 
         if (circularMenu.IsVisible)
             circularMenu.Draw(g, W, H, themeSecondary, themeTertiary, fontSubtitle, fontSmall);
+        
+        // Draw gesture overlay on top of everything
+        DrawGestureOverlay(g);
+    }
+    
+    private void DrawGestureOverlay(Graphics g)
+    {
+        // Check if we should display the gesture
+        if (string.IsNullOrEmpty(lastDetectedGesture))
+            return;
+        
+        double elapsedSeconds = (DateTime.Now - gestureDisplayTime).TotalSeconds;
+        
+        // Hide after 2 seconds
+        if (elapsedSeconds > GESTURE_DISPLAY_DURATION)
+        {
+            lastDetectedGesture = null;
+            return;
+        }
+        
+        // Calculate fade-out alpha (fade in last 0.5 seconds)
+        int alpha = 255;
+        if (elapsedSeconds > GESTURE_DISPLAY_DURATION - 0.5)
+        {
+            double fadeProgress = (GESTURE_DISPLAY_DURATION - elapsedSeconds) / 0.5;
+            alpha = (int)(255 * fadeProgress);
+        }
+        
+        // Format gesture name for display (capitalize, replace underscores)
+        string displayText = lastDetectedGesture.Replace("_", " ").ToUpper();
+        
+        // Rename gestures for better user understanding
+        if (displayText == "SWIPEL" || displayText == "SWIPE LEFT")
+            displayText = "SWIPE RIGHT";
+        else if (displayText == "SWIPER" || displayText == "SWIPE RIGHT")
+            displayText = "SWIPE LEFT";
+        else if (displayText == "THUMBS" || displayText == "THUMBSUP" || displayText == "THUMBUP")
+            displayText = "THUMBS UP";
+        
+        // Position in top-right corner
+        int padding = 20;
+        int boxWidth = 250;
+        int boxHeight = 60;
+        int x = W - boxWidth - padding;
+        int y = padding;
+        
+        // Draw semi-transparent background
+        using (var bgBrush = new SolidBrush(Color.FromArgb(alpha * 180 / 255, 12, 12, 12)))
+        {
+            g.FillRectangle(bgBrush, x, y, boxWidth, boxHeight);
+        }
+        
+        // Draw border with theme color
+        using (var borderPen = new Pen(Color.FromArgb(alpha, themeSecondary), 2))
+        {
+            g.DrawRectangle(borderPen, x, y, boxWidth, boxHeight);
+        }
+        
+        // Draw gesture text
+        using (var textBrush = new SolidBrush(Color.FromArgb(alpha, themeSecondary)))
+        {
+            StringFormat format = new StringFormat
+            {
+                Alignment = StringAlignment.Center,
+                LineAlignment = StringAlignment.Center
+            };
+            
+            RectangleF textRect = new RectangleF(x, y, boxWidth, boxHeight);
+            g.DrawString(displayText, fontSubtitle, textBrush, textRect, format);
+        }
+        
+        // Request another redraw if still visible (for fade animation)
+        if (elapsedSeconds < GESTURE_DISPLAY_DURATION)
+        {
+            Invalidate();
+        }
     }
 
     private void DrawLoginScreen(Graphics g)
@@ -1925,6 +2255,18 @@ public class TuioDemo : Form, TuioListener
         animTimer.Stop();
         recognitionTimer.Stop();
         slideShow.Stop();
+        
+        // Clean up gesture client
+        if (gestureCheckTimer != null)
+        {
+            gestureCheckTimer.Stop();
+            gestureCheckTimer.Dispose();
+        }
+        if (gestureClient != null)
+        {
+            gestureClient.Dispose();
+        }
+        
         if (client != null)
         {
             client.removeTuioListener(this);

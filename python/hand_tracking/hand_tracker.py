@@ -194,7 +194,7 @@ with HandLandmarker.create_from_options(options) as detector:
         if changed and output_data:
             print(json.dumps(output_data))
 
-        # Send over socket at fixed rate (30 Hz) whenever there's data
+        # Send over socket at fixed rate (60 Hz) whenever there's data
         if output_data and (now - last_send_time) >= SEND_INTERVAL:
             server.send(json.dumps(output_data))
             last_send_time = now
