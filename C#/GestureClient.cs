@@ -113,7 +113,9 @@ public class GestureClient : IDisposable
                     IsTracking = response["tracking"]?.ToObject<bool>() ?? false,
                     PointsCollected = response["points"]?.ToObject<int>() ?? 0,
                     TemplatesLoaded = response["templates"]?.ToObject<int>() ?? 0,
-                    LastGesture = response["last_gesture"]?.ToString()
+                    LastGesture = response["last_gesture"]?.ToString(),
+                    WaitingForMotion = response["waiting_for_motion"]?.ToObject<bool>() ?? false,
+                    Capturing = response["capturing"]?.ToObject<bool>() ?? false
                 };
             }
 
@@ -191,6 +193,10 @@ public class GestureClient : IDisposable
         public int PointsCollected { get; set; }
         public int TemplatesLoaded { get; set; }
         public string LastGesture { get; set; }
+        /// <summary>Python service: hand visible but stroke not started (waiting for wrist movement).</summary>
+        public bool WaitingForMotion { get; set; }
+        /// <summary>Python service: movement threshold passed; points are being recorded.</summary>
+        public bool Capturing { get; set; }
     }
 
     /// <summary>

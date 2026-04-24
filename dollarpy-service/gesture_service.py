@@ -2,6 +2,7 @@
 Gesture Recognition Service for C# Integration
 Runs a socket server that C# can connect to for real-time gesture recognition
 """
+import os
 import socket
 import json
 import cv2
@@ -73,37 +74,86 @@ class GestureRecognitionService:
         gesture_cooldown = 1.0
         camera_thread = None
         camera_running = False
-        
+        # --- Gesture capture window: only record after user moves hand from "rest" pose ---
+        # Avoids filling the buffer with idle hand pixels before the user intends a stroke.
+        motion_ref_nx = None  # type: ignore[assignment]
+        motion_ref_ny = None
+        capture_window_open = False
+        no_hand_frames = 0
+        # Normalized-image Euclidean distance; ~0.035 ≈ 3–4 cm at arm's length on 640-wide frame
+        motion_start_threshold = float(
+            os.environ.get("GESTURE_MOTION_START_THRESHOLD", "0.035")
+        )
+        no_hand_reset_frames = int(os.environ.get("GESTURE_NO_HAND_RESET_FRAMES", "45"))
+
         def camera_loop():
             """Continuously process camera frames for this client"""
             nonlocal is_tracking, gesture_points, camera_running
-            
+            nonlocal motion_ref_nx, motion_ref_ny, capture_window_open, no_hand_frames
+
             while camera_running and cap.isOpened():
                 ret, frame = cap.read()
                 if not ret:
                     continue
-                
+
                 frame = cv2.resize(frame, (640, 480))
                 # Removed flip - keep camera natural orientation
-                
-                # Process with MediaPipe
+
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 results = hands.process(rgb_frame)
-                
-                if results.multi_hand_landmarks and is_tracking:
-                    image_height, image_width, _ = frame.shape
-                    
-                    for hand_landmarks in results.multi_hand_landmarks:
-                        # Track 6 key landmarks
-                        key_landmarks = [0, 4, 8, 12, 16, 20]
-                        stroke_id = len(gesture_points) // 6 + 1
-                        
-                        for landmark_id in key_landmarks:
-                            landmark = hand_landmarks.landmark[landmark_id]
-                            x = int(landmark.x * image_width)
-                            y = int(landmark.y * image_height)
-                            gesture_points.append(Point(x, y, stroke_id))
-                
+
+                if not is_tracking:
+                    time.sleep(0.016)
+                    continue
+
+                image_height, image_width, _ = frame.shape
+
+                if not results.multi_hand_landmarks:
+                    no_hand_frames += 1
+                    if no_hand_frames >= no_hand_reset_frames:
+                        # Hand left view long enough — next appearance starts a new "rest" reference
+                        motion_ref_nx = None
+                        motion_ref_ny = None
+                        capture_window_open = False
+                        no_hand_frames = 0
+                    time.sleep(0.016)
+                    continue
+
+                no_hand_frames = 0
+
+                for hand_landmarks in results.multi_hand_landmarks:
+                    lm0 = hand_landmarks.landmark[0]
+                    nx, ny = float(lm0.x), float(lm0.y)
+
+                    if motion_ref_nx is None or motion_ref_ny is None:
+                        motion_ref_nx = nx
+                        motion_ref_ny = ny
+                        capture_window_open = False
+                        continue
+
+                    if not capture_window_open:
+                        dx = nx - motion_ref_nx
+                        dy = ny - motion_ref_ny
+                        if (dx * dx + dy * dy) ** 0.5 >= motion_start_threshold:
+                            capture_window_open = True
+                            gesture_points.clear()
+                            key_landmarks = [0, 4, 8, 12, 16, 20]
+                            stroke_id = 1
+                            for landmark_id in key_landmarks:
+                                landmark = hand_landmarks.landmark[landmark_id]
+                                x = int(landmark.x * image_width)
+                                y = int(landmark.y * image_height)
+                                gesture_points.append(Point(x, y, stroke_id))
+                        continue
+
+                    key_landmarks = [0, 4, 8, 12, 16, 20]
+                    stroke_id = len(gesture_points) // 6 + 1
+                    for landmark_id in key_landmarks:
+                        landmark = hand_landmarks.landmark[landmark_id]
+                        x = int(landmark.x * image_width)
+                        y = int(landmark.y * image_height)
+                        gesture_points.append(Point(x, y, stroke_id))
+
                 time.sleep(0.016)  # ~60 FPS
         
         def start_camera():
@@ -123,16 +173,21 @@ class GestureRecognitionService:
         def process_command(command):
             """Process commands from C# client"""
             nonlocal is_tracking, gesture_points, last_gesture, last_gesture_time
-            
+            nonlocal motion_ref_nx, motion_ref_ny, capture_window_open, no_hand_frames
+
             if command == "START_TRACKING":
                 if cap is None:
                     if not start_camera():
                         return {"status": "error", "message": "Failed to start camera"}
-                
+
                 is_tracking = True
                 gesture_points = []
+                motion_ref_nx = None
+                motion_ref_ny = None
+                capture_window_open = False
+                no_hand_frames = 0
                 return {"status": "ok", "message": "Tracking started"}
-            
+
             elif command == "STOP_TRACKING":
                 is_tracking = False
                 return {"status": "ok", "message": "Tracking stopped", "points": len(gesture_points)}
@@ -187,15 +242,22 @@ class GestureRecognitionService:
             elif command == "RESET":
                 gesture_points = []
                 is_tracking = False
+                motion_ref_nx = None
+                motion_ref_ny = None
+                capture_window_open = False
+                no_hand_frames = 0
                 return {"status": "ok", "message": "Reset complete"}
-            
+
             elif command == "STATUS":
                 status_info = {
                     "status": "ok",
                     "tracking": is_tracking,
                     "points": len(gesture_points),
                     "templates": len(self.recognizer.templates) if self.recognizer.templates else 0,
-                    "last_gesture": last_gesture
+                    "last_gesture": last_gesture,
+                    # True while hand is in view but stroke not started yet (waiting for movement)
+                    "waiting_for_motion": is_tracking and not capture_window_open,
+                    "capturing": is_tracking and capture_window_open,
                 }
                 # Only print if tracking and has significant points (reduce spam)
                 if is_tracking and len(gesture_points) > 0 and len(gesture_points) % 30 == 0:

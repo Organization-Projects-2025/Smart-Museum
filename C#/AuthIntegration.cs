@@ -118,6 +118,38 @@ public class VisitorProfile
         get { return (FirstName + " " + LastName).Trim(); }
     }
 
+    /// <summary>visitor (default) or admin from users.csv; guest sessions use Role visitor plus GuestSession=true.</summary>
+    public string Role { get; set; }
+
+    /// <summary>In-memory only: guest entry without Bluetooth (distinct theme, not written to users.csv).</summary>
+    public bool GuestSession { get; set; }
+
+    public bool IsAdmin
+    {
+        get { return string.Equals(Role, "admin", StringComparison.OrdinalIgnoreCase); }
+    }
+
+    /// <summary>Guest table session: same museum access pattern as visitor, with guest-only colors and typography.</summary>
+    public static VisitorProfile CreateGuestVisitor()
+    {
+        var p = new VisitorProfile
+        {
+            GuestSession = true,
+            FaceUserId = "guest",
+            FirstName = "Guest",
+            LastName = "Visitor",
+            Age = 28,
+            Gender = "other",
+            Race = "other",
+            Language = "English",
+            BluetoothMacAddress = "0",
+            FaceImagePath = "",
+            Role = "visitor"
+        };
+        p.ApplyDerivedPreferences();
+        return p;
+    }
+
     public static List<VisitorProfile> LoadFromCsv(string csvPath)
     {
         var rows = new List<VisitorProfile>();
@@ -141,62 +173,205 @@ public class VisitorProfile
             profile.Race = parts[5].Trim();
             profile.BluetoothMacAddress = parts[6].Trim();
             profile.FaceImagePath = parts.Length > 7 ? parts[7].Trim() : string.Empty;
+            profile.Role = parts.Length > 8 ? parts[8].Trim() : "visitor";
+            if (string.IsNullOrEmpty(profile.Role)) profile.Role = "visitor";
             profile.ApplyDerivedPreferences();
             rows.Add(profile);
         }
         return rows;
     }
 
-    private void ApplyDerivedPreferences()
+    /// <summary>YOLO / camera context: phone, book, or large person bbox — nudges typography and warmth.</summary>
+    public bool YoloPhoneNearby;
+    public bool YoloBookNearby;
+    public bool YoloLargePersonNearby;
+
+    /// <returns>True if flags changed and derived preferences were recomputed.</returns>
+    public bool SetCameraAmbientContext(bool phone, bool book, bool personLarge)
     {
-        // Age -> font sizes
-        if (Age >= 9 && Age <= 12)
+        if (GuestSession)
+            return false;
+        if (YoloPhoneNearby == phone && YoloBookNearby == book && YoloLargePersonNearby == personLarge)
+            return false;
+        YoloPhoneNearby = phone;
+        YoloBookNearby = book;
+        YoloLargePersonNearby = personLarge;
+        ApplyDerivedPreferences();
+        return true;
+    }
+
+    public void ClearCameraAmbientContext()
+    {
+        YoloPhoneNearby = false;
+        YoloBookNearby = false;
+        YoloLargePersonNearby = false;
+        ApplyDerivedPreferences();
+    }
+
+    private static Color BlendRgb(Color a, Color b, float t)
+    {
+        if (t <= 0f) return a;
+        if (t >= 1f) return b;
+        return Color.FromArgb(
+            (int)(a.R + (b.R - a.R) * t),
+            (int)(a.G + (b.G - a.G) * t),
+            (int)(a.B + (b.B - a.B) * t));
+    }
+
+    private static float ClampFont(float v, float min, float max)
+    {
+        if (v < min) return min;
+        if (v > max) return max;
+        return v;
+    }
+
+    public void ApplyDerivedPreferences()
+    {
+        if (GuestSession)
+        {
+            PrimaryColor = Color.FromArgb(16, 36, 52);
+            SecondaryColor = Color.FromArgb(110, 192, 178);
+            TertiaryColor = Color.FromArgb(238, 156, 112);
+            Language = "English";
+            TitleSizePx = ClampFont(52f, 44f, 58f);
+            SubtitleSizePx = ClampFont(32f, 26f, 36f);
+            BodySizePx = ClampFont(23f, 18f, 28f);
+            SmallSizePx = ClampFont(18f, 15f, 24f);
+            return;
+        }
+
+        // --- Age rubric → font sizes (broader bands for accessibility) ---
+        if (Age <= 8)
+        {
+            BodySizePx = 24f;
+            SmallSizePx = 22f;
+            SubtitleSizePx = 34f;
+            TitleSizePx = 56f;
+        }
+        else if (Age >= 9 && Age <= 12)
         {
             BodySizePx = 22f;
             SmallSizePx = 20f;
             SubtitleSizePx = 30f;
             TitleSizePx = 52f;
         }
-        else if (Age >= 65)
+        else if (Age >= 13 && Age <= 17)
         {
             BodySizePx = 20f;
-            SmallSizePx = 19f;
-            SubtitleSizePx = 30f;
-            TitleSizePx = 52f;
+            SmallSizePx = 17f;
+            SubtitleSizePx = 29f;
+            TitleSizePx = 50f;
         }
-        else
+        else if (Age >= 18 && Age <= 54)
         {
             BodySizePx = 18f;
             SmallSizePx = 16f;
             SubtitleSizePx = 28f;
             TitleSizePx = 48f;
         }
+        else if (Age >= 55 && Age <= 64)
+        {
+            BodySizePx = 19f;
+            SmallSizePx = 17f;
+            SubtitleSizePx = 29f;
+            TitleSizePx = 50f;
+        }
+        else
+        {
+            BodySizePx = 21f;
+            SmallSizePx = 19f;
+            SubtitleSizePx = 31f;
+            TitleSizePx = 54f;
+        }
 
-        // Gender -> theme colors
+        // --- Gender rubric → gold / accent (distinct paths for female / male / other) ---
         string g = (Gender ?? string.Empty).Trim().ToLowerInvariant();
-        PrimaryColor = Color.FromArgb(12, 12, 12);
+        PrimaryColor = Color.FromArgb(10, 10, 14);
         if (g == "female")
         {
-            SecondaryColor = Color.FromArgb(232, 185, 35);
-            TertiaryColor = Color.FromArgb(65, 105, 163);
+            SecondaryColor = Color.FromArgb(232, 185, 55);
+            TertiaryColor = Color.FromArgb(72, 118, 178);
+        }
+        else if (g == "other" || g == "nonbinary" || g == "nb")
+        {
+            SecondaryColor = Color.FromArgb(205, 165, 225);
+            TertiaryColor = Color.FromArgb(130, 95, 200);
         }
         else
         {
             SecondaryColor = Color.FromArgb(212, 175, 55);
-            TertiaryColor = Color.FromArgb(201, 166, 107);
+            TertiaryColor = Color.FromArgb(175, 145, 85);
         }
 
-        // Race -> language
+        // --- Race rubric → language + subtle accent tint (still readable on dark bg) ---
         string r = (Race ?? string.Empty).Trim().ToLowerInvariant();
         if (r == "black") Language = "Arabic";
         else if (r == "indian") Language = "Hindi";
         else if (r == "latino") Language = "Spanish";
+        else if (r == "asian") Language = "English";
         else Language = "English";
+
+        Color raceWarm = Color.FromArgb(230, 200, 140);
+        Color raceCool = Color.FromArgb(120, 170, 210);
+        if (r == "latino" || r == "black")
+            TertiaryColor = BlendRgb(TertiaryColor, raceWarm, 0.12f);
+        else if (r == "asian" || r == "indian")
+            TertiaryColor = BlendRgb(TertiaryColor, raceCool, 0.10f);
+        else if (r == "white")
+            TertiaryColor = BlendRgb(TertiaryColor, Color.FromArgb(200, 195, 175), 0.06f);
+
+        // --- Camera / YOLO context layer (museum: reading device, guide, distance) ---
+        if (YoloBookNearby)
+        {
+            SecondaryColor = BlendRgb(SecondaryColor, Color.FromArgb(255, 210, 150), 0.14f);
+            BodySizePx += 1.5f;
+            SmallSizePx += 1f;
+        }
+        if (YoloPhoneNearby)
+        {
+            BodySizePx += 2f;
+            SmallSizePx += 1.5f;
+            SubtitleSizePx += 1f;
+        }
+        if (YoloLargePersonNearby)
+        {
+            TitleSizePx += 3f;
+            SubtitleSizePx += 2.5f;
+            BodySizePx += 1f;
+        }
+
+        TitleSizePx = ClampFont(TitleSizePx, 40f, 62f);
+        SubtitleSizePx = ClampFont(SubtitleSizePx, 24f, 38f);
+        BodySizePx = ClampFont(BodySizePx, 16f, 28f);
+        SmallSizePx = ClampFont(SmallSizePx, 14f, 26f);
     }
 }
 
 public class BluetoothService
 {
+    /// <summary>Turns Python Bluetooth exception text into a short, user-readable message.</summary>
+    public static string FriendlyBluetoothError(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return "Bluetooth could not be checked. Try again in a moment.";
+        string s = raw.Trim();
+        if (s.IndexOf("POWERED_OFF", StringComparison.OrdinalIgnoreCase) >= 0
+            || s.IndexOf("radio is not powered", StringComparison.OrdinalIgnoreCase) >= 0
+            || s.IndexOf("BluetoothUnavailableError", StringComparison.OrdinalIgnoreCase) >= 0
+            || s.IndexOf("BleakBluetoothNotAvailableReason", StringComparison.OrdinalIgnoreCase) >= 0
+            || s.IndexOf("Bluetooth is not turned on", StringComparison.OrdinalIgnoreCase) >= 0)
+            return "Bluetooth is off on this computer. Turn it on in Windows settings, then try again.";
+        if (s.IndexOf("not supported", StringComparison.OrdinalIgnoreCase) >= 0
+            && s.IndexOf("bluetooth", StringComparison.OrdinalIgnoreCase) >= 0)
+            return "This PC does not support the Bluetooth scan used for login.";
+        int cut = s.IndexOf('(');
+        if (cut > 12 && cut < 100 && s.Length > cut + 40)
+            s = s.Substring(0, cut).Trim().TrimEnd(',');
+        if (s.Length > 180)
+            s = s.Substring(0, 177).Trim() + "...";
+        return s;
+    }
+
     public bool Verify(string targetMac, out string status)
     {
         // Skip 2FA if MAC address is "0" - user doesn't require Bluetooth verification
@@ -206,11 +381,11 @@ public class BluetoothService
             return true;
         }
 
-        status = "Running Bluetooth scan...";
+        status = "Searching for your Bluetooth device nearby…";
 
         if (string.IsNullOrWhiteSpace(targetMac))
         {
-            status = "Bluetooth 2FA failed. Expected user MAC is missing.";
+            status = "No Bluetooth device is registered for this account.";
             return false;
         }
 
@@ -219,7 +394,7 @@ public class BluetoothService
             SocketClient client = new SocketClient();
             if (!client.connectToSocket("localhost", 5000))
             {
-                status = "Bluetooth 2FA failed. Cannot connect to server.";
+                status = "Cannot reach the Python server (port 5000). Start python_server.py, then try again.";
                 return false;
             }
 
@@ -231,45 +406,266 @@ public class BluetoothService
 
             if (response == null || response == "")
             {
-                status = "Bluetooth 2FA failed. No response from server.";
+                status = "No response from the Python server. Check that python_server.py is running.";
                 return false;
             }
 
             if (response.StartsWith("FOUND:"))
             {
+                string deviceName;
+                string mac;
                 string[] parts = response.Split(':');
-                string deviceName = parts.Length > 1 ? parts[1] : "Unknown";
-                string mac = parts.Length > 2 ? parts[2] : targetMac;
-                status = "Bluetooth verified: " + deviceName + " (MAC: " + mac + ")";
+                if (parts.Length >= 8)
+                {
+                    mac = string.Join(":", parts, parts.Length - 6, 6);
+                    deviceName = string.Join(":", parts, 1, parts.Length - 7);
+                }
+                else if (parts.Length >= 3)
+                {
+                    deviceName = parts[1];
+                    mac = parts[2];
+                }
+                else
+                {
+                    deviceName = "Unknown";
+                    mac = targetMac;
+                }
+                status = "Bluetooth verified — we matched " + deviceName + ". Signing you in…";
                 return true;
             }
 
             if (response.StartsWith("NOT_FOUND"))
             {
-                status = "Bluetooth 2FA failed. Expected MAC not found in discovered devices: " + targetMac;
+                status = "We could not find your registered device. Turn on Bluetooth, keep the device discoverable, and move it closer to this computer.";
                 return false;
             }
 
             if (response.StartsWith("ERROR:"))
             {
                 string errorMsg = response.Substring(6);
-                status = "Bluetooth 2FA failed. " + errorMsg;
+                status = FriendlyBluetoothError(errorMsg);
                 return false;
             }
 
-            status = "Bluetooth 2FA failed. Unknown response: " + response;
+            status = FriendlyBluetoothError("Unknown response: " + response);
             return false;
         }
         catch (Exception ex)
         {
-            status = "Bluetooth verify failed: " + ex.Message;
+            status = FriendlyBluetoothError(ex.Message);
+            return false;
+        }
+    }
+
+    /// <summary>Registration: discover a nearby BLE device (Python picks best named candidate).</summary>
+    public bool TryPickRegistrationDevice(out string deviceName, out string mac, out string status)
+    {
+        deviceName = string.Empty;
+        mac = string.Empty;
+        status = "Scanning for Bluetooth devices...";
+
+        try
+        {
+            SocketClient client = new SocketClient();
+            if (!client.connectToSocket("localhost", 5000))
+            {
+                status = "Cannot connect to the Python server (port 5000). Start python_server.py and try again.";
+                return false;
+            }
+
+            string response = client.sendCommandAndWait("bluetooth_register_pick");
+            client.closeConnection();
+
+            if (string.IsNullOrEmpty(response))
+            {
+                status = "No response from server.";
+                return false;
+            }
+
+            if (response.StartsWith("FOUND\t", StringComparison.Ordinal))
+            {
+                string payload = response.Length > 6 ? response.Substring(6) : "";
+                string[] parts = payload.Split(new[] { '\t' }, StringSplitOptions.None);
+                if (parts.Length >= 2)
+                {
+                    deviceName = parts[0].Trim();
+                    mac = parts[1].Trim().ToUpperInvariant().Replace("-", ":");
+                    status = "Selected device: " + deviceName + " (" + mac + ")";
+                    return true;
+                }
+            }
+
+            if (string.Equals(response, "NOT_FOUND", StringComparison.OrdinalIgnoreCase))
+            {
+                status = "No Bluetooth devices found. Enable Bluetooth and try again.";
+                return false;
+            }
+
+            if (response.StartsWith("ERROR:", StringComparison.OrdinalIgnoreCase))
+            {
+                status = FriendlyBluetoothError(response.Substring(6));
+                return false;
+            }
+
+            status = FriendlyBluetoothError("Unknown response: " + response);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            status = FriendlyBluetoothError(ex.Message);
             return false;
         }
     }
 }
 
+public enum FaceRegisterScanResult
+{
+    Error,
+    NoFace,
+    MatchedExisting,
+    NewUserCreated
+}
+
 public class FaceRecognitionService
 {
+    /// <summary>Registration: capture face; FOUND existing user or NEW id with image saved by Python.</summary>
+    public bool RegisterFaceScan(out FaceRegisterScanResult result, out string userId, out string status)
+    {
+        result = FaceRegisterScanResult.Error;
+        userId = string.Empty;
+        status = "Starting face capture for registration...";
+
+        try
+        {
+            SocketClient client = new SocketClient();
+            if (!client.connectToSocket("localhost", 5000))
+            {
+                status = "Cannot connect to Face ID server.";
+                return false;
+            }
+
+            string response = client.sendCommandAndWait("face_register_scan");
+            client.closeConnection();
+
+            if (string.IsNullOrEmpty(response))
+            {
+                status = "No response from Face ID server.";
+                return false;
+            }
+
+            if (response.StartsWith("FOUND:", StringComparison.OrdinalIgnoreCase))
+            {
+                userId = response.Substring(6).Trim();
+                result = FaceRegisterScanResult.MatchedExisting;
+                status = "This face is already registered as " + userId + ".";
+                return true;
+            }
+
+            if (response.StartsWith("NEW:", StringComparison.OrdinalIgnoreCase))
+            {
+                userId = response.Substring(4).Trim();
+                result = FaceRegisterScanResult.NewUserCreated;
+                status = "New face saved as " + userId + ". Continue with Bluetooth.";
+                return true;
+            }
+
+            if (response.StartsWith("NOT_FOUND", StringComparison.OrdinalIgnoreCase))
+            {
+                result = FaceRegisterScanResult.NoFace;
+                status = "No face detected. Try again with better lighting.";
+                return true;
+            }
+
+            if (response.StartsWith("ERROR:", StringComparison.OrdinalIgnoreCase))
+            {
+                status = response.Substring(6);
+                return false;
+            }
+
+            status = "Unexpected response: " + response;
+            return false;
+        }
+        catch (Exception ex)
+        {
+            status = "Register face exception: " + ex.Message;
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// OpenCV lobby on Python (oval guide, centering, hold-still, countdown for new users).
+    /// Same wire protocol as RegisterFaceScan: FOUND:userId, NEW:userId, NOT_FOUND, ERROR:, plus CANCELLED.
+    /// </summary>
+    public bool AuthLobbyScan(out FaceRegisterScanResult result, out string userId, out string status)
+    {
+        result = FaceRegisterScanResult.Error;
+        userId = string.Empty;
+        status = "Opening your webcam — look for the “Face sign-in” window on this PC.";
+
+        try
+        {
+            SocketClient client = new SocketClient();
+            if (!client.connectToSocket("localhost", 5000))
+            {
+                status = "Cannot connect to Face ID server.";
+                return false;
+            }
+
+            string response = client.sendCommandAndWait("face_auth_lobby");
+            client.closeConnection();
+
+            if (string.IsNullOrEmpty(response))
+            {
+                status = "No response from Face ID server.";
+                return false;
+            }
+
+            if (response.StartsWith("FOUND:", StringComparison.OrdinalIgnoreCase))
+            {
+                userId = response.Substring(6).Trim();
+                result = FaceRegisterScanResult.MatchedExisting;
+                status = "Welcome back — we matched your face (" + userId + ").";
+                return true;
+            }
+
+            if (response.StartsWith("NEW:", StringComparison.OrdinalIgnoreCase))
+            {
+                userId = response.Substring(4).Trim();
+                result = FaceRegisterScanResult.NewUserCreated;
+                status = "Your photo was saved. Next we will pair Bluetooth for your account.";
+                return true;
+            }
+
+            if (string.Equals(response, "CANCELLED", StringComparison.OrdinalIgnoreCase))
+            {
+                result = FaceRegisterScanResult.NoFace;
+                status = "Sign-in was cancelled from the webcam window.";
+                return true;
+            }
+
+            if (response.StartsWith("NOT_FOUND", StringComparison.OrdinalIgnoreCase))
+            {
+                result = FaceRegisterScanResult.NoFace;
+                status = "We could not finish in time. Try again with your face clearly in the oval.";
+                return true;
+            }
+
+            if (response.StartsWith("ERROR:", StringComparison.OrdinalIgnoreCase))
+            {
+                status = response.Substring(6);
+                return false;
+            }
+
+            status = "Unexpected response: " + response;
+            return false;
+        }
+        catch (Exception ex)
+        {
+            status = "Auth lobby exception: " + ex.Message;
+            return false;
+        }
+    }
+
     public bool Scan(out string userId, out string status)
     {
         userId = string.Empty;
@@ -320,6 +716,40 @@ public class FaceRecognitionService
         catch (Exception ex)
         {
             status = "Face ID exception: " + ex.Message;
+            return false;
+        }
+    }
+}
+
+/// <summary>Append a new visitor row to users.csv (Face ID server must already have saved the face image).</summary>
+public static class AuthCsvStore
+{
+    public static string SanitizeField(string s)
+    {
+        if (string.IsNullOrEmpty(s)) return "";
+        return s.Replace(",", " ").Replace("\r", " ").Replace("\n", " ").Trim();
+    }
+
+    public static bool AppendUser(string csvPath, VisitorProfile profile)
+    {
+        try
+        {
+            string line = string.Join(",",
+                SanitizeField(profile.FaceUserId),
+                SanitizeField(profile.FirstName),
+                SanitizeField(profile.LastName),
+                profile.Age.ToString(CultureInfo.InvariantCulture),
+                SanitizeField(profile.Gender),
+                SanitizeField(profile.Race),
+                SanitizeField(profile.BluetoothMacAddress),
+                SanitizeField(profile.FaceImagePath),
+                SanitizeField(string.IsNullOrEmpty(profile.Role) ? "visitor" : profile.Role));
+
+            File.AppendAllText(csvPath, Environment.NewLine + line, Encoding.UTF8);
+            return true;
+        }
+        catch
+        {
             return false;
         }
     }

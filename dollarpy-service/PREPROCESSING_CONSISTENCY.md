@@ -3,6 +3,8 @@
 ## Overview
 This document ensures that preprocessing steps are IDENTICAL between template building and real-time recognition to guarantee accurate gesture matching.
 
+**Python environment:** from the repo root run `.\install_python_deps.ps1` once so `dollarpy`, `mediapipe`, etc. are installed into `.venv` before any `python ...` commands below.
+
 ## Critical Consistency Requirements
 
 ### 1. MediaPipe Configuration

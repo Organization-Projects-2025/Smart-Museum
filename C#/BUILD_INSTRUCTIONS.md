@@ -99,21 +99,29 @@ using System.Threading.Tasks;
 
 ## Running with Gesture Recognition
 
+0. **Install Python dependencies into `.venv` (once):** from the repository root (folder that contains `C#`, `python`, `dollarpy-service`):
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\install_python_deps.ps1
+   ```
+
 1. **Start Python Gesture Service:**
-   ```bash
-   cd Smart-Museum/dollarpy-service
-   ..\.venv\Scripts\python.exe gesture_service.py
+   ```powershell
+   cd <repo-root>
+   .\.venv\Scripts\Activate.ps1
+   python dollarpy-service\gesture_service.py
    ```
 
 2. **Start Python Auth Server:**
-   ```bash
-   cd Smart-Museum/python/server
-   ..\..\..venv\Scripts\python.exe python_server.py
+   ```powershell
+   cd <repo-root>
+   .\.venv\Scripts\Activate.ps1
+   python python\server\python_server.py
    ```
 
 3. **Run TuioDemo:**
-   ```bash
-   cd Smart-Museum/C#
+   ```powershell
+   cd C#
    bin\Release\TuioDemo.exe
    ```
 

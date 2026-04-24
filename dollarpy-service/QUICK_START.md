@@ -1,5 +1,16 @@
 # Quick Start Guide - Gesture Recognition System
 
+## Python environment (do this once per machine)
+
+From the **repository root** (parent of `dollarpy-service/`):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install_python_deps.ps1
+.\.venv\Scripts\Activate.ps1
+```
+
+That installs `dollarpy`, `mediapipe`, `opencv-python`, etc. into `.venv`. If you skip this, `ModuleNotFoundError: dollarpy` (or `bluetooth` / pybluez2) means dependencies were never installed into the venv you are using.
+
 ## 🚀 Simplified Workflow
 
 All components now automatically use the correct paths and templates!
@@ -39,9 +50,11 @@ python run_gesture_gui.py
 
 ### 3. Run Gesture Service (for C# integration)
 
-```bash
-cd dollarpy-service
-python gesture_service.py
+From repo root, with `.venv` activated (or use the venv’s `python` explicitly):
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+python dollarpy-service\gesture_service.py
 ```
 
 ✅ Uses the same templates as GUI

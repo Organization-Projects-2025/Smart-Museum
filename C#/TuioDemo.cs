@@ -10,6 +10,7 @@ using System.Drawing.Text;
 using System.IO;
 using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using TUIO;
 
@@ -96,6 +97,72 @@ public class TuioDemo : Form, TuioListener
     private string authStatus = "Waiting for Face ID";
     private VisitorProfile visitorProfile;
 
+    private enum LoginAuthPhase
+    {
+        /// <summary>Initial / restart screen: shows "look at the camera" while RegisterFaceScan auto-runs.</summary>
+        MainPicker,
+        LoginScanning,
+        RegisterScanning,
+        /// <summary>Returning user: show CSV profile on C# surface, then Bluetooth.</summary>
+        ProfileWelcome,
+        RegisterDuplicateChoice,
+        RegisterBluetoothScanning,
+        RegisterBluetoothConfirm,
+        /// <summary>Face was not detected. Ring offers Try again / Exit.</summary>
+        NoFaceRecovery,
+        /// <summary>Login or duplicate-login: Bluetooth failed; user can retry or restart face scan.</summary>
+        LoginBluetoothRecovery,
+        /// <summary>Registration: Bluetooth device scan failed; user can retry or restart face scan.</summary>
+        RegisterBluetoothRecovery,
+        RegisterEnterFirstName,
+        RegisterEnterLastName,
+        RegisterEnterAge,
+        RegisterGenderPick,
+        RegisterRolePick,
+        RegisterSaving
+    }
+
+    private LoginAuthPhase loginPhase = LoginAuthPhase.MainPicker;
+    private List<string> authRingItems = new List<string>();
+    private int authRingSelectedIndex;
+    private bool authRingGestureArmed = true;
+    private bool authRingHasLastY;
+    private float authRingLastY;
+    private float authRingAccumY;
+    /// <summary>Latest menu-marker rotation in degrees (TUIO), for on-screen debugging.</summary>
+    private float authTuioMarkerAngleDeg;
+    private bool authTuioMarkerTracked;
+
+    private string pendingDuplicateUserId;
+    private string pendingNewFaceUserId;
+    private string pendingBtDeviceName;
+    private string pendingBtMac;
+    private string pendingRegisterRole = "visitor";
+
+    /// <summary>Face ID succeeded but Bluetooth verify failed — retry uses this profile.</summary>
+    private VisitorProfile pendingLoginBluetoothUser;
+    private bool pendingLoginBluetoothFromDuplicate;
+
+    /// <summary>Loaded after face lobby match — shown on Tuio auth screen (museum profile panel).</summary>
+    private VisitorProfile authLobbyProfilePreview;
+
+    /// <summary>After a successful face match, advance to Bluetooth without TUIO when this time elapses.</summary>
+    private DateTime? profileWelcomeAutoContinueUtc;
+
+    private int loginBluetoothFailureCount;
+    private DateTime loginBtCooldownUntilUtc;
+    private bool loginBluetoothRecoveryEscalated;
+
+    private string nameEntryBuffer = "";
+    private string regPendingFirstName;
+    private string regPendingLastName;
+    private int regPendingAge;
+    private string regPendingGender;
+
+    private const int RegMaxNameChars = 40;
+    private const int RegMinAge = 1;
+    private const int RegMaxAge = 120;
+
     private Color themePrimary = Color.FromArgb(12, 12, 12);
     private Color themeSecondary = Color.FromArgb(212, 175, 55);
     private Color themeTertiary = Color.FromArgb(201, 166, 107);
@@ -121,6 +188,12 @@ public class TuioDemo : Form, TuioListener
     private GestureClient gestureClient;
     private System.Windows.Forms.Timer gestureCheckTimer;
     private bool isGestureActive = false;
+
+    private GazeEmotionClient gazeEmotionClient;
+    private YoloContextClient yoloContextClient;
+    private readonly SessionAnalyticsRecorder analyticsRecorder = new SessionAnalyticsRecorder();
+    private AdminAnalyticsPanel adminAnalyticsPanel;
+    private bool adminAnalyticsVisible;
     
     // Gesture overlay display
     private string lastDetectedGesture = null;
@@ -188,6 +261,7 @@ public class TuioDemo : Form, TuioListener
 
         W = winW; H = winH;
         this.ClientSize = new Size(W, H);
+        this.MinimumSize = new Size(960, 600);
         this.Text = "Smart Grand Egyptian Museum";
         this.BackColor = CBg;
         this.Cursor = Cursors.Default;
@@ -207,6 +281,13 @@ public class TuioDemo : Form, TuioListener
             fadeAlpha = 0f;
             fadingIn = true;
             slideElapsedMs = 0;
+            if (slide != null && analyticsRecorder != null && visitorProfile != null)
+            {
+                string title = "";
+                if (!string.IsNullOrEmpty(activeStoryKey) && storyTitleByKey.ContainsKey(activeStoryKey))
+                    title = storyTitleByKey[activeStoryKey];
+                analyticsRecorder.NotifySlideChanged(activeStoryKey, title, slideShow.CurrentIndex, slide);
+            }
             SafeInvalidate();
         };
         slideShow.SlideShowCompleted += OnSlideShowCompleted;
@@ -228,59 +309,548 @@ public class TuioDemo : Form, TuioListener
         StartLoginFlow();
     }
 
+    private void ShowAuthPicker()
+    {
+        loginPhase = LoginAuthPhase.MainPicker;
+        authRingItems = new List<string>();
+        authRingSelectedIndex = 0;
+        pendingDuplicateUserId = null;
+        pendingNewFaceUserId = null;
+        pendingLoginBluetoothUser = null;
+        pendingLoginBluetoothFromDuplicate = false;
+        authLobbyProfilePreview = null;
+        loginBluetoothFailureCount = 0;
+        loginBtCooldownUntilUtc = DateTime.MinValue;
+        loginBluetoothRecoveryEscalated = false;
+        pendingBtDeviceName = null;
+        pendingBtMac = null;
+        pendingRegisterRole = "visitor";
+        nameEntryBuffer = "";
+        regPendingFirstName = null;
+        regPendingLastName = null;
+        regPendingAge = 0;
+        regPendingGender = null;
+        authRingGestureArmed = true;
+        authRingHasLastY = false;
+        authRingAccumY = 0f;
+        authInProgress = false;
+        profileWelcomeAutoContinueUtc = null;
+        authStatus = "We’ll open a short camera check on this computer. Fit your face in the gold frame — when you’re done, your name appears here on the table.";
+        SafeInvalidate();
+        RunRegisterFaceScanThread();
+    }
+
+    private void ShowNoFaceRecovery(string message)
+    {
+        Action apply = () =>
+        {
+            loginPhase = LoginAuthPhase.NoFaceRecovery;
+            authRingItems = new List<string> { "Try again", "Exit" };
+            authRingSelectedIndex = 0;
+            authRingGestureArmed = true;
+            authRingHasLastY = false;
+            authRingAccumY = 0f;
+            authInProgress = false;
+            authStatus = message;
+            Invalidate();
+        };
+        if (IsHandleCreated) BeginInvoke(apply);
+        else { apply(); SafeInvalidate(); }
+    }
+
     private void StartLoginFlow()
     {
-        authInProgress = true;
+        if (isLoggedIn && analyticsRecorder != null)
+            analyticsRecorder.FlushAndSave();
+        TeardownGazeAnalytics();
+
         isLoggedIn = false;
-        authStatus = "Face ID is starting...";
+        visitorProfile = null;
+        ShowAuthPicker();
+    }
+
+    private void RunRegisterFaceScanThread()
+    {
+        authInProgress = true;
+        loginPhase = LoginAuthPhase.RegisterScanning;
+        authStatus = "Opening the camera window… If you don’t see it, look for “Face sign-in” on the Windows taskbar.";
+        SafeInvalidate();
+
+        Thread t = new Thread(() =>
+        {
+            try
+            {
+                var faceService = new FaceRecognitionService();
+                FaceRegisterScanResult outcome;
+                string uid;
+                string st;
+                bool ok = faceService.AuthLobbyScan(out outcome, out uid, out st);
+                authStatus = st;
+                SafeInvalidate();
+
+                if (!ok && outcome == FaceRegisterScanResult.Error)
+                {
+                    ShowNoFaceRecovery("We couldn’t reach the sign-in service. " + (string.IsNullOrEmpty(st)
+                        ? "Check that python_server.py is running on this PC, then try again."
+                        : st));
+                    return;
+                }
+
+                if (outcome == FaceRegisterScanResult.NoFace)
+                {
+                    ShowNoFaceRecovery("We couldn’t see your face clearly. Step a little closer, face the light, and try again.");
+                    return;
+                }
+
+                if (outcome == FaceRegisterScanResult.MatchedExisting)
+                {
+                    pendingDuplicateUserId = uid;
+                    VisitorProfile preview = null;
+                    TryLoadVisitorProfile(uid, out preview);
+                    if (IsHandleCreated)
+                    {
+                        BeginInvoke(new Action(() =>
+                        {
+                            loginBluetoothFailureCount = 0;
+                            loginBluetoothRecoveryEscalated = false;
+                            loginBtCooldownUntilUtc = DateTime.MinValue;
+                            authLobbyProfilePreview = preview;
+                            authInProgress = false;
+                            loginPhase = LoginAuthPhase.ProfileWelcome;
+                            authRingItems = new List<string>();
+                            authRingSelectedIndex = 0;
+                            authRingGestureArmed = true;
+                            authRingHasLastY = false;
+                            authRingAccumY = 0f;
+                            profileWelcomeAutoContinueUtc = DateTime.UtcNow.AddSeconds(4);
+                            authStatus = preview != null
+                                ? "You’re in — here’s the profile we keep for your visits. We’ll verify your phone next; this step continues on its own in a few seconds."
+                                : "You’re in — we matched your account. We’ll verify your phone next; this continues on its own in a few seconds.";
+                            Invalidate();
+                        }));
+                    }
+                    return;
+                }
+
+                if (outcome == FaceRegisterScanResult.NewUserCreated)
+                {
+                    pendingNewFaceUserId = uid;
+                    if (IsHandleCreated)
+                    {
+                        BeginInvoke(new Action(() =>
+                        {
+                            authInProgress = false;
+                            authStatus = "Almost there — we’ll look for your phone or watch on Bluetooth to finish creating your account.";
+                            Invalidate();
+                            StartBluetoothPickForRegistration();
+                        }));
+                    }
+                    return;
+                }
+
+                ShowNoFaceRecovery("Something unexpected happened during sign-in. Please try again.");
+            }
+            catch (Exception ex)
+            {
+                ShowNoFaceRecovery("We couldn’t finish the camera step: " + ex.Message);
+            }
+        });
+
+        t.IsBackground = true;
+        t.Name = "AuthFlowRegisterFace";
+        t.Start();
+    }
+
+    private void StartBluetoothPickForRegistration()
+    {
+        authInProgress = true;
+        loginPhase = LoginAuthPhase.RegisterBluetoothScanning;
+        authStatus = "Turn on Bluetooth on your phone and make it discoverable. Scanning for nearby devices…";
+        Invalidate();
+
+        Thread t = new Thread(() =>
+        {
+            try
+            {
+                var bt = new BluetoothService();
+                string name, mac, st;
+                bool ok = bt.TryPickRegistrationDevice(out name, out mac, out st);
+                authStatus = st;
+                SafeInvalidate();
+
+                if (!ok || string.IsNullOrEmpty(mac))
+                {
+                    authInProgress = false;
+                    string displayStatus = BluetoothService.FriendlyBluetoothError(st);
+                    if (IsHandleCreated)
+                    {
+                        BeginInvoke(new Action(() =>
+                        {
+                            loginPhase = LoginAuthPhase.RegisterBluetoothRecovery;
+                            authRingItems = new List<string> { "Try again", "Restart scan" };
+                            authRingSelectedIndex = 0;
+                            authRingGestureArmed = true;
+                            authRingHasLastY = false;
+                            authRingAccumY = 0f;
+                            authStatus = displayStatus;
+                            Invalidate();
+                        }));
+                    }
+                    else
+                    {
+                        loginPhase = LoginAuthPhase.RegisterBluetoothRecovery;
+                        authRingItems = new List<string> { "Try again", "Restart scan" };
+                        authRingSelectedIndex = 0;
+                        authStatus = displayStatus;
+                    }
+                    SafeInvalidate();
+                    return;
+                }
+
+                pendingBtDeviceName = name;
+                pendingBtMac = mac;
+                if (IsHandleCreated)
+                {
+                    BeginInvoke(new Action(() =>
+                    {
+                        loginPhase = LoginAuthPhase.RegisterBluetoothConfirm;
+                        authRingItems = new List<string> { "Use this device", "Scan again" };
+                        authRingSelectedIndex = 0;
+                        authRingGestureArmed = true;
+                        authRingHasLastY = false;
+                        authRingAccumY = 0f;
+                        authInProgress = false;
+                        authStatus = "Bluetooth: " + name + " — " + mac + ". Confirm or scan again.";
+                        Invalidate();
+                    }));
+                }
+            }
+            catch (Exception ex)
+            {
+                authInProgress = false;
+                string displayStatus = BluetoothService.FriendlyBluetoothError(ex.Message);
+                if (IsHandleCreated)
+                {
+                    BeginInvoke(new Action(() =>
+                    {
+                        loginPhase = LoginAuthPhase.RegisterBluetoothRecovery;
+                        authRingItems = new List<string> { "Try again", "Restart scan" };
+                        authRingSelectedIndex = 0;
+                        authRingGestureArmed = true;
+                        authRingHasLastY = false;
+                        authRingAccumY = 0f;
+                        authStatus = displayStatus;
+                        Invalidate();
+                    }));
+                }
+                else
+                {
+                    loginPhase = LoginAuthPhase.RegisterBluetoothRecovery;
+                    authRingItems = new List<string> { "Try again", "Restart scan" };
+                    authRingSelectedIndex = 0;
+                    authStatus = displayStatus;
+                }
+                SafeInvalidate();
+            }
+        });
+
+        t.IsBackground = true;
+        t.Name = "AuthFlowRegBt";
+        t.Start();
+    }
+
+    private void RunDuplicateUserLoginThread()
+    {
+        if (string.IsNullOrEmpty(pendingDuplicateUserId)) return;
+
+        profileWelcomeAutoContinueUtc = null;
+        authInProgress = true;
+        loginPhase = LoginAuthPhase.LoginScanning;
+        authStatus = "Connecting you — pairing your phone next…";
+        SafeInvalidate();
 
         Thread t = new Thread(() =>
         {
             try
             {
                 string workspaceRoot = GetWorkspaceRoot();
-                string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-
                 string csvPath = Path.Combine(workspaceRoot, "C#", "content", "auth", "users.csv");
                 List<VisitorProfile> users = VisitorProfile.LoadFromCsv(csvPath);
-
-                var faceService = new FaceRecognitionService();
-                string faceUserId;
-                string faceStatus;
-                bool faceOk = faceService.Scan(out faceUserId, out faceStatus);
-                authStatus = faceStatus;
-
-                if (!faceOk || string.IsNullOrEmpty(faceUserId))
-                {
-                    authInProgress = false;
-                    SafeInvalidate();
-                    return;
-                }
-
-                VisitorProfile selected = null;
-                selected = users.Find(u => string.Equals(u.FaceUserId, faceUserId, StringComparison.OrdinalIgnoreCase));
+                VisitorProfile selected = users.Find(u =>
+                    string.Equals(u.FaceUserId, pendingDuplicateUserId, StringComparison.OrdinalIgnoreCase));
 
                 if (selected == null)
                 {
-                    authStatus = "Face ID user '" + faceUserId + "' is not found in CSV.";
+                    authStatus = "We couldn’t load your saved visitor details. Please start sign-in again from the camera step.";
                     authInProgress = false;
+                    loginPhase = LoginAuthPhase.MainPicker;
                     SafeInvalidate();
                     return;
                 }
+
+                if (IsHandleCreated)
+                {
+                    BeginInvoke(new Action(() =>
+                    {
+                        authStatus = "Hi, " + selected.FullName + " — please leave Bluetooth on and make your phone or watch discoverable for a moment.";
+                        Invalidate();
+                    }));
+                }
+                Thread.Sleep(2200);
+
+                if (IsHandleCreated)
+                {
+                    BeginInvoke(new Action(() =>
+                    {
+                        authStatus = "Looking for your registered device… this can take a few seconds.";
+                        Invalidate();
+                    }));
+                }
+                Thread.Sleep(400);
 
                 var btService = new BluetoothService();
                 string btStatus;
                 bool btOk = btService.Verify(selected.BluetoothMacAddress, out btStatus);
                 authStatus = btStatus;
+                SafeInvalidate();
 
                 if (!btOk)
                 {
+                    pendingLoginBluetoothUser = selected;
+                    pendingLoginBluetoothFromDuplicate = true;
                     authInProgress = false;
+                    if (IsHandleCreated)
+                        BeginInvoke(new Action(() => ShowLoginBluetoothFailureState(btStatus)));
+                    else
+                        ShowLoginBluetoothFailureState(btStatus);
                     SafeInvalidate();
                     return;
                 }
 
                 visitorProfile = selected;
+                authStatus = "Welcome, " + visitorProfile.FullName + ". Your visit will use " + visitorProfile.Language + ".";
+
+                if (IsHandleCreated)
+                {
+                    BeginInvoke(new Action(() =>
+                    {
+                        loginBluetoothFailureCount = 0;
+                        loginBluetoothRecoveryEscalated = false;
+                        loginBtCooldownUntilUtc = DateTime.MinValue;
+                        ApplyVisitorTheme();
+                        ConfigureCircularMenuForUser();
+                        authInProgress = false;
+                        loginPhase = LoginAuthPhase.MainPicker;
+                        isLoggedIn = true;
+                        pendingDuplicateUserId = null;
+                        pendingLoginBluetoothUser = null;
+                        pendingLoginBluetoothFromDuplicate = false;
+                        Transition(AppState.Idle, null, null, null, null);
+                        InitializeGazeAnalytics();
+                        InitializeYoloContext();
+                        Invalidate();
+                    }));
+                }
+            }
+            catch (Exception ex)
+            {
+                authStatus = BluetoothService.FriendlyBluetoothError(ex.Message);
+                authInProgress = false;
+                loginPhase = LoginAuthPhase.MainPicker;
+                SafeInvalidate();
+            }
+        });
+
+        t.IsBackground = true;
+        t.Name = "AuthFlowDupLogin";
+        t.Start();
+    }
+
+    /// <summary>UI thread: first Bluetooth failure offers retry after cooldown; second failure offers restart or guest.</summary>
+    private void ShowLoginBluetoothFailureState(string bluetoothDetail)
+    {
+        loginBluetoothFailureCount++;
+        if (loginBluetoothFailureCount >= 2)
+        {
+            loginBluetoothRecoveryEscalated = true;
+            loginBtCooldownUntilUtc = DateTime.MinValue;
+            authRingItems = new List<string> { "Restart login", "Guest visitor" };
+            authStatus = "Bluetooth still could not verify your device after two tries. You can return to the camera screen, or continue as a guest (no Bluetooth check) with a dedicated guest look.";
+        }
+        else
+        {
+            loginBluetoothRecoveryEscalated = false;
+            loginBtCooldownUntilUtc = DateTime.UtcNow.AddSeconds(5);
+            authRingItems = new List<string> { "Try again", "Restart scan" };
+            string friendly = BluetoothService.FriendlyBluetoothError(bluetoothDetail);
+            authStatus = "Bluetooth verification did not succeed. " + friendly + " Please wait 5 seconds, then choose Try again.";
+        }
+        loginPhase = LoginAuthPhase.LoginBluetoothRecovery;
+        authRingSelectedIndex = 0;
+        authRingGestureArmed = true;
+        authRingHasLastY = false;
+        authRingAccumY = 0f;
+        Invalidate();
+    }
+
+    private void LoginGuestAndEnter()
+    {
+        visitorProfile = VisitorProfile.CreateGuestVisitor();
+        ApplyVisitorTheme();
+        ConfigureCircularMenuForUser();
+        authInProgress = false;
+        loginPhase = LoginAuthPhase.MainPicker;
+        isLoggedIn = true;
+        pendingDuplicateUserId = null;
+        pendingLoginBluetoothUser = null;
+        pendingLoginBluetoothFromDuplicate = false;
+        loginBluetoothFailureCount = 0;
+        loginBluetoothRecoveryEscalated = false;
+        loginBtCooldownUntilUtc = DateTime.MinValue;
+        authStatus = "You are visiting as a guest — enjoy the table experience.";
+        Transition(AppState.Idle, null, null, null, null);
+        InitializeGazeAnalytics();
+        InitializeYoloContext();
+        Invalidate();
+    }
+
+    /// <summary>After face ID, retry Bluetooth 2FA only (same user as last failure).</summary>
+    private void RunLoginBluetoothRetryThread()
+    {
+        if (pendingLoginBluetoothUser == null) return;
+
+        authInProgress = true;
+        loginPhase = LoginAuthPhase.LoginScanning;
+        authStatus = "Waiting before the next Bluetooth check…";
+        SafeInvalidate();
+
+        VisitorProfile user = pendingLoginBluetoothUser;
+        bool fromDuplicateFlow = pendingLoginBluetoothFromDuplicate;
+
+        Thread t = new Thread(() =>
+        {
+            try
+            {
+                double waitMs = (loginBtCooldownUntilUtc - DateTime.UtcNow).TotalMilliseconds;
+                if (!loginBluetoothRecoveryEscalated && waitMs > 0)
+                {
+                    int sleepMs = (int)Math.Min(waitMs, 120000);
+                    if (sleepMs > 0)
+                        Thread.Sleep(sleepMs);
+                }
+
+                if (IsHandleCreated)
+                {
+                    BeginInvoke(new Action(() =>
+                    {
+                        authStatus = "Searching again for your Bluetooth device…";
+                        Invalidate();
+                    }));
+                }
+
+                var btService = new BluetoothService();
+                string btStatus;
+                bool btOk = btService.Verify(user.BluetoothMacAddress, out btStatus);
+                authStatus = btStatus;
+                SafeInvalidate();
+
+                if (!btOk)
+                {
+                    authInProgress = false;
+                    if (IsHandleCreated)
+                        BeginInvoke(new Action(() => ShowLoginBluetoothFailureState(btStatus)));
+                    else
+                        ShowLoginBluetoothFailureState(btStatus);
+                    SafeInvalidate();
+                    return;
+                }
+
+                visitorProfile = user;
+                authStatus = "Welcome, " + visitorProfile.FullName + ". Your experience will be in " + visitorProfile.Language + ".";
+
+                if (IsHandleCreated)
+                {
+                    BeginInvoke(new Action(() =>
+                    {
+                        loginBluetoothFailureCount = 0;
+                        loginBluetoothRecoveryEscalated = false;
+                        loginBtCooldownUntilUtc = DateTime.MinValue;
+                        ApplyVisitorTheme();
+                        ConfigureCircularMenuForUser();
+                        authInProgress = false;
+                        loginPhase = LoginAuthPhase.MainPicker;
+                        isLoggedIn = true;
+                        pendingLoginBluetoothUser = null;
+                        pendingLoginBluetoothFromDuplicate = false;
+                        if (fromDuplicateFlow)
+                            pendingDuplicateUserId = null;
+                        Transition(AppState.Idle, null, null, null, null);
+                        InitializeGazeAnalytics();
+                        InitializeYoloContext();
+                        Invalidate();
+                    }));
+                }
+            }
+            catch (Exception ex)
+            {
+                string msg = BluetoothService.FriendlyBluetoothError(ex.Message);
+                authStatus = msg;
+                authInProgress = false;
+                if (IsHandleCreated)
+                    BeginInvoke(new Action(() => ShowLoginBluetoothFailureState(msg)));
+                else
+                    ShowLoginBluetoothFailureState(msg);
+                SafeInvalidate();
+            }
+        });
+
+        t.IsBackground = true;
+        t.Name = "AuthFlowBtRetry";
+        t.Start();
+    }
+
+    private void RunCompleteRegistrationThread()
+    {
+        authInProgress = true;
+        loginPhase = LoginAuthPhase.RegisterSaving;
+        authStatus = "Saving your account...";
+        SafeInvalidate();
+
+        Thread t = new Thread(() =>
+        {
+            try
+            {
+                string workspaceRoot = GetWorkspaceRoot();
+                string csvPath = Path.Combine(workspaceRoot, "C#", "content", "auth", "users.csv");
+
+                string fn = string.IsNullOrWhiteSpace(regPendingFirstName) ? "New" : regPendingFirstName.Trim();
+                string ln = string.IsNullOrWhiteSpace(regPendingLastName) ? "User" : regPendingLastName.Trim();
+                int age = regPendingAge >= RegMinAge && regPendingAge <= RegMaxAge ? regPendingAge : 22;
+
+                var profile = new VisitorProfile
+                {
+                    FaceUserId = pendingNewFaceUserId,
+                    FirstName = AuthCsvStore.SanitizeField(fn),
+                    LastName = AuthCsvStore.SanitizeField(ln),
+                    Age = age,
+                    Gender = NormalizeRegGender(regPendingGender),
+                    Race = "other",
+                    BluetoothMacAddress = pendingBtMac ?? "0",
+                    FaceImagePath = "python/data/faces/" + pendingNewFaceUserId + ".jpg",
+                    Role = string.IsNullOrEmpty(pendingRegisterRole) ? "visitor" : pendingRegisterRole
+                };
+                profile.ApplyDerivedPreferences();
+
+                if (!AuthCsvStore.AppendUser(csvPath, profile))
+                {
+                    authStatus = "Could not write users.csv.";
+                    authInProgress = false;
+                    loginPhase = LoginAuthPhase.MainPicker;
+                    SafeInvalidate();
+                    return;
+                }
+
+                visitorProfile = profile;
                 authStatus = "Welcome " + visitorProfile.FullName + " (" + visitorProfile.Language + ")";
 
                 if (IsHandleCreated)
@@ -288,24 +858,524 @@ public class TuioDemo : Form, TuioListener
                     BeginInvoke(new Action(() =>
                     {
                         ApplyVisitorTheme();
+                        ConfigureCircularMenuForUser();
                         authInProgress = false;
+                        loginPhase = LoginAuthPhase.MainPicker;
                         isLoggedIn = true;
+                        pendingNewFaceUserId = null;
+                        pendingBtMac = null;
+                        regPendingFirstName = null;
+                        regPendingLastName = null;
+                        regPendingAge = 0;
+                        regPendingGender = null;
+                        nameEntryBuffer = "";
                         Transition(AppState.Idle, null, null, null, null);
+                        InitializeGazeAnalytics();
+                        InitializeYoloContext();
                         Invalidate();
                     }));
                 }
             }
             catch (Exception ex)
             {
-                authStatus = "Login failed: " + ex.Message;
+                authStatus = "Save failed: " + ex.Message;
                 authInProgress = false;
+                loginPhase = LoginAuthPhase.MainPicker;
                 SafeInvalidate();
             }
         });
 
         t.IsBackground = true;
-        t.Name = "AuthFlow";
+        t.Name = "AuthFlowSaveReg";
         t.Start();
+    }
+
+    private static float NormalizeAuthRingAngle(float angle)
+    {
+        while (angle < 0f) angle += (float)(Math.PI * 2.0);
+        while (angle >= (float)(Math.PI * 2.0)) angle -= (float)(Math.PI * 2.0);
+        return angle;
+    }
+
+    private void UpdateAuthRingSelectionFromMarker(float angleRad, int count)
+    {
+        if (count <= 0) return;
+        float fromTop = NormalizeAuthRingAngle(angleRad + (float)Math.PI / 2f);
+        float step = (float)(Math.PI * 2.0 / count);
+        // Floor into [0,count) so boundaries match pie slices (Round caused wrong wedge at π/2, etc.).
+        int idx = (int)(fromTop / step);
+        if (idx >= count) idx = count - 1;
+        if (idx < 0) idx = 0;
+        authRingSelectedIndex = idx;
+    }
+
+    private void UpdateLoginScreenTuio()
+    {
+        if (isLoggedIn) return;
+
+        if (authInProgress &&
+            (loginPhase == LoginAuthPhase.LoginScanning ||
+             loginPhase == LoginAuthPhase.RegisterScanning ||
+             loginPhase == LoginAuthPhase.RegisterBluetoothScanning ||
+             loginPhase == LoginAuthPhase.RegisterSaving))
+            return;
+
+        if (authRingItems == null || authRingItems.Count == 0) return;
+
+        TuioObject marker = GetSingleMenuMarker();
+        if (marker == null)
+        {
+            authTuioMarkerTracked = false;
+            authRingGestureArmed = true;
+            authRingAccumY = 0f;
+            authRingHasLastY = false;
+            return;
+        }
+
+        authTuioMarkerTracked = true;
+        authTuioMarkerAngleDeg = marker.Angle / (float)Math.PI * 180f;
+        UpdateAuthRingSelectionFromMarker(marker.Angle, authRingItems.Count);
+
+        if (!authRingHasLastY)
+        {
+            authRingHasLastY = true;
+            authRingLastY = marker.Y;
+            authRingAccumY = 0f;
+            return;
+        }
+
+        float frameDy = marker.Y - authRingLastY;
+        authRingAccumY += frameDy;
+
+        if (Math.Abs(marker.Y - 0.5f) <= MenuMoveNeutralBandY)
+        {
+            authRingGestureArmed = true;
+            authRingAccumY = 0f;
+        }
+
+        float upDelta = MenuUpIsPositiveY ? (-authRingAccumY) : authRingAccumY;
+        float downDelta = -upDelta;
+
+        if (authRingGestureArmed && upDelta >= MenuMoveTriggerDeltaY)
+        {
+            authRingGestureArmed = false;
+            authRingAccumY = 0f;
+            OnAuthRingConfirm();
+        }
+        else if (authRingGestureArmed && downDelta >= MenuMoveTriggerDeltaY)
+        {
+            authRingGestureArmed = false;
+            authRingAccumY = 0f;
+            OnAuthRingBack();
+        }
+
+        authRingLastY = marker.Y;
+    }
+
+    private void OnAuthRingConfirm()
+    {
+        if (authInProgress) return;
+
+        switch (loginPhase)
+        {
+            case LoginAuthPhase.MainPicker:
+                ShowAuthPicker();
+                break;
+
+            case LoginAuthPhase.NoFaceRecovery:
+                if (authRingSelectedIndex == 0)
+                    ShowAuthPicker();
+                else
+                    Application.Exit();
+                Invalidate();
+                break;
+
+            case LoginAuthPhase.RegisterDuplicateChoice:
+                if (authRingSelectedIndex == 0)
+                    RunDuplicateUserLoginThread();
+                else
+                    ShowAuthPicker();
+                break;
+
+            case LoginAuthPhase.LoginBluetoothRecovery:
+                if (loginBluetoothRecoveryEscalated)
+                {
+                    if (authRingSelectedIndex == 0)
+                        ShowAuthPicker();
+                    else
+                        LoginGuestAndEnter();
+                }
+                else
+                {
+                    if (authRingSelectedIndex == 0)
+                        RunLoginBluetoothRetryThread();
+                    else
+                        ShowAuthPicker();
+                }
+                Invalidate();
+                break;
+
+            case LoginAuthPhase.RegisterBluetoothRecovery:
+                if (authRingSelectedIndex == 0)
+                    StartBluetoothPickForRegistration();
+                else
+                    ShowAuthPicker();
+                Invalidate();
+                break;
+
+            case LoginAuthPhase.RegisterBluetoothConfirm:
+                if (authRingSelectedIndex == 0)
+                    BeginRegistrationFirstNameEntry();
+                else
+                    StartBluetoothPickForRegistration();
+                break;
+
+            case LoginAuthPhase.ProfileWelcome:
+                TriggerProfileWelcomeContinueToBluetooth();
+                break;
+
+            case LoginAuthPhase.RegisterEnterFirstName:
+            case LoginAuthPhase.RegisterEnterLastName:
+            case LoginAuthPhase.RegisterEnterAge:
+                if (authRingSelectedIndex >= 0 && authRingSelectedIndex < authRingItems.Count)
+                    ProcessRegistrationTextPick(authRingItems[authRingSelectedIndex]);
+                break;
+
+            case LoginAuthPhase.RegisterGenderPick:
+                regPendingGender = GenderFromRingIndex(authRingSelectedIndex);
+                loginPhase = LoginAuthPhase.RegisterRolePick;
+                authRingItems = new List<string> { "Role: visitor", "Role: admin" };
+                authRingSelectedIndex = 0;
+                pendingRegisterRole = "visitor";
+                authStatus = "Gender: " + regPendingGender + ". Now select role — flick UP to confirm.";
+                Invalidate();
+                break;
+
+            case LoginAuthPhase.RegisterRolePick:
+                pendingRegisterRole = authRingSelectedIndex == 1 ? "admin" : "visitor";
+                RunCompleteRegistrationThread();
+                break;
+        }
+    }
+
+    private void BeginRegistrationFirstNameEntry()
+    {
+        loginPhase = LoginAuthPhase.RegisterEnterFirstName;
+        nameEntryBuffer = "";
+        regPendingFirstName = null;
+        regPendingLastName = null;
+        regPendingAge = 0;
+        regPendingGender = null;
+        authRingItems = BuildAuthAlphabetRing();
+        authRingSelectedIndex = 0;
+        authRingGestureArmed = true;
+        authRingHasLastY = false;
+        authRingAccumY = 0f;
+        authStatus = "First name: rotate to A-Z (or SPC). Flick UP adds the highlighted key. OK when done.";
+        Invalidate();
+    }
+
+    private static List<string> BuildAuthAlphabetRing()
+    {
+        var L = new List<string>(32);
+        for (char c = 'A'; c <= 'Z'; c++)
+            L.Add(c.ToString());
+        L.Add("SPC");
+        L.Add("<-");
+        L.Add("OK");
+        return L;
+    }
+
+    private static List<string> BuildAuthAgeRing()
+    {
+        var L = new List<string>(14);
+        for (int i = 0; i <= 9; i++)
+            L.Add(i.ToString());
+        L.Add("<-");
+        L.Add("OK");
+        return L;
+    }
+
+    private static List<string> BuildGenderRing()
+    {
+        return new List<string> { "Male", "Female", "Other" };
+    }
+
+    private static string GenderFromRingIndex(int index)
+    {
+        if (index == 0) return "male";
+        if (index == 1) return "female";
+        return "other";
+    }
+
+    private static int GenderRingIndexFromValue(string genderCsv)
+    {
+        string g = (genderCsv ?? "").Trim().ToLowerInvariant();
+        if (g == "male") return 0;
+        if (g == "female") return 1;
+        return 2;
+    }
+
+    private static string NormalizeRegGender(string g)
+    {
+        if (string.IsNullOrWhiteSpace(g)) return "other";
+        g = g.Trim().ToLowerInvariant();
+        if (g == "male" || g == "female" || g == "other") return g;
+        return "other";
+    }
+
+    private void ProcessRegistrationTextPick(string pick)
+    {
+        if (string.IsNullOrEmpty(pick)) return;
+
+        if (loginPhase == LoginAuthPhase.RegisterEnterFirstName ||
+            loginPhase == LoginAuthPhase.RegisterEnterLastName)
+        {
+            if (pick == "OK")
+            {
+                string t = (nameEntryBuffer ?? "").Trim();
+                if (t.Length == 0)
+                {
+                    authStatus = "Enter at least one letter, then OK.";
+                    Invalidate();
+                    return;
+                }
+                t = AuthCsvStore.SanitizeField(t);
+                if (t.Length > RegMaxNameChars)
+                    t = t.Substring(0, RegMaxNameChars);
+
+                if (loginPhase == LoginAuthPhase.RegisterEnterFirstName)
+                {
+                    regPendingFirstName = t;
+                    loginPhase = LoginAuthPhase.RegisterEnterLastName;
+                    nameEntryBuffer = "";
+                    authStatus = "Last name: same controls. SPC = space. OK when done.";
+                }
+                else
+                {
+                    regPendingLastName = t;
+                    loginPhase = LoginAuthPhase.RegisterEnterAge;
+                    nameEntryBuffer = "";
+                    authRingItems = BuildAuthAgeRing();
+                    authRingSelectedIndex = 0;
+                    authStatus = "Age (years): pick 0-9, then OK. Valid range " + RegMinAge + "-" + RegMaxAge + ".";
+                }
+                Invalidate();
+                return;
+            }
+
+            if (pick == "<-")
+            {
+                if (nameEntryBuffer.Length > 0)
+                    nameEntryBuffer = nameEntryBuffer.Substring(0, nameEntryBuffer.Length - 1);
+                Invalidate();
+                return;
+            }
+
+            if (pick == "SPC")
+            {
+                if (nameEntryBuffer.Length < RegMaxNameChars)
+                    nameEntryBuffer += " ";
+                Invalidate();
+                return;
+            }
+
+            if (pick.Length == 1 && pick[0] >= 'A' && pick[0] <= 'Z')
+            {
+                if (nameEntryBuffer.Length < RegMaxNameChars)
+                    nameEntryBuffer += pick;
+                Invalidate();
+            }
+            return;
+        }
+
+        if (loginPhase == LoginAuthPhase.RegisterEnterAge)
+        {
+            if (pick == "OK")
+            {
+                if (!int.TryParse((nameEntryBuffer ?? "").Trim(), out int age) ||
+                    age < RegMinAge || age > RegMaxAge)
+                {
+                    authStatus = "Invalid age. Use digits 1-120, then OK.";
+                    Invalidate();
+                    return;
+                }
+
+                regPendingAge = age;
+                loginPhase = LoginAuthPhase.RegisterGenderPick;
+                nameEntryBuffer = "";
+                authRingItems = BuildGenderRing();
+                authRingSelectedIndex = 0;
+                authStatus = "Select gender (rotate marker). Flick UP to confirm.";
+                Invalidate();
+                return;
+            }
+
+            if (pick == "<-")
+            {
+                if (nameEntryBuffer.Length > 0)
+                    nameEntryBuffer = nameEntryBuffer.Substring(0, nameEntryBuffer.Length - 1);
+                Invalidate();
+                return;
+            }
+
+            if (pick.Length == 1 && pick[0] >= '0' && pick[0] <= '9')
+            {
+                if (nameEntryBuffer.Length < 3)
+                    nameEntryBuffer += pick;
+                Invalidate();
+            }
+        }
+    }
+
+    private void OnAuthRingBack()
+    {
+        if (authInProgress) return;
+
+        if (loginPhase == LoginAuthPhase.LoginBluetoothRecovery ||
+            loginPhase == LoginAuthPhase.RegisterBluetoothRecovery ||
+            loginPhase == LoginAuthPhase.NoFaceRecovery ||
+            loginPhase == LoginAuthPhase.ProfileWelcome)
+        {
+            ShowAuthPicker();
+            return;
+        }
+
+        if (loginPhase == LoginAuthPhase.RegisterEnterFirstName)
+        {
+            if (nameEntryBuffer.Length > 0)
+            {
+                nameEntryBuffer = nameEntryBuffer.Substring(0, nameEntryBuffer.Length - 1);
+                Invalidate();
+                return;
+            }
+            loginPhase = LoginAuthPhase.RegisterBluetoothConfirm;
+            authRingItems = new List<string> { "Use this device", "Scan again" };
+            authRingSelectedIndex = 0;
+            authStatus = "Bluetooth: " + (pendingBtDeviceName ?? "") + " — " + (pendingBtMac ?? "");
+            Invalidate();
+            return;
+        }
+
+        if (loginPhase == LoginAuthPhase.RegisterEnterLastName)
+        {
+            if (nameEntryBuffer.Length > 0)
+            {
+                nameEntryBuffer = nameEntryBuffer.Substring(0, nameEntryBuffer.Length - 1);
+                Invalidate();
+                return;
+            }
+            string keep = regPendingFirstName ?? "";
+            regPendingFirstName = null;
+            loginPhase = LoginAuthPhase.RegisterEnterFirstName;
+            nameEntryBuffer = keep;
+            authRingItems = BuildAuthAlphabetRing();
+            authRingSelectedIndex = 0;
+            authStatus = "First name — rotate and flick UP to add letters.";
+            Invalidate();
+            return;
+        }
+
+        if (loginPhase == LoginAuthPhase.RegisterEnterAge)
+        {
+            if (nameEntryBuffer.Length > 0)
+            {
+                nameEntryBuffer = nameEntryBuffer.Substring(0, nameEntryBuffer.Length - 1);
+                Invalidate();
+                return;
+            }
+            string keepLast = regPendingLastName ?? "";
+            regPendingLastName = null;
+            loginPhase = LoginAuthPhase.RegisterEnterLastName;
+            nameEntryBuffer = keepLast;
+            authRingItems = BuildAuthAlphabetRing();
+            authRingSelectedIndex = 0;
+            authStatus = "Last name — rotate and flick UP.";
+            Invalidate();
+            return;
+        }
+
+        if (loginPhase == LoginAuthPhase.RegisterRolePick)
+        {
+            loginPhase = LoginAuthPhase.RegisterGenderPick;
+            authRingItems = BuildGenderRing();
+            authRingSelectedIndex = GenderRingIndexFromValue(regPendingGender);
+            pendingRegisterRole = "visitor";
+            authStatus = "Select gender — flick UP to confirm choice.";
+            Invalidate();
+            return;
+        }
+
+        if (loginPhase == LoginAuthPhase.RegisterGenderPick)
+        {
+            loginPhase = LoginAuthPhase.RegisterEnterAge;
+            nameEntryBuffer = regPendingAge >= RegMinAge && regPendingAge <= RegMaxAge
+                ? regPendingAge.ToString()
+                : "";
+            regPendingGender = null;
+            authRingItems = BuildAuthAgeRing();
+            authRingSelectedIndex = 0;
+            authStatus = "Age (years): digits then OK.";
+            Invalidate();
+            return;
+        }
+
+        if (loginPhase == LoginAuthPhase.RegisterBluetoothConfirm ||
+            loginPhase == LoginAuthPhase.RegisterDuplicateChoice)
+            ShowAuthPicker();
+    }
+
+    private void HandleAuthScreenGesture(string normalizedGesture)
+    {
+        if (authInProgress) return;
+
+        if (normalizedGesture == "thumbsup" || normalizedGesture == "thumbup" || normalizedGesture == "thumbs" ||
+            normalizedGesture == "open")
+        {
+            OnAuthRingConfirm();
+            Invalidate();
+            return;
+        }
+
+        if (normalizedGesture == "close")
+        {
+            OnAuthRingBack();
+            Invalidate();
+        }
+    }
+
+    private void DrawAuthTuioRing(Graphics g, int cx, int cy, int radius, Color accent, Color dim)
+    {
+        if (authRingItems == null || authRingItems.Count == 0) return;
+
+        int n = authRingItems.Count;
+        for (int i = 0; i < n; i++)
+        {
+            float a0 = (float)(-Math.PI / 2 + (Math.PI * 2.0 * i) / n);
+            float a1 = (float)(-Math.PI / 2 + (Math.PI * 2.0 * (i + 1)) / n);
+            bool sel = i == authRingSelectedIndex;
+            using (var br = new SolidBrush(sel ? Color.FromArgb(228, accent) : Color.FromArgb(165, 38, 40, 48)))
+            using (var path = new GraphicsPath())
+            {
+                path.AddPie(cx - radius, cy - radius, radius * 2, radius * 2,
+                    (float)(a0 * 180.0 / Math.PI), (float)((a1 - a0) * 180.0 / Math.PI));
+                g.FillPath(br, path);
+            }
+
+            float am = (a0 + a1) * 0.5f;
+            string label = authRingItems[i];
+            if (label.Length > 16) label = label.Substring(0, 14) + "..";
+            var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
+            float tx = cx + (float)Math.Cos(am) * (radius * 0.62f);
+            float ty = cy + (float)Math.Sin(am) * (radius * 0.62f);
+            float fz = n > 20 ? Math.Max(8f, 220f / n) : Math.Max(11f, fontSmall.Size);
+            using (var tbr = new SolidBrush(sel ? Color.FromArgb(245, 12, 12, 14) : Color.FromArgb(245, 248, 246, 238)))
+            using (var lf = new Font("Georgia", fz, FontStyle.Bold, GraphicsUnit.Pixel))
+                g.DrawString(label, lf, tbr, tx, ty, sf);
+        }
+
+        using (var p = new Pen(Color.FromArgb(195, accent), 2f))
+            g.DrawEllipse(p, cx - radius, cy - radius, radius * 2, radius * 2);
     }
 
     private string GetWorkspaceRoot()
@@ -315,6 +1385,219 @@ public class TuioDemo : Form, TuioListener
         if (d.Parent != null) d = d.Parent;
         if (d.Parent != null) d = d.Parent;
         return d.FullName;
+    }
+
+    private bool TryLoadVisitorProfile(string faceUserId, out VisitorProfile profile)
+    {
+        profile = null;
+        if (string.IsNullOrWhiteSpace(faceUserId)) return false;
+        try
+        {
+            string csvPath = Path.Combine(GetWorkspaceRoot(), "C#", "content", "auth", "users.csv");
+            List<VisitorProfile> users = VisitorProfile.LoadFromCsv(csvPath);
+            profile = users.Find(u =>
+                string.Equals(u.FaceUserId, faceUserId, StringComparison.OrdinalIgnoreCase));
+            return profile != null;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private void DrawAuthProfilePanel(Graphics g, float topY)
+    {
+        if (authLobbyProfilePreview == null)
+        {
+            string fallback = "Account: " + (pendingDuplicateUserId ?? "—") + " (profile row not found in users.csv)";
+            DrawCentered(g, fallback, fontBody, Color.FromArgb(220, CPapyrus),
+                new RectangleF(60, topY, W - 120, 80));
+            return;
+        }
+
+        VisitorProfile p = authLobbyProfilePreview;
+        float boxLeft = 72f;
+        float boxW = W - 144f;
+        const float boxH = 168f;
+        using (var br = new SolidBrush(Color.FromArgb(228, 42, 42, 62)))
+            g.FillRectangle(br, boxLeft, topY, boxW, boxH);
+        using (var pen = new Pen(Color.FromArgb(230, 212, 175, 55), 2f))
+            g.DrawRectangle(pen, boxLeft, topY, boxW, boxH);
+
+        DrawCentered(g, "Visitor profile", fontSubtitle, CGold,
+            new RectangleF(40, topY + 10f, W - 80, 28f));
+        DrawCentered(g, p.FullName.Trim().Length > 0 ? p.FullName : p.FaceUserId, fontBody,
+            Color.FromArgb(245, 255, 255, 255),
+            new RectangleF(40, topY + 38f, W - 80, 28f));
+        string line1 = "ID: " + p.FaceUserId + "  •  Role: " + (p.Role ?? "visitor");
+        DrawCentered(g, line1, fontSmall, Color.FromArgb(220, CPapyrus),
+            new RectangleF(40, topY + 66f, W - 80, 24f));
+        string line2 = "Age: " + p.Age + "  •  Gender: " + p.Gender + "  •  Race: " + p.Race;
+        DrawCentered(g, line2, fontSmall, Color.FromArgb(220, CPapyrus),
+            new RectangleF(40, topY + 90f, W - 80, 24f));
+        DrawCentered(g, "Language: " + (p.Language ?? ""), fontSmall, Color.FromArgb(210, CPapyrus),
+            new RectangleF(40, topY + 114f, W - 80, 24f));
+    }
+
+    private void TriggerProfileWelcomeContinueToBluetooth()
+    {
+        if (loginPhase != LoginAuthPhase.ProfileWelcome || authInProgress) return;
+        profileWelcomeAutoContinueUtc = null;
+        authLobbyProfilePreview = null;
+        RunDuplicateUserLoginThread();
+        Invalidate();
+    }
+
+    /// <summary>Top-anchored layout after face match — no TUIO ring; auto-advance timer drives Bluetooth step.</summary>
+    private void DrawProfileWelcomeScreen(Graphics g)
+    {
+        const float titleY = 40f;
+        DrawCentered(g, "WELCOME BACK", fontTitle, themeSecondary,
+            new RectangleF(0, titleY, W, 50f));
+        DrawCentered(g, "Your visitor profile — Grand Egyptian Museum", fontSubtitle,
+            Color.FromArgb(238, CPapyrus),
+            new RectangleF(40, titleY + 48f, W - 80, 32f));
+        float statusTop = titleY + 48f + 32f + 12f;
+        const float statusH = 76f;
+        DrawWrappedCentered(g, authStatus, fontBody, Color.White,
+            new RectangleF(40, statusTop, W - 80, statusH));
+        float panelTop = statusTop + statusH + 16f;
+        DrawAuthProfilePanel(g, panelTop);
+        const float panelH = 168f;
+        float countY = panelTop + panelH + 20f;
+        if (profileWelcomeAutoContinueUtc.HasValue && !authInProgress)
+        {
+            double rem = (profileWelcomeAutoContinueUtc.Value - DateTime.UtcNow).TotalSeconds;
+            int sec = rem <= 0 ? 0 : (int)Math.Ceiling(rem);
+            string tail = sec <= 0
+                ? "Starting phone check…"
+                : "Continuing in " + sec + " second" + (sec == 1 ? "" : "s") + "…";
+            DrawCentered(g, tail, fontHint, CGoldLight,
+                new RectangleF(40, countY, W - 80, 34f));
+        }
+    }
+
+    private void ConfigureCircularMenuForUser()
+    {
+        circularMenu.TopItems.Remove("Analytics");
+        if (visitorProfile != null && visitorProfile.IsAdmin &&
+            !circularMenu.TopItems.Contains("Analytics"))
+            circularMenu.TopItems.Insert(3, "Analytics");
+    }
+
+    private async void InitializeGazeAnalytics()
+    {
+        if (visitorProfile == null) return;
+
+        string analyticsDir = Path.Combine(GetWorkspaceRoot(), "C#", "content", "analytics");
+        analyticsRecorder.BeginVisit(analyticsDir, visitorProfile.FaceUserId, visitorProfile.FullName);
+        adminAnalyticsPanel = new AdminAnalyticsPanel(analyticsRecorder,
+            () => Path.Combine(GetWorkspaceRoot(), "C#", "content", "analytics"));
+
+        gazeEmotionClient = new GazeEmotionClient("localhost", 5002);
+        bool ok = await gazeEmotionClient.ConnectAsync();
+        if (!ok)
+        {
+            Console.WriteLine("Gaze/emotion service not available (start python/server/gaze_emotion_service.py on port 5002).");
+            return;
+        }
+
+        gazeEmotionClient.FrameReceived += OnGazeFrame;
+        bool streamOk = await gazeEmotionClient.StartStreamingAsync();
+        if (!streamOk)
+            Console.WriteLine("Gaze/emotion STREAM handshake failed.");
+    }
+
+    private async void InitializeYoloContext()
+    {
+        if (visitorProfile == null) return;
+        TeardownYoloContext();
+        yoloContextClient = new YoloContextClient("localhost", 5003);
+        bool ok = await yoloContextClient.ConnectAsync();
+        if (!ok)
+        {
+            Console.WriteLine("YOLO context service not available (start python/server/yolo_context_service.py on port 5003).");
+            return;
+        }
+        yoloContextClient.FrameReceived += OnYoloFrame;
+        bool streamOk = await yoloContextClient.StartStreamingAsync();
+        if (!streamOk)
+            Console.WriteLine("YOLO context STREAM handshake failed.");
+    }
+
+    private void TeardownYoloContext()
+    {
+        if (yoloContextClient != null)
+        {
+            yoloContextClient.FrameReceived -= OnYoloFrame;
+            try
+            {
+                yoloContextClient.StopStreamingAsync().GetAwaiter().GetResult();
+            }
+            catch { }
+            yoloContextClient.Dispose();
+            yoloContextClient = null;
+        }
+    }
+
+    private void OnYoloFrame(YoloContextFrame frame)
+    {
+        if (visitorProfile == null || frame == null || !frame.Ok) return;
+        bool phone = false;
+        bool book = false;
+        bool large = false;
+        for (int i = 0; i < frame.Tracks.Count; i++)
+        {
+            YoloTrack t = frame.Tracks[i];
+            if (t.Conf < 0.35) continue;
+            string c = (t.ClassName ?? string.Empty).Trim().ToLowerInvariant();
+            if (c.IndexOf("phone", StringComparison.Ordinal) >= 0) phone = true;
+            if (c == "book" || c.IndexOf("laptop", StringComparison.Ordinal) >= 0) book = true;
+            if (c == "person" && t.W * t.H >= 0.10) large = true;
+        }
+        if (visitorProfile.SetCameraAmbientContext(phone, book, large))
+        {
+            ApplyVisitorTheme();
+            Invalidate();
+        }
+    }
+
+    private void TeardownGazeAnalytics()
+    {
+        TeardownYoloContext();
+        if (gazeEmotionClient != null)
+        {
+            gazeEmotionClient.FrameReceived -= OnGazeFrame;
+            try
+            {
+                gazeEmotionClient.StopStreamingAsync().GetAwaiter().GetResult();
+            }
+            catch { }
+            gazeEmotionClient.Dispose();
+            gazeEmotionClient = null;
+        }
+    }
+
+    private void OnGazeFrame(GazeEmotionFrame frame)
+    {
+        if (slideShow != null && slideShow.IsRunning && currentSlide != null && frame != null && frame.Ok)
+            analyticsRecorder.AddSample(frame);
+    }
+
+    private void UpdateAdminTuio()
+    {
+        if (adminAnalyticsPanel == null || !adminAnalyticsVisible) return;
+        TuioObject marker = GetSingleMenuMarker();
+        bool has = marker != null;
+        float ang = has ? marker.Angle : 0f;
+        float y = has ? marker.Y : 0.5f;
+        bool closePanel;
+        adminAnalyticsPanel.OnMarker(has, ang, y, out closePanel);
+        if (closePanel)
+        {
+            adminAnalyticsVisible = false;
+            adminAnalyticsPanel.Exit();
+        }
     }
 
     private void ApplyVisitorTheme()
@@ -403,7 +1686,36 @@ public class TuioDemo : Form, TuioListener
 
     private async System.Threading.Tasks.Task CheckForGesture()
     {
-        if (isGestureActive || !isLoggedIn || authInProgress) return;
+        if (isGestureActive || gestureClient == null || !gestureClient.IsConnected) return;
+
+        if (!isLoggedIn)
+        {
+            if (authInProgress) return;
+            try
+            {
+                var status = await gestureClient.GetStatusAsync();
+                if (status != null && status.PointsCollected > 80)
+                {
+                    isGestureActive = true;
+                    var result = await gestureClient.StopAndRecognizeAsync();
+                    if (result.Score > 0.13 && !string.IsNullOrEmpty(result.Gesture))
+                        HandleGesture(result.Gesture);
+                    await gestureClient.ResetAsync();
+                    await System.Threading.Tasks.Task.Delay(500);
+                    await gestureClient.StartTrackingAsync();
+                    isGestureActive = false;
+                }
+                else if (status != null && !status.IsTracking)
+                    await gestureClient.StartTrackingAsync();
+            }
+            catch
+            {
+                isGestureActive = false;
+            }
+            return;
+        }
+
+        if (authInProgress || adminAnalyticsVisible) return;
 
         try
         {
@@ -475,6 +1787,25 @@ public class TuioDemo : Form, TuioListener
         {
             Console.WriteLine("→ Invoking on UI thread...");
             BeginInvoke(new Action(() => HandleGesture(gesture)));
+            return;
+        }
+
+        if (!isLoggedIn)
+        {
+            string ng = gesture.ToLower().Replace("_", "");
+            HandleAuthScreenGesture(ng);
+            return;
+        }
+
+        if (adminAnalyticsVisible)
+        {
+            string ng = gesture.ToLower().Replace("_", "");
+            if (ng == "close")
+            {
+                adminAnalyticsVisible = false;
+                if (adminAnalyticsPanel != null) adminAnalyticsPanel.Exit();
+                Invalidate();
+            }
             return;
         }
 
@@ -628,6 +1959,20 @@ public class TuioDemo : Form, TuioListener
 
     private void HandleMenuAction(string action, string payload)
     {
+        if (action == "Analytics")
+        {
+            if (visitorProfile == null || !visitorProfile.IsAdmin) return;
+            circularMenu.Hide();
+            menuOpenedByGesture = false;
+            adminAnalyticsVisible = true;
+            if (adminAnalyticsPanel == null)
+                adminAnalyticsPanel = new AdminAnalyticsPanel(analyticsRecorder,
+                    () => Path.Combine(GetWorkspaceRoot(), "C#", "content", "analytics"));
+            adminAnalyticsPanel.Enter();
+            Invalidate();
+            return;
+        }
+
         if (action == "Favorite")
         {
             string key = GetCurrentFigureStoryKey();
@@ -667,6 +2012,10 @@ public class TuioDemo : Form, TuioListener
             circularMenu.Hide();
             menuOpenedByGesture = false; // Clear flag
             StopAndUnlockSlides();
+            adminAnalyticsVisible = false;
+            if (adminAnalyticsPanel != null) adminAnalyticsPanel.Exit();
+            analyticsRecorder.FlushAndSave();
+            TeardownGazeAnalytics();
             visitorProfile = null;
             authStatus = "Logged out.";
             StartLoginFlow();
@@ -727,6 +2076,8 @@ public class TuioDemo : Form, TuioListener
 
     private void StopAndUnlockSlides()
     {
+        if (analyticsRecorder != null)
+            analyticsRecorder.NotifySlideShowEnded();
         slideShow.Stop();
         slideshowLocked = false;
         waitForClearAfterLockedShow = false;
@@ -775,6 +2126,7 @@ public class TuioDemo : Form, TuioListener
     private void EvaluateState()
     {
         if (!isLoggedIn || authInProgress) return;
+        if (adminAnalyticsVisible) return;
         if (circularMenu.IsVisible) return;
 
         List<TuioObject> onTable;
@@ -1078,6 +2430,9 @@ public class TuioDemo : Form, TuioListener
 
     private void OnSlideShowCompleted()
     {
+        if (analyticsRecorder != null)
+            analyticsRecorder.NotifySlideShowEnded();
+
         slideshowLocked = false;
         slideElapsedMs = 0;
         currentSlide = null;
@@ -1127,7 +2482,17 @@ public class TuioDemo : Form, TuioListener
     private void OnAnimTick(object sender, EventArgs e)
     {
         idlePhase = (idlePhase + 1.5f) % 360f;
+        if (!isLoggedIn && loginPhase == LoginAuthPhase.ProfileWelcome && !authInProgress &&
+            profileWelcomeAutoContinueUtc.HasValue &&
+            DateTime.UtcNow >= profileWelcomeAutoContinueUtc.Value)
+            TriggerProfileWelcomeContinueToBluetooth();
+
+        if (!isLoggedIn)
+            UpdateLoginScreenTuio();
         UpdateCircularMenuInput();
+
+        if (adminAnalyticsVisible && adminAnalyticsPanel != null)
+            adminAnalyticsPanel.Tick(animTimer.Interval);
 
         if (slideShow != null && slideShow.IsRunning && currentSlide != null)
             slideElapsedMs += animTimer.Interval;
@@ -1142,7 +2507,8 @@ public class TuioDemo : Form, TuioListener
         }
 
         if (state == AppState.Idle || state == AppState.Recognition ||
-            state == AppState.SingleFigure || state == AppState.PairNotFacing || fadingIn || circularMenu.IsVisible || !isLoggedIn)
+            state == AppState.SingleFigure || state == AppState.PairNotFacing || fadingIn || circularMenu.IsVisible ||
+            !isLoggedIn || adminAnalyticsVisible)
             Invalidate();
     }
 
@@ -1222,6 +2588,12 @@ public class TuioDemo : Form, TuioListener
     private void UpdateCircularMenuInput()
     {
         if (!isLoggedIn || authInProgress) return;
+
+        if (adminAnalyticsVisible)
+        {
+            UpdateAdminTuio();
+            return;
+        }
 
         TuioObject marker = GetSingleMenuMarker();
 
@@ -1336,10 +2708,18 @@ public class TuioDemo : Form, TuioListener
         using (var bg = new SolidBrush(bgColor))
             g.FillRectangle(bg, 0, 0, W, H);
 
-        if (!isLoggedIn || authInProgress)
+        if (!isLoggedIn)
         {
             DrawLoginScreen(g);
             DrawGestureOverlay(g); // Show gesture overlay even on login screen
+            return;
+        }
+
+        if (adminAnalyticsVisible && adminAnalyticsPanel != null)
+        {
+            adminAnalyticsPanel.Draw(g, W, H, fontTitle, fontBody, fontSmall, themeSecondary, CPapyrus,
+                analyticsRecorder != null ? analyticsRecorder.GetLiveSnapshot() : null);
+            DrawGestureOverlay(g);
             return;
         }
 
@@ -1436,21 +2816,179 @@ public class TuioDemo : Form, TuioListener
 
     private void DrawLoginScreen(Graphics g)
     {
-        using (var veil = new SolidBrush(Color.FromArgb(170, 0, 0, 0)))
+        using (var veil = new SolidBrush(Color.FromArgb(158, 0, 0, 0)))
             g.FillRectangle(veil, 0, 0, W, H);
 
-        DrawCentered(g, "LOGIN WITH FACE ID", fontTitle, themeSecondary,
-            new RectangleF(0, H / 2f - 150, W, 66));
+        DrawCentered(g, "Press L on this window to restart sign-in", fontSmall,
+            Color.FromArgb(190, 218, 200, 150),
+            new RectangleF(40, 8, W - 80, 22));
 
-        DrawCentered(g, "Two Factor Authentication: Face ID + Bluetooth",
-            fontSubtitle, Color.FromArgb(220, CPapyrus),
-            new RectangleF(40, H / 2f - 78, W - 80, 40));
+        if (loginPhase == LoginAuthPhase.ProfileWelcome)
+        {
+            DrawProfileWelcomeScreen(g);
+            DrawOuterBorder(g);
+            return;
+        }
 
-        DrawCentered(g, authStatus, fontBody, Color.White,
-            new RectangleF(40, H / 2f - 8, W - 80, 44));
+        string title = "SIGN IN";
+        string subtitle = "Face sign-in and Bluetooth";
+        if (loginPhase == LoginAuthPhase.MainPicker)
+        {
+            title = "WELCOME";
+            subtitle = "We will open your webcam, then show who you are on this table. Follow the gold oval in the webcam window.";
+        }
+        else if (loginPhase == LoginAuthPhase.LoginScanning)
+        {
+            title = "LOGGING IN";
+            subtitle = "Bluetooth — keep your phone or watch nearby, powered on, and discoverable while we verify.";
+        }
+        else if (loginPhase == LoginAuthPhase.RegisterScanning)
+        {
+            title = "FACE SIGN-IN";
+            subtitle = "Use the small webcam window: line up with the gold oval and hold still. If you’re new here, you’ll see a short countdown before a photo is saved.";
+        }
+        else if (loginPhase == LoginAuthPhase.NoFaceRecovery)
+        {
+            title = "NO FACE FOUND";
+            subtitle = "Make sure your face is in front of the camera";
+        }
+        else if (loginPhase == LoginAuthPhase.RegisterDuplicateChoice)
+            title = "FACE ALREADY REGISTERED";
+        else if (loginPhase == LoginAuthPhase.RegisterBluetoothScanning)
+            title = "REGISTER — BLUETOOTH";
+        else if (loginPhase == LoginAuthPhase.RegisterBluetoothConfirm)
+            title = "CONFIRM DEVICE";
+        else if (loginPhase == LoginAuthPhase.LoginBluetoothRecovery)
+        {
+            title = "BLUETOOTH";
+            subtitle = loginBluetoothRecoveryEscalated
+                ? "Two unsuccessful tries — pick your next step"
+                : "Verification did not complete — read the message below";
+        }
+        else if (loginPhase == LoginAuthPhase.RegisterBluetoothRecovery)
+        {
+            title = "BLUETOOTH";
+            subtitle = "Could not find a device to pair";
+        }
+        else if (loginPhase == LoginAuthPhase.RegisterEnterFirstName)
+            title = "FIRST NAME";
+        else if (loginPhase == LoginAuthPhase.RegisterEnterLastName)
+            title = "LAST NAME";
+        else if (loginPhase == LoginAuthPhase.RegisterEnterAge)
+            title = "AGE";
+        else if (loginPhase == LoginAuthPhase.RegisterGenderPick)
+            title = "GENDER";
+        else if (loginPhase == LoginAuthPhase.RegisterRolePick)
+            title = "SELECT ROLE";
+        else if (loginPhase == LoginAuthPhase.RegisterSaving)
+            title = "SAVING ACCOUNT";
 
-        DrawCentered(g, "Press L to retry login if needed", fontSmall, Color.FromArgb(190, CPapyrus),
-            new RectangleF(40, H / 2f + 48, W - 80, 32));
+        DrawCentered(g, title, fontTitle, themeSecondary,
+            new RectangleF(0, H / 2f - 168f, W, 58));
+
+        float subtitleTop = H / 2f - 108f;
+        float subtitleH = 40f;
+        if (loginPhase == LoginAuthPhase.RegisterScanning || loginPhase == LoginAuthPhase.MainPicker)
+        {
+            subtitleTop = H / 2f - 118f;
+            subtitleH = 78f;
+        }
+        if (loginPhase == LoginAuthPhase.RegisterScanning || loginPhase == LoginAuthPhase.MainPicker)
+            DrawWrappedCentered(g, subtitle, fontSubtitle, Color.FromArgb(238, CPapyrus),
+                new RectangleF(48, subtitleTop, W - 96, subtitleH));
+        else
+            DrawCentered(g, subtitle, fontSubtitle, Color.FromArgb(238, CPapyrus),
+                new RectangleF(40, subtitleTop, W - 80, subtitleH));
+
+        float statusTop = subtitleTop + subtitleH + 12f;
+        bool wrapStatus = loginPhase == LoginAuthPhase.LoginBluetoothRecovery ||
+                          loginPhase == LoginAuthPhase.RegisterBluetoothRecovery ||
+                          loginPhase == LoginAuthPhase.NoFaceRecovery;
+        float statusH = wrapStatus
+            ? (loginPhase == LoginAuthPhase.LoginBluetoothRecovery ? 120f : 96f)
+            : 52f;
+        if (wrapStatus)
+            DrawWrappedCentered(g, authStatus, fontBody, Color.White,
+                new RectangleF(40, statusTop, W - 80, statusH));
+        else
+            DrawCentered(g, authStatus, fontBody, Color.White,
+                new RectangleF(40, statusTop, W - 80, statusH));
+
+        if (loginPhase == LoginAuthPhase.RegisterEnterFirstName ||
+            loginPhase == LoginAuthPhase.RegisterEnterLastName ||
+            loginPhase == LoginAuthPhase.RegisterEnterAge)
+        {
+            string preview = string.IsNullOrEmpty(nameEntryBuffer) ? "—" : nameEntryBuffer;
+            if (preview.Length > 48) preview = preview.Substring(0, 45) + "...";
+            DrawCentered(g, preview, fontSubtitle, CGoldLight,
+                new RectangleF(40, H / 2f + 2, W - 80, 40));
+        }
+        else if (loginPhase == LoginAuthPhase.RegisterGenderPick &&
+                 authRingItems != null && authRingItems.Count > 0 &&
+                 authRingSelectedIndex >= 0 && authRingSelectedIndex < authRingItems.Count)
+        {
+            string gsel = authRingItems[authRingSelectedIndex];
+            DrawCentered(g, "Selection: " + gsel, fontSubtitle, CGoldLight,
+                new RectangleF(40, H / 2f + 2, W - 80, 36));
+        }
+
+        bool showRing = !authInProgress &&
+            (loginPhase == LoginAuthPhase.NoFaceRecovery ||
+             loginPhase == LoginAuthPhase.RegisterDuplicateChoice ||
+             loginPhase == LoginAuthPhase.RegisterBluetoothConfirm ||
+             loginPhase == LoginAuthPhase.LoginBluetoothRecovery ||
+             loginPhase == LoginAuthPhase.RegisterBluetoothRecovery ||
+             loginPhase == LoginAuthPhase.RegisterEnterFirstName ||
+             loginPhase == LoginAuthPhase.RegisterEnterLastName ||
+             loginPhase == LoginAuthPhase.RegisterEnterAge ||
+             loginPhase == LoginAuthPhase.RegisterGenderPick ||
+             loginPhase == LoginAuthPhase.RegisterRolePick);
+
+        if (showRing)
+        {
+            string hint = (loginPhase == LoginAuthPhase.LoginBluetoothRecovery &&
+                          loginBluetoothRecoveryEscalated)
+                ? "Rotate to choose  •  Flick UP confirms  •  Restart login = camera again, Guest visitor = no Bluetooth"
+                : (loginPhase == LoginAuthPhase.LoginBluetoothRecovery ||
+                          loginPhase == LoginAuthPhase.RegisterBluetoothRecovery ||
+                          loginPhase == LoginAuthPhase.NoFaceRecovery)
+                ? "Rotate marker to choose  •  Flick UP = confirm   Flick DOWN = restart scan"
+                : (loginPhase == LoginAuthPhase.RegisterEnterFirstName ||
+                          loginPhase == LoginAuthPhase.RegisterEnterLastName ||
+                          loginPhase == LoginAuthPhase.RegisterEnterAge)
+                ? "Flick UP = confirm / add   Flick DOWN = delete last or go back"
+                : "Flick UP = confirm choice   Flick DOWN = go back";
+            int ringR = (loginPhase == LoginAuthPhase.RegisterEnterFirstName ||
+                         loginPhase == LoginAuthPhase.RegisterEnterLastName) ? 128 : 102;
+            const int bottomMargin = 36;
+            int minTop = (int)(H / 2f + 36f);
+            int maxRadius = (H - bottomMargin - minTop) / 2 - 4;
+            if (maxRadius > 52 && ringR > maxRadius)
+                ringR = maxRadius;
+            int ringCy = H - bottomMargin - ringR;
+            if (ringCy - ringR < minTop)
+                ringCy = minTop + ringR;
+            if (ringCy + ringR > H - bottomMargin / 2)
+                ringCy = H - bottomMargin / 2 - ringR;
+            float ringTop = ringCy - ringR;
+            const float hintBlockH = 52f;
+            float hintTop = Math.Max(H / 2f + 40f, ringTop - hintBlockH - 10f);
+            string sel = (authRingItems != null && authRingItems.Count > 0 &&
+                          authRingSelectedIndex >= 0 && authRingSelectedIndex < authRingItems.Count)
+                ? authRingItems[authRingSelectedIndex]
+                : "—";
+            float segDeg = (authRingItems != null && authRingItems.Count > 1)
+                ? 360f / authRingItems.Count
+                : 0f;
+            string tuioHud = authTuioMarkerTracked
+                ? (authRingItems != null && authRingItems.Count > 1)
+                    ? string.Format("TUIO angle {0:0}° (~{1:0}° per choice) — now: {2}", authTuioMarkerAngleDeg, segDeg, sel)
+                    : string.Format("TUIO angle {0:0}° — {1}", authTuioMarkerAngleDeg, sel)
+                : "TUIO: place menu marker (symbol 0) on the table for live angle and highlight.";
+            DrawWrappedCentered(g, hint + Environment.NewLine + tuioHud, fontSmall,
+                Color.FromArgb(198, CPapyrus), new RectangleF(40, hintTop, W - 80, hintBlockH));
+            DrawAuthTuioRing(g, W / 2, ringCy, ringR, themeSecondary, CGoldDim);
+        }
 
         DrawOuterBorder(g);
     }
@@ -2128,6 +3666,20 @@ public class TuioDemo : Form, TuioListener
         return img;
     }
 
+    private void DrawWrappedCentered(Graphics g, string text, Font font, Color color, RectangleF bounds)
+    {
+        if (string.IsNullOrEmpty(text)) return;
+        var sf = new StringFormat
+        {
+            Alignment = StringAlignment.Center,
+            LineAlignment = StringAlignment.Near,
+            Trimming = StringTrimming.Word,
+            FormatFlags = StringFormatFlags.LineLimit | StringFormatFlags.NoClip
+        };
+        using (var br = new SolidBrush(color))
+            g.DrawString(text, font, br, bounds, sf);
+    }
+
     private void DrawCentered(Graphics g, string text, Font font, Color color,
         RectangleF bounds)
     {
@@ -2252,6 +3804,11 @@ public class TuioDemo : Form, TuioListener
 
     private void OnClosing(object sender, CancelEventArgs e)
     {
+        adminAnalyticsVisible = false;
+        if (adminAnalyticsPanel != null) adminAnalyticsPanel.Exit();
+        analyticsRecorder.FlushAndSave();
+        TeardownGazeAnalytics();
+
         animTimer.Stop();
         recognitionTimer.Stop();
         slideShow.Stop();
