@@ -90,3 +90,6 @@ obj/
 *.tar.gz
 *.rar
 *.7z
+
+
+puml-diagrams/

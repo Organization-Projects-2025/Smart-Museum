@@ -174,16 +174,19 @@ public class VisitorProfile
 
         // Gender -> theme colors
         string g = (Gender ?? string.Empty).Trim().ToLowerInvariant();
-        PrimaryColor = Color.FromArgb(12, 12, 12);
         if (g == "female")
         {
-            SecondaryColor = Color.FromArgb(232, 185, 35);
-            TertiaryColor = Color.FromArgb(65, 105, 163);
+            // Female theme: Purple/Pink background with bright pink accents
+            PrimaryColor = Color.FromArgb(25, 10, 35);      // Deep purple background
+            SecondaryColor = Color.FromArgb(255, 105, 180); // Hot pink accent
+            TertiaryColor = Color.FromArgb(200, 120, 255);  // Light purple accent
         }
         else
         {
-            SecondaryColor = Color.FromArgb(212, 175, 55);
-            TertiaryColor = Color.FromArgb(201, 166, 107);
+            // Male theme: Dark background with gold accents
+            PrimaryColor = Color.FromArgb(12, 12, 12);      // Dark background
+            SecondaryColor = Color.FromArgb(212, 175, 55);  // Gold accent
+            TertiaryColor = Color.FromArgb(201, 166, 107);  // Tan accent
         }
 
         // Race -> language
