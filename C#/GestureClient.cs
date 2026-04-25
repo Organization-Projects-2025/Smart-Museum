@@ -92,6 +92,15 @@ public class GestureClient : IDisposable
         }
 
         /// <summary>
+        /// Stop tracking and release the camera (shared hub / local OpenCV).
+        /// Does not run RECOGNIZE — use before Face ID or when idle.
+        /// </summary>
+        public async Task StopTrackingSilentlyAsync()
+        {
+            await SendCommandAsync("STOP_TRACKING");
+        }
+
+        /// <summary>
         /// Reset the gesture tracking
         /// </summary>
         public async Task ResetAsync()

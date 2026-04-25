@@ -1,0 +1,153 @@
+{
+  "visitId": "f81242d8f8444615a31a614b17a0ec1e",
+  "faceUserId": "user0",
+  "displayName": "Ahmed ElSherif",
+  "startedUtc": "2026-04-24T23:47:26.0476519Z",
+  "endedUtc": "2026-04-24T23:55:52.6594907Z",
+  "segments": [
+    {
+      "storyKey": "figure:4",
+      "storyTitle": "Figure: Ramesses II",
+      "slideIndex": 0,
+      "contentSummary": "Image:content/figures/3_ramesses/marker_ramesses_ii.png",
+      "startedOffsetMs": 107359,
+      "endedOffsetMs": 113368,
+      "samples": []
+    },
+    {
+      "storyKey": "figure:4",
+      "storyTitle": "Figure: Ramesses II",
+      "slideIndex": 1,
+      "contentSummary": "Text:Ramses II, 'the Great,' ruled 1279–1213 BC, Egypt's longest reign at 66 years.",
+      "startedOffsetMs": 113368,
+      "endedOffsetMs": 118367,
+      "samples": []
+    },
+    {
+      "storyKey": "figure:4",
+      "storyTitle": "Figure: Ramesses II",
+      "slideIndex": 2,
+      "contentSummary": "Text:Rise to Power: Seti I's son, early coregent trained for war; built Per-Ramesses Delta capital. Resumed Abydos temple and visited Thebes for Opet festival.",
+      "startedOffsetMs": 118367,
+      "endedOffsetMs": 125360,
+      "samples": []
+    },
+    {
+      "storyKey": "figure:4",
+      "storyTitle": "Figure: Ramesses II",
+      "slideIndex": 3,
+      "contentSummary": "Text:Fathered 100+ children; Nefertari featured at Abu Simbel.",
+      "startedOffsetMs": 125360,
+      "endedOffsetMs": 130356,
+      "samples": []
+    },
+    {
+      "storyKey": "figure:4",
+      "storyTitle": "Figure: Ramesses II",
+      "slideIndex": 4,
+      "contentSummary": "Text:Military Campaigns: Year 5 Battle of Kadesh vs. Hittites stalemated but became propaganda triumph carved widely. 1258 BC peace treaty—history's first—with Hittite marriages followed 16 war years.",
+      "startedOffsetMs": 130356,
+      "endedOffsetMs": 139365,
+      "samples": []
+    },
+    {
+      "storyKey": "figure:4",
+      "storyTitle": "Figure: Ramesses II",
+      "slideIndex": 5,
+      "contentSummary": "Text:Fought Libyans/Edomites, securing but not expanding empire.",
+      "startedOffsetMs": 139365,
+      "endedOffsetMs": 144357,
+      "samples": []
+    },
+    {
+      "storyKey": "figure:4",
+      "storyTitle": "Figure: Ramesses II",
+      "slideIndex": 6,
+      "contentSummary": "Text:Building Legacy: Commissioned Ramesseum, Abu Simbel colossi, Karnak expansions; statues glorified him. Era prospered; posthumously worshiped as later kings took his name.",
+      "startedOffsetMs": 144357,
+      "endedOffsetMs": 152357,
+      "samples": []
+    },
+    {
+      "storyKey": "figure:4",
+      "storyTitle": "Figure: Ramesses II",
+      "slideIndex": 7,
+      "contentSummary": "Text:Died near 90, mummified; not biblical Exodus pharaoh.",
+      "startedOffsetMs": 152357,
+      "endedOffsetMs": 157363,
+      "samples": []
+    },
+    {
+      "storyKey": "figure:4",
+      "storyTitle": "Figure: Ramesses II",
+      "slideIndex": 0,
+      "contentSummary": "Image:content/figures/3_ramesses/marker_ramesses_ii.png",
+      "startedOffsetMs": 166743,
+      "endedOffsetMs": 172730,
+      "samples": []
+    },
+    {
+      "storyKey": "figure:4",
+      "storyTitle": "Figure: Ramesses II",
+      "slideIndex": 1,
+      "contentSummary": "Text:Ramses II, 'the Great,' ruled 1279–1213 BC, Egypt's longest reign at 66 years.",
+      "startedOffsetMs": 172730,
+      "endedOffsetMs": 177742,
+      "samples": []
+    },
+    {
+      "storyKey": "figure:4",
+      "storyTitle": "Figure: Ramesses II",
+      "slideIndex": 2,
+      "contentSummary": "Text:Rise to Power: Seti I's son, early coregent trained for war; built Per-Ramesses Delta capital. Resumed Abydos temple and visited Thebes for Opet festival.",
+      "startedOffsetMs": 177742,
+      "endedOffsetMs": 184729,
+      "samples": []
+    },
+    {
+      "storyKey": "figure:4",
+      "storyTitle": "Figure: Ramesses II",
+      "slideIndex": 3,
+      "contentSummary": "Text:Fathered 100+ children; Nefertari featured at Abu Simbel.",
+      "startedOffsetMs": 184729,
+      "endedOffsetMs": 189730,
+      "samples": []
+    },
+    {
+      "storyKey": "figure:4",
+      "storyTitle": "Figure: Ramesses II",
+      "slideIndex": 4,
+      "contentSummary": "Text:Military Campaigns: Year 5 Battle of Kadesh vs. Hittites stalemated but became propaganda triumph carved widely. 1258 BC peace treaty—history's first—with Hittite marriages followed 16 war years.",
+      "startedOffsetMs": 189730,
+      "endedOffsetMs": 198738,
+      "samples": []
+    },
+    {
+      "storyKey": "figure:4",
+      "storyTitle": "Figure: Ramesses II",
+      "slideIndex": 5,
+      "contentSummary": "Text:Fought Libyans/Edomites, securing but not expanding empire.",
+      "startedOffsetMs": 198738,
+      "endedOffsetMs": 203730,
+      "samples": []
+    },
+    {
+      "storyKey": "figure:4",
+      "storyTitle": "Figure: Ramesses II",
+      "slideIndex": 6,
+      "contentSummary": "Text:Building Legacy: Commissioned Ramesseum, Abu Simbel colossi, Karnak expansions; statues glorified him. Era prospered; posthumously worshiped as later kings took his name.",
+      "startedOffsetMs": 203730,
+      "endedOffsetMs": 211729,
+      "samples": []
+    },
+    {
+      "storyKey": "figure:4",
+      "storyTitle": "Figure: Ramesses II",
+      "slideIndex": 7,
+      "contentSummary": "Text:Died near 90, mummified; not biblical Exodus pharaoh.",
+      "startedOffsetMs": 211729,
+      "endedOffsetMs": 216735,
+      "samples": []
+    }
+  ]
+}

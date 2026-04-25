@@ -55,6 +55,7 @@
     <Compile Include="OSC.NET\OSCPacket.cs" />
     <Compile Include="OSC.NET\OSCReceiver.cs" />
     <Compile Include="OSC.NET\OSCTransmitter.cs" />
+    <Compile Include="TuioControlMarker.cs" />
     <Compile Include="TuioDemo.cs" />
     <Compile Include="FigureData.cs" />
     <Compile Include="SlideShowManager.cs" />

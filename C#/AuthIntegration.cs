@@ -392,7 +392,7 @@ public class BluetoothService
         try
         {
             SocketClient client = new SocketClient();
-            if (!client.connectToSocket("localhost", 5000))
+            if (!client.connectToSocket("127.0.0.1", 5000))
             {
                 status = "Cannot reach the Python server (port 5000). Start python_server.py, then try again.";
                 return false;
@@ -467,7 +467,7 @@ public class BluetoothService
         try
         {
             SocketClient client = new SocketClient();
-            if (!client.connectToSocket("localhost", 5000))
+            if (!client.connectToSocket("127.0.0.1", 5000))
             {
                 status = "Cannot connect to the Python server (port 5000). Start python_server.py and try again.";
                 return false;
@@ -538,7 +538,7 @@ public class FaceRecognitionService
         try
         {
             SocketClient client = new SocketClient();
-            if (!client.connectToSocket("localhost", 5000))
+            if (!client.connectToSocket("127.0.0.1", 5000))
             {
                 status = "Cannot connect to Face ID server.";
                 return false;
@@ -605,7 +605,7 @@ public class FaceRecognitionService
         try
         {
             SocketClient client = new SocketClient();
-            if (!client.connectToSocket("localhost", 5000))
+            if (!client.connectToSocket("127.0.0.1", 5000))
             {
                 status = "Cannot connect to Face ID server.";
                 return false;
@@ -674,7 +674,7 @@ public class FaceRecognitionService
         try
         {
             SocketClient client = new SocketClient();
-            if (!client.connectToSocket("localhost", 5000))
+            if (!client.connectToSocket("127.0.0.1", 5000))
             {
                 status = "Face ID failed. Cannot connect to server.";
                 return false;

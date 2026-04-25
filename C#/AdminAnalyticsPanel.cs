@@ -210,7 +210,7 @@ public class AdminAnalyticsPanel
         using (var bg = new SolidBrush(Color.FromArgb(245, 14, 16, 22)))
             g.FillRectangle(bg, 0, 0, w, h);
 
-        DrawCentered(g, "ADMIN ANALYTICS (TUIO marker: rotate = select, vertical flick = enter / back)",
+        DrawCentered(g, "ADMIN ANALYTICS (control marker symbol " + TuioControlMarker.MenuAuthSymbolId + "; rotate = select, flick up/down = enter / back)",
             fontTitle, accent, new RectangleF(20, 16, w - 40, 44));
 
         if (!detailMode)
@@ -223,7 +223,7 @@ public class AdminAnalyticsPanel
 
         string rotLine = lastTuioAngleValid
             ? string.Format("TUIO marker angle: {0:0}°", lastTuioAngleDeg)
-            : "TUIO marker angle: — (place marker on table)";
+            : "TUIO marker angle: — (place symbol " + TuioControlMarker.MenuAuthSymbolId + " on the table; ID 0 reserved)";
         DrawCentered(g, rotLine, fontSmall, Color.FromArgb(200, 200, 200, 210),
             new RectangleF(20, h - 32, w - 40, 22));
     }

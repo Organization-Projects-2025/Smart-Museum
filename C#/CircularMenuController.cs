@@ -283,10 +283,13 @@ public class CircularMenuController
             : (IsInSecondLevel ? GetSecondLevelItems().Count : topItems.Count);
         float segDeg = segCount > 0 ? 360f / segCount : 0f;
         string rotHud = segCount > 1
-            ? string.Format("TUIO angle {0:0}° (~{1:0}° per segment)", LastTuioAngleDegrees, segDeg)
-            : string.Format("TUIO angle {0:0}°", LastTuioAngleDegrees);
+            ? string.Format("TUIO symbol {2}: angle {0:0}° (~{1:0}° per segment)", LastTuioAngleDegrees, segDeg, TuioControlMarker.MenuAuthSymbolId)
+            : string.Format("TUIO symbol {1}: angle {0:0}°", LastTuioAngleDegrees, TuioControlMarker.MenuAuthSymbolId);
         DrawCentered(g, rotHud, smallFont, Color.FromArgb(200, 220, 220, 220),
-            new RectangleF(20, h - 36, w - 40, 22));
+            new RectangleF(20, h - 56, w - 40, 22));
+        DrawCentered(g, "Rotate to highlight · drag marker toward TOP of window = go · toward BOTTOM = back (or thumbs-up)",
+            smallFont, Color.FromArgb(175, 200, 200, 205),
+            new RectangleF(24, h - 32, w - 48, 26));
     }
 
     private static void DrawDonutSegments(

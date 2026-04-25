@@ -36,6 +36,7 @@ public class GazeEmotionClient : IDisposable
         try
         {
             client = new TcpClient();
+            client.NoDelay = true;
             await client.ConnectAsync(host, port).ConfigureAwait(false);
             netStream = client.GetStream();
             reader = new StreamReader(netStream, Encoding.UTF8, false, 4096, leaveOpen: true);
@@ -116,13 +117,18 @@ public class GazeEmotionClient : IDisposable
         try
         {
             var o = JObject.Parse(line);
+            string reason = o["reason"]?.ToString();
+            if (reason == "camera_failed" && o["detail"] != null)
+                reason = reason + ":" + o["detail"].ToString();
+
             var f = new GazeEmotionFrame
             {
                 Ok = o["ok"]?.ToObject<bool>() ?? false,
                 Tms = o["t_ms"]?.ToObject<long>() ?? 0L,
                 Gx = o["gx"]?.ToObject<double>() ?? 0.5,
                 Gy = o["gy"]?.ToObject<double>() ?? 0.5,
-                Dominant = o["dominant"]?.ToString() ?? "neutral"
+                Dominant = o["dominant"]?.ToString() ?? "neutral",
+                Reason = reason
             };
             var em = o["emotions"] as JObject;
             if (em != null)
@@ -182,5 +188,7 @@ public class GazeEmotionFrame
     public double Gx;
     public double Gy;
     public string Dominant;
+    /// <summary>Optional server hint when Ok is false (e.g. no_face, warmup, mediapipe_missing).</summary>
+    public string Reason;
     public Dictionary<string, double> Emotions = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
 }

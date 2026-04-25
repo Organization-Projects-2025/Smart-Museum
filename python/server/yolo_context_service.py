@@ -29,6 +29,18 @@ MOCK = os.environ.get("YOLO_CONTEXT_MOCK", "").strip() in ("1", "true", "yes")
 USE_REAL = not MOCK
 
 _t0 = None
+_shared_hub = None
+
+
+def set_shared_camera_hub(hub):
+    """When set by museum_vision_server, real YOLO uses hub frames instead of opening camera 0."""
+    global _shared_hub
+    _shared_hub = hub
+
+
+def clear_shared_camera_hub():
+    global _shared_hub
+    _shared_hub = None
 
 
 def _mock_tracks(phase: int):
@@ -58,7 +70,29 @@ def _encode_frame(tracks):
     return json.dumps({"ok": True, "t_ms": t_ms, "tracks": tracks})
 
 
-def _run_real_tracker(conn):
+def _tracks_from_ultra_result(result):
+    tracks = []
+    boxes = getattr(result, "boxes", None)
+    if boxes is not None and len(boxes) > 0:
+        xywhn = boxes.xywhn.cpu().numpy()
+        cls_arr = boxes.cls.cpu().numpy()
+        conf_arr = boxes.conf.cpu().numpy()
+        id_tensor = boxes.id
+        id_arr = id_tensor.cpu().numpy() if id_tensor is not None else None
+        names = result.names or {}
+        for j in range(len(xywhn)):
+            cx, cy, w, h = (float(xywhn[j][0]), float(xywhn[j][1]), float(xywhn[j][2]), float(xywhn[j][3]))
+            ci = int(cls_arr[j])
+            cname = str(names.get(ci, str(ci)))
+            conf = float(conf_arr[j])
+            tid = int(id_arr[j]) if id_arr is not None else j
+            tracks.append(
+                {"id": tid, "cls": cname, "cx": cx, "cy": cy, "w": w, "h": h, "conf": conf}
+            )
+    return tracks
+
+
+def _run_real_tracker(conn, hub=None):
     try:
         from ultralytics import YOLO
     except Exception as e:
@@ -69,31 +103,41 @@ def _run_real_tracker(conn):
 
     model = YOLO("yolov8n.pt")
     try:
-        for result in model.track(source=0, stream=True, persist=True, verbose=False):
-            tracks = []
-            boxes = getattr(result, "boxes", None)
-            if boxes is not None and len(boxes) > 0:
-                xywhn = boxes.xywhn.cpu().numpy()
-                cls_arr = boxes.cls.cpu().numpy()
-                conf_arr = boxes.conf.cpu().numpy()
-                id_tensor = boxes.id
-                id_arr = id_tensor.cpu().numpy() if id_tensor is not None else None
-                names = result.names or {}
-                for j in range(len(xywhn)):
-                    cx, cy, w, h = (float(xywhn[j][0]), float(xywhn[j][1]), float(xywhn[j][2]), float(xywhn[j][3]))
-                    ci = int(cls_arr[j])
-                    cname = str(names.get(ci, str(ci)))
-                    conf = float(conf_arr[j])
-                    tid = int(id_arr[j]) if id_arr is not None else j
-                    tracks.append(
-                        {"id": tid, "cls": cname, "cx": cx, "cy": cy, "w": w, "h": h, "conf": conf}
-                    )
-            line = _encode_frame(tracks) + "\n"
-            try:
-                conn.sendall(line.encode("utf-8"))
-            except (BrokenPipeError, ConnectionError, OSError):
-                break
-            time.sleep(0.12)
+        if hub is None:
+            for result in model.track(source=0, stream=True, persist=True, verbose=False):
+                tracks = _tracks_from_ultra_result(result)
+                line = _encode_frame(tracks) + "\n"
+                try:
+                    conn.sendall(line.encode("utf-8"))
+                except (BrokenPipeError, ConnectionError, OSError):
+                    break
+                time.sleep(0.12)
+        else:
+            print("yolo_context_service: YOLO track using SharedCameraHub frames")
+            drain_buf = b""
+            while True:
+                drain_buf, cmd = _drain_cmd(conn, drain_buf)
+                if cmd == "__CLOSED__":
+                    break
+                if cmd == "PAUSE":
+                    break
+                if cmd == "QUIT":
+                    break
+                frame = hub.get_latest_bgr_copy()
+                if frame is None:
+                    time.sleep(0.02)
+                    continue
+                for result in model.track(
+                    source=frame, stream=True, persist=True, verbose=False
+                ):
+                    tracks = _tracks_from_ultra_result(result)
+                    line = _encode_frame(tracks) + "\n"
+                    try:
+                        conn.sendall(line.encode("utf-8"))
+                    except (BrokenPipeError, ConnectionError, OSError):
+                        return
+                    break
+                time.sleep(0.12)
     except Exception as ex:
         try:
             conn.sendall((json.dumps({"ok": False, "error": str(ex)}) + "\n").encode("utf-8"))
@@ -125,10 +169,13 @@ def _drain_cmd(conn, buf):
 
 
 def handle_client(conn, addr):
+    global _shared_hub
     print("yolo_context client:", addr)
     streaming = False
     buf = b""
     mock_i = 0
+    hub_yolo_id = f"yolo:{addr}"
+    hub_acquired = False
     try:
         conn.setblocking(True)
         while True:
@@ -148,7 +195,10 @@ def handle_client(conn, addr):
                         streaming = True
                         conn.sendall((json.dumps({"status": "ok"}) + "\n").encode("utf-8"))
                         if USE_REAL:
-                            _run_real_tracker(conn)
+                            if _shared_hub is not None:
+                                _shared_hub.acquire(hub_yolo_id)
+                                hub_acquired = True
+                            _run_real_tracker(conn, _shared_hub)
                             return
                         conn.setblocking(False)
                     elif cmd == "PAUSE":
@@ -181,6 +231,11 @@ def handle_client(conn, addr):
     except Exception as e:
         print("yolo_context client error:", e)
     finally:
+        if hub_acquired and _shared_hub is not None:
+            try:
+                _shared_hub.release(hub_yolo_id)
+            except Exception:
+                pass
         try:
             conn.close()
         except Exception:
@@ -188,7 +243,7 @@ def handle_client(conn, addr):
         print("yolo_context disconnected:", addr)
 
 
-def main():
+def _configure_mode_from_env():
     global USE_REAL, MOCK
     if os.environ.get("YOLO_CONTEXT_MOCK", "").strip() in ("1", "true", "yes"):
         MOCK = True
@@ -204,7 +259,14 @@ def main():
             print("ultralytics not installed — falling back to YOLO_CONTEXT_MOCK mode.")
             USE_REAL = False
 
-    host = os.environ.get("YOLO_CONTEXT_HOST", "127.0.0.1")
+
+def run_tcp_server(host=None, port=None):
+    global PORT
+    _configure_mode_from_env()
+    if port is not None:
+        PORT = int(port)
+    if host is None:
+        host = os.environ.get("YOLO_CONTEXT_HOST", "127.0.0.1")
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind((host, PORT))
@@ -219,6 +281,10 @@ def main():
         pass
     finally:
         srv.close()
+
+
+def main():
+    run_tcp_server()
 
 
 if __name__ == "__main__":
