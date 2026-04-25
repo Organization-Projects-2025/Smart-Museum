@@ -193,11 +193,44 @@ def run_face_auth_lobby():
         if not cap.isOpened():
             return "ERROR:Could not open camera (try FACE_CAM_INDEX=1)"
 
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+        try:
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        except Exception:
+            pass
 
+        # Windows / USB: first many reads often fail while the driver starts, especially right after
+        # another app (e.g. gesture hub) released the camera. Old code did `if not ret: break` and
+        # returned NOT_FOUND without ever calling imshow().
+        good_raw = None
+        for _ in range(150):
+            ret, fr = cap.read()
+            if ret and fr is not None and getattr(fr, "size", 0) > 0:
+                good_raw = fr
+                break
+            time.sleep(0.02)
+        if good_raw is None:
+            return (
+                "ERROR:Camera opened but no frames yet — close other apps using the webcam "
+                "(e.g. museum_vision_server), wait a second, or try FACE_CAM_INDEX=1"
+            )
+
+        if os.environ.get("FACE_LOBBY_HD", "").strip().lower() in ("1", "true", "yes"):
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+            good_raw = None
+            for _ in range(80):
+                ret, fr = cap.read()
+                if ret and fr is not None and getattr(fr, "size", 0) > 0:
+                    good_raw = fr
+                    break
+                time.sleep(0.02)
+            if good_raw is None:
+                return "ERROR:FACE_LOBBY_HD=1 not supported by this camera — unset FACE_LOBBY_HD"
+
+        last_good_raw = good_raw.copy()
         win_title = "Smart Grand Egyptian Museum — Face sign-in"
-        start_time = time.time()
+        cv2.namedWindow(win_title, cv2.WINDOW_NORMAL)
+
         recognized_user = None
         countdown_started = False
         countdown_start_time = None
@@ -206,14 +239,17 @@ def run_face_auth_lobby():
         capture_face_location = None
 
         time_limit = _LOBBY_TIMEOUT_S + _LOBBY_COUNTDOWN_S + _LOBBY_BUFFER_S
+        start_time = time.time()
 
         try:
             while True:
-                ret, frame = cap.read()
-                if not ret:
-                    break
+                ret, raw = cap.read()
+                if not ret or raw is None or getattr(raw, "size", 0) <= 0:
+                    raw = last_good_raw
+                else:
+                    last_good_raw = raw.copy()
 
-                frame = cv2.flip(frame, 1)
+                frame = cv2.flip(raw, 1)
                 display = frame.copy()
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 small = cv2.resize(rgb_frame, (0, 0), fx=0.25, fy=0.25)

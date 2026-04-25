@@ -286,25 +286,21 @@ public class VisitorProfile
 
         // --- Gender rubric → gold / accent (distinct paths for female / male / other) ---
         string g = (Gender ?? string.Empty).Trim().ToLowerInvariant();
+        PrimaryColor = Color.FromArgb(10, 10, 14);
         if (g == "female")
         {
-            // Female theme: deep purple with pink / lavender accents
-            PrimaryColor = Color.FromArgb(25, 10, 35);
-            SecondaryColor = Color.FromArgb(255, 105, 180);
-            TertiaryColor = Color.FromArgb(200, 120, 255);
+            SecondaryColor = Color.FromArgb(232, 185, 55);
+            TertiaryColor = Color.FromArgb(72, 118, 178);
         }
         else if (g == "other" || g == "nonbinary" || g == "nb")
         {
-            PrimaryColor = Color.FromArgb(10, 10, 14);
             SecondaryColor = Color.FromArgb(205, 165, 225);
             TertiaryColor = Color.FromArgb(130, 95, 200);
         }
         else
         {
-            // Male and default: dark background with gold accents
-            PrimaryColor = Color.FromArgb(12, 12, 12);
             SecondaryColor = Color.FromArgb(212, 175, 55);
-            TertiaryColor = Color.FromArgb(201, 166, 107);
+            TertiaryColor = Color.FromArgb(175, 145, 85);
         }
 
         // --- Race rubric → language + subtle accent tint (still readable on dark bg) ---
@@ -396,7 +392,7 @@ public class BluetoothService
         try
         {
             SocketClient client = new SocketClient();
-            if (!client.connectToSocket("localhost", 5000))
+            if (!client.connectToSocket("127.0.0.1", 5000))
             {
                 status = "Cannot reach the Python server (port 5000). Start python_server.py, then try again.";
                 return false;
@@ -471,7 +467,7 @@ public class BluetoothService
         try
         {
             SocketClient client = new SocketClient();
-            if (!client.connectToSocket("localhost", 5000))
+            if (!client.connectToSocket("127.0.0.1", 5000))
             {
                 status = "Cannot connect to the Python server (port 5000). Start python_server.py and try again.";
                 return false;
@@ -542,7 +538,7 @@ public class FaceRecognitionService
         try
         {
             SocketClient client = new SocketClient();
-            if (!client.connectToSocket("localhost", 5000))
+            if (!client.connectToSocket("127.0.0.1", 5000))
             {
                 status = "Cannot connect to Face ID server.";
                 return false;
@@ -609,7 +605,7 @@ public class FaceRecognitionService
         try
         {
             SocketClient client = new SocketClient();
-            if (!client.connectToSocket("localhost", 5000))
+            if (!client.connectToSocket("127.0.0.1", 5000))
             {
                 status = "Cannot connect to Face ID server.";
                 return false;
@@ -678,7 +674,7 @@ public class FaceRecognitionService
         try
         {
             SocketClient client = new SocketClient();
-            if (!client.connectToSocket("localhost", 5000))
+            if (!client.connectToSocket("127.0.0.1", 5000))
             {
                 status = "Face ID failed. Cannot connect to server.";
                 return false;

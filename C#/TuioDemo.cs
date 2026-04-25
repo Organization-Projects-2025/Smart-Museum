@@ -110,6 +110,8 @@ public class TuioDemo : Form, TuioListener
         RegisterBluetoothConfirm,
         /// <summary>Face was not detected. Ring offers Try again / Exit.</summary>
         NoFaceRecovery,
+        /// <summary>Webcam / server error (not “no face in oval”). Same ring as NoFaceRecovery.</summary>
+        AuthCameraIssue,
         /// <summary>Login or duplicate-login: Bluetooth failed; user can retry or restart face scan.</summary>
         LoginBluetoothRecovery,
         /// <summary>Registration: Bluetooth device scan failed; user can retry or restart face scan.</summary>
@@ -174,12 +176,21 @@ public class TuioDemo : Form, TuioListener
         new Dictionary<string, string>();
     private Dictionary<string, string> storyKeyByTitle =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-    private bool menuGestureArmed = true;
-    private bool hasLastMenuMarkerY = false;
-    private float lastMenuMarkerY = 0.5f;
-    private float menuGestureAccumY = 0f;
     private bool menuOpenedByGesture = false; // Track if menu was opened by hand gesture vs marker
-    private const int CircularMenuMarkerSymbolId = 0;
+    /// <summary>Flick baseline in normalized TUIO space (0–1). Confirm = displacement from here.</summary>
+    private float menuFlickArmX = 0.5f, menuFlickArmY = 0.5f;
+    private DateTime lastMenuFlickActionUtc = DateTime.MinValue;
+    private bool menuFlickNeedsResync = true;
+    private const int MenuFlickCooldownMs = 300;
+    /// <summary>Min |Δy| from arm to confirm (back uses +Δy).</summary>
+    private const float MenuFlickPullY = 0.038f;
+    /// <summary>Diagonal flick: total drag from arm must exceed this and include vertical bias.</summary>
+    private const float MenuFlickDiagonalDist = 0.065f;
+    private const float MenuFlickDiagonalBiasY = 0.016f;
+    /// <summary>Set true if your TUIO Y axis is inverted vs screen top/bottom.</summary>
+    private const bool CircularMenuTuioInvertY = false;
+
+    // Login / auth ring: vertical flick on same TUIO marker (unchanged)
     private const bool MenuUpIsPositiveY = true;
     private const float MenuMoveTriggerDeltaY = 0.035f;
     private const float MenuMoveNeutralBandY = 0.015f;
@@ -190,6 +201,12 @@ public class TuioDemo : Form, TuioListener
     private bool isGestureActive = false;
 
     private GazeEmotionClient gazeEmotionClient;
+    private readonly object liveGazeLock = new object();
+    private bool liveGazeStreamActive;
+    private bool liveGazeValid;
+    private double liveGazeGx = 0.5, liveGazeGy = 0.5;
+    private string liveDominantEmotion = "neutral";
+    private string liveGazeIssueUserText = "";
     private YoloContextClient yoloContextClient;
     private readonly SessionAnalyticsRecorder analyticsRecorder = new SessionAnalyticsRecorder();
     private AdminAnalyticsPanel adminAnalyticsPanel;
@@ -333,7 +350,9 @@ public class TuioDemo : Form, TuioListener
         authRingGestureArmed = true;
         authRingHasLastY = false;
         authRingAccumY = 0f;
-        authInProgress = false;
+        // True immediately so gesture_service cannot grab the webcam before the face thread runs
+        // (avoids NOT_FOUND / “NO FACE FOUND” when using museum_vision_server shared camera).
+        authInProgress = true;
         profileWelcomeAutoContinueUtc = null;
         authStatus = "We’ll open a short camera check on this computer. Fit your face in the gold frame — when you’re done, your name appears here on the table.";
         SafeInvalidate();
@@ -353,6 +372,26 @@ public class TuioDemo : Form, TuioListener
             authInProgress = false;
             authStatus = message;
             Invalidate();
+            System.Threading.ThreadPool.QueueUserWorkItem(_ => TryReleaseGestureWebcamBlocking());
+        };
+        if (IsHandleCreated) BeginInvoke(apply);
+        else { apply(); SafeInvalidate(); }
+    }
+
+    private void ShowAuthCameraIssueRecovery(string message)
+    {
+        Action apply = () =>
+        {
+            loginPhase = LoginAuthPhase.AuthCameraIssue;
+            authRingItems = new List<string> { "Try again", "Exit" };
+            authRingSelectedIndex = 0;
+            authRingGestureArmed = true;
+            authRingHasLastY = false;
+            authRingAccumY = 0f;
+            authInProgress = false;
+            authStatus = message;
+            Invalidate();
+            System.Threading.ThreadPool.QueueUserWorkItem(_ => TryReleaseGestureWebcamBlocking());
         };
         if (IsHandleCreated) BeginInvoke(apply);
         else { apply(); SafeInvalidate(); }
@@ -380,6 +419,7 @@ public class TuioDemo : Form, TuioListener
         {
             try
             {
+                TryReleaseGestureWebcamBlocking();
                 var faceService = new FaceRecognitionService();
                 FaceRegisterScanResult outcome;
                 string uid;
@@ -390,9 +430,9 @@ public class TuioDemo : Form, TuioListener
 
                 if (!ok && outcome == FaceRegisterScanResult.Error)
                 {
-                    ShowNoFaceRecovery("We couldn’t reach the sign-in service. " + (string.IsNullOrEmpty(st)
+                    ShowAuthCameraIssueRecovery(string.IsNullOrEmpty(st)
                         ? "Check that python_server.py is running on this PC, then try again."
-                        : st));
+                        : st);
                     return;
                 }
 
@@ -983,6 +1023,7 @@ public class TuioDemo : Form, TuioListener
                 break;
 
             case LoginAuthPhase.NoFaceRecovery:
+            case LoginAuthPhase.AuthCameraIssue:
                 if (authRingSelectedIndex == 0)
                     ShowAuthPicker();
                 else
@@ -1235,6 +1276,7 @@ public class TuioDemo : Form, TuioListener
         if (loginPhase == LoginAuthPhase.LoginBluetoothRecovery ||
             loginPhase == LoginAuthPhase.RegisterBluetoothRecovery ||
             loginPhase == LoginAuthPhase.NoFaceRecovery ||
+            loginPhase == LoginAuthPhase.AuthCameraIssue ||
             loginPhase == LoginAuthPhase.ProfileWelcome)
         {
             ShowAuthPicker();
@@ -1494,7 +1536,15 @@ public class TuioDemo : Form, TuioListener
         adminAnalyticsPanel = new AdminAnalyticsPanel(analyticsRecorder,
             () => Path.Combine(GetWorkspaceRoot(), "C#", "content", "analytics"));
 
-        gazeEmotionClient = new GazeEmotionClient("localhost", 5002);
+        lock (liveGazeLock)
+        {
+            liveGazeStreamActive = false;
+            liveGazeValid = false;
+            liveGazeIssueUserText = "";
+        }
+
+        // 127.0.0.1: Python services bind IPv4 only; "localhost" can resolve to ::1 and never connect.
+        gazeEmotionClient = new GazeEmotionClient("127.0.0.1", 5002);
         bool ok = await gazeEmotionClient.ConnectAsync();
         if (!ok)
         {
@@ -1505,14 +1555,32 @@ public class TuioDemo : Form, TuioListener
         gazeEmotionClient.FrameReceived += OnGazeFrame;
         bool streamOk = await gazeEmotionClient.StartStreamingAsync();
         if (!streamOk)
+        {
             Console.WriteLine("Gaze/emotion STREAM handshake failed.");
+            gazeEmotionClient.FrameReceived -= OnGazeFrame;
+            try { gazeEmotionClient.Dispose(); } catch { }
+            gazeEmotionClient = null;
+            lock (liveGazeLock)
+            {
+                liveGazeStreamActive = false;
+                liveGazeValid = false;
+                liveGazeIssueUserText = "";
+            }
+            return;
+        }
+
+        lock (liveGazeLock)
+        {
+            liveGazeStreamActive = true;
+            liveGazeIssueUserText = "";
+        }
     }
 
     private async void InitializeYoloContext()
     {
         if (visitorProfile == null) return;
         TeardownYoloContext();
-        yoloContextClient = new YoloContextClient("localhost", 5003);
+        yoloContextClient = new YoloContextClient("127.0.0.1", 5003);
         bool ok = await yoloContextClient.ConnectAsync();
         if (!ok)
         {
@@ -1576,12 +1644,37 @@ public class TuioDemo : Form, TuioListener
             gazeEmotionClient.Dispose();
             gazeEmotionClient = null;
         }
+        lock (liveGazeLock)
+        {
+            liveGazeStreamActive = false;
+            liveGazeValid = false;
+            liveGazeIssueUserText = "";
+        }
     }
 
     private void OnGazeFrame(GazeEmotionFrame frame)
     {
-        if (slideShow != null && slideShow.IsRunning && currentSlide != null && frame != null && frame.Ok)
+        if (frame == null) return;
+        lock (liveGazeLock)
+        {
+            if (frame.Ok)
+            {
+                liveGazeValid = true;
+                liveGazeGx = frame.Gx;
+                liveGazeGy = frame.Gy;
+                liveDominantEmotion = string.IsNullOrEmpty(frame.Dominant) ? "neutral" : frame.Dominant;
+                liveGazeIssueUserText = "";
+            }
+            else
+            {
+                liveGazeValid = false;
+                liveGazeIssueUserText = FormatGazeIssueHint(frame.Reason);
+            }
+        }
+        if (frame.Ok && analyticsRecorder != null && slideShow != null && slideShow.IsRunning && currentSlide != null)
             analyticsRecorder.AddSample(frame);
+        if (slideShow != null && slideShow.IsRunning && currentSlide != null)
+            SafeInvalidate();
     }
 
     private void UpdateAdminTuio()
@@ -1645,6 +1738,7 @@ public class TuioDemo : Form, TuioListener
 
         AddFavoriteIfExists("figure:1");
         AddFavoriteIfExists("figure:2");
+        AddFavoriteIfExists("figure:7");
         AddFavoriteIfExists("relationship:1_2");
     }
 
@@ -1652,7 +1746,7 @@ public class TuioDemo : Form, TuioListener
     {
         try
         {
-            gestureClient = new GestureClient("localhost", 5001);
+            gestureClient = new GestureClient("127.0.0.1", 5001);
             
             // Subscribe to gesture events
             gestureClient.GestureRecognized += OnGestureRecognized;
@@ -1684,6 +1778,29 @@ public class TuioDemo : Form, TuioListener
         }
     }
 
+    /// <summary>Face sign-in / recovery must not compete with gesture_service for the same USB webcam.</summary>
+    private bool LoginFlowBlocksGestureWebcam()
+    {
+        if (isLoggedIn) return false;
+        return loginPhase == LoginAuthPhase.NoFaceRecovery
+            || loginPhase == LoginAuthPhase.AuthCameraIssue
+            || loginPhase == LoginAuthPhase.RegisterScanning;
+    }
+
+    private void TryReleaseGestureWebcamBlocking()
+    {
+        try
+        {
+            if (gestureClient == null || !gestureClient.IsConnected) return;
+            gestureClient.StopTrackingSilentlyAsync().ConfigureAwait(false).GetAwaiter().GetResult();
+            gestureClient.ResetAsync().ConfigureAwait(false).GetAwaiter().GetResult();
+        }
+        catch
+        {
+            // ignore — Face ID should still attempt open
+        }
+    }
+
     private async System.Threading.Tasks.Task CheckForGesture()
     {
         if (isGestureActive || gestureClient == null || !gestureClient.IsConnected) return;
@@ -1691,6 +1808,7 @@ public class TuioDemo : Form, TuioListener
         if (!isLoggedIn)
         {
             if (authInProgress) return;
+            if (LoginFlowBlocksGestureWebcam()) return;
             try
             {
                 var status = await gestureClient.GetStatusAsync();
@@ -1824,6 +1942,7 @@ public class TuioDemo : Form, TuioListener
                     Console.WriteLine("→ Opening menu...");
                     circularMenu.Show();
                     menuOpenedByGesture = true; // Mark as gesture-opened
+                    menuFlickNeedsResync = true;
                     Invalidate(); // Force redraw
                     Console.WriteLine("✓ Gesture: Menu opened with thumbs up");
                 }
@@ -2133,7 +2252,10 @@ public class TuioDemo : Form, TuioListener
         lock (objectList) onTable = new List<TuioObject>(objectList.Values);
 
         // Keep only recognised figures
-        onTable = onTable.FindAll(o => o.SymbolID != CircularMenuMarkerSymbolId && MuseumData.Figures.ContainsKey(o.SymbolID));
+        onTable = onTable.FindAll(o =>
+            !TuioControlMarker.IsMenuAuthMarker(o.SymbolID) &&
+            !TuioControlMarker.IsReservedEmptySlot(o.SymbolID) &&
+            MuseumData.Figures.ContainsKey(o.SymbolID));
 
         // Keep current slideshow stable even when camera briefly loses tracking.
         if (slideshowLocked)
@@ -2280,7 +2402,10 @@ public class TuioDemo : Form, TuioListener
         // Update pending state from live markers.
         List<TuioObject> onTable;
         lock (objectList) onTable = new List<TuioObject>(objectList.Values);
-        onTable = onTable.FindAll(o => o.SymbolID != CircularMenuMarkerSymbolId && MuseumData.Figures.ContainsKey(o.SymbolID));
+        onTable = onTable.FindAll(o =>
+            !TuioControlMarker.IsMenuAuthMarker(o.SymbolID) &&
+            !TuioControlMarker.IsReservedEmptySlot(o.SymbolID) &&
+            MuseumData.Figures.ContainsKey(o.SymbolID));
 
         if (onTable.Count == 0)
         {
@@ -2507,8 +2632,10 @@ public class TuioDemo : Form, TuioListener
         }
 
         if (state == AppState.Idle || state == AppState.Recognition ||
-            state == AppState.SingleFigure || state == AppState.PairNotFacing || fadingIn || circularMenu.IsVisible ||
-            !isLoggedIn || adminAnalyticsVisible)
+            state == AppState.SingleFigure || state == AppState.PairNotFacing || state == AppState.PairFacing ||
+            fadingIn || circularMenu.IsVisible ||
+            !isLoggedIn || adminAnalyticsVisible ||
+            (slideShow != null && slideShow.IsRunning && currentSlide != null))
             Invalidate();
     }
 
@@ -2597,15 +2724,12 @@ public class TuioDemo : Form, TuioListener
 
         TuioObject marker = GetSingleMenuMarker();
 
-        // Open the menu immediately when marker ID 0 appears.
+        // Open the menu when TUIO menu marker (symbol 3) appears; symbol 0 is reserved and unused for now.
         if (!circularMenu.IsVisible && marker != null)
         {
             circularMenu.Show();
             menuOpenedByGesture = false; // Opened by marker, not gesture
-            menuGestureArmed = true;
-            menuGestureAccumY = 0f;
-            hasLastMenuMarkerY = true;
-            lastMenuMarkerY = marker.Y;
+            menuFlickNeedsResync = true;
         }
 
         // If menu was opened by marker control, hide when marker is removed.
@@ -2613,9 +2737,7 @@ public class TuioDemo : Form, TuioListener
         if (circularMenu.IsVisible && marker == null && !menuOpenedByGesture)
         {
             circularMenu.Hide();
-            hasLastMenuMarkerY = false;
-            menuGestureArmed = true;
-            menuGestureAccumY = 0f;
+            menuFlickNeedsResync = true;
             return;
         }
 
@@ -2629,50 +2751,43 @@ public class TuioDemo : Form, TuioListener
             float a = marker.Angle;
             circularMenu.UpdateRotation(a);
 
-            if (!hasLastMenuMarkerY)
+            if (menuFlickNeedsResync)
             {
-                hasLastMenuMarkerY = true;
-                lastMenuMarkerY = marker.Y;
-                menuGestureAccumY = 0f;
+                menuFlickArmX = marker.X;
+                menuFlickArmY = marker.Y;
+                menuFlickNeedsResync = false;
+                lastMenuFlickActionUtc = DateTime.UtcNow;
             }
-            else
+
+            // Tangible menus: confirm by dragging the fiducial away from the last rest position (Reactable-style “push” / pull).
+            if ((DateTime.UtcNow - lastMenuFlickActionUtc).TotalMilliseconds < MenuFlickCooldownMs)
+                return;
+
+            float rdx = marker.X - menuFlickArmX;
+            float rdy = (marker.Y - menuFlickArmY) * (CircularMenuTuioInvertY ? -1f : 1f);
+            float dist = (float)Math.Sqrt(rdx * rdx + rdy * rdy);
+
+            bool confirm = rdy <= -MenuFlickPullY ||
+                           (dist >= MenuFlickDiagonalDist && rdy <= -MenuFlickDiagonalBiasY);
+            bool back = rdy >= MenuFlickPullY ||
+                         (dist >= MenuFlickDiagonalDist && rdy >= MenuFlickDiagonalBiasY);
+
+            if (confirm)
             {
-                float frameDy = marker.Y - lastMenuMarkerY;
-                menuGestureAccumY += frameDy;
-
-                // Rearm gestures when marker returns near neutral vertical band.
-                if (Math.Abs(marker.Y - 0.5f) <= MenuMoveNeutralBandY)
-                {
-                    menuGestureArmed = true;
-                    menuGestureAccumY = 0f;
-                }
-
-                // upDelta is positive when marker moves UP (Y decreases towards top of screen).
-                // downDelta is positive when marker moves DOWN (Y increases towards bottom of screen).
-                float upDelta = MenuUpIsPositiveY ? (-menuGestureAccumY) : menuGestureAccumY;
-                float downDelta = -upDelta;
-
-                if (menuGestureArmed && upDelta >= MenuMoveTriggerDeltaY)
-                {
-                    circularMenu.MoveUpAction();
-                    menuGestureArmed = false;
-                    menuGestureAccumY = 0f;
-                }
-                else if (menuGestureArmed && downDelta >= MenuMoveTriggerDeltaY)
-                {
-                    circularMenu.MoveDownAction();
-                    menuGestureArmed = false;
-                    menuGestureAccumY = 0f;
-                }
-
-                lastMenuMarkerY = marker.Y;
+                circularMenu.MoveUpAction();
+                lastMenuFlickActionUtc = DateTime.UtcNow;
+                menuFlickArmX = marker.X;
+                menuFlickArmY = marker.Y;
+                Invalidate();
             }
-        }
-        else
-        {
-            menuGestureArmed = true;
-            menuGestureAccumY = 0f;
-            hasLastMenuMarkerY = false;
+            else if (back)
+            {
+                circularMenu.MoveDownAction();
+                lastMenuFlickActionUtc = DateTime.UtcNow;
+                menuFlickArmX = marker.X;
+                menuFlickArmY = marker.Y;
+                Invalidate();
+            }
         }
     }
 
@@ -2680,7 +2795,7 @@ public class TuioDemo : Form, TuioListener
     {
         List<TuioObject> onTable;
         lock (objectList) onTable = new List<TuioObject>(objectList.Values);
-        onTable = onTable.FindAll(o => o.SymbolID == CircularMenuMarkerSymbolId);
+        onTable = onTable.FindAll(o => TuioControlMarker.IsMenuAuthMarker(o.SymbolID));
         if (onTable.Count == 1) return onTable[0];
         return null;
     }
@@ -2732,6 +2847,16 @@ public class TuioDemo : Form, TuioListener
             case AppState.SingleFigure: DrawSingleFigure(g); break;
             case AppState.PairNotFacing: DrawPairNotFacing(g); break;
             case AppState.PairFacing: DrawPairFacing(g); break;
+        }
+
+        if (slideshowLocked && slideShow != null && slideShow.IsRunning && currentSlide != null &&
+            state == AppState.Idle && lockedContext == SlideShowContext.MenuStory)
+        {
+            var menuContent = new Rectangle(40, 72, W - 80, H - 130);
+            DrawSlide(g, currentSlide, menuContent, CGold, fadeAlpha);
+            DrawLiveGazeEmotionOverlay(g, menuContent);
+            DrawProgressDots(g, slideShow.CurrentIndex, slideShow.TotalSlides,
+                W / 2, H - 26, CGoldLight);
         }
 
         if (circularMenu.IsVisible)
@@ -2852,6 +2977,11 @@ public class TuioDemo : Form, TuioListener
             title = "NO FACE FOUND";
             subtitle = "Make sure your face is in front of the camera";
         }
+        else if (loginPhase == LoginAuthPhase.AuthCameraIssue)
+        {
+            title = "WEBCAM / SIGN-IN ERROR";
+            subtitle = "This is usually the camera being busy, not your face. Read the message below.";
+        }
         else if (loginPhase == LoginAuthPhase.RegisterDuplicateChoice)
             title = "FACE ALREADY REGISTERED";
         else if (loginPhase == LoginAuthPhase.RegisterBluetoothScanning)
@@ -2903,9 +3033,11 @@ public class TuioDemo : Form, TuioListener
         float statusTop = subtitleTop + subtitleH + 12f;
         bool wrapStatus = loginPhase == LoginAuthPhase.LoginBluetoothRecovery ||
                           loginPhase == LoginAuthPhase.RegisterBluetoothRecovery ||
-                          loginPhase == LoginAuthPhase.NoFaceRecovery;
+                          loginPhase == LoginAuthPhase.NoFaceRecovery ||
+                          loginPhase == LoginAuthPhase.AuthCameraIssue;
         float statusH = wrapStatus
-            ? (loginPhase == LoginAuthPhase.LoginBluetoothRecovery ? 120f : 96f)
+            ? (loginPhase == LoginAuthPhase.LoginBluetoothRecovery ? 120f
+                : loginPhase == LoginAuthPhase.AuthCameraIssue ? 120f : 96f)
             : 52f;
         if (wrapStatus)
             DrawWrappedCentered(g, authStatus, fontBody, Color.White,
@@ -2934,6 +3066,7 @@ public class TuioDemo : Form, TuioListener
 
         bool showRing = !authInProgress &&
             (loginPhase == LoginAuthPhase.NoFaceRecovery ||
+             loginPhase == LoginAuthPhase.AuthCameraIssue ||
              loginPhase == LoginAuthPhase.RegisterDuplicateChoice ||
              loginPhase == LoginAuthPhase.RegisterBluetoothConfirm ||
              loginPhase == LoginAuthPhase.LoginBluetoothRecovery ||
@@ -2951,7 +3084,8 @@ public class TuioDemo : Form, TuioListener
                 ? "Rotate to choose  •  Flick UP confirms  •  Restart login = camera again, Guest visitor = no Bluetooth"
                 : (loginPhase == LoginAuthPhase.LoginBluetoothRecovery ||
                           loginPhase == LoginAuthPhase.RegisterBluetoothRecovery ||
-                          loginPhase == LoginAuthPhase.NoFaceRecovery)
+                          loginPhase == LoginAuthPhase.NoFaceRecovery ||
+                          loginPhase == LoginAuthPhase.AuthCameraIssue)
                 ? "Rotate marker to choose  •  Flick UP = confirm   Flick DOWN = restart scan"
                 : (loginPhase == LoginAuthPhase.RegisterEnterFirstName ||
                           loginPhase == LoginAuthPhase.RegisterEnterLastName ||
@@ -2984,7 +3118,7 @@ public class TuioDemo : Form, TuioListener
                 ? (authRingItems != null && authRingItems.Count > 1)
                     ? string.Format("TUIO angle {0:0}° (~{1:0}° per choice) — now: {2}", authTuioMarkerAngleDeg, segDeg, sel)
                     : string.Format("TUIO angle {0:0}° — {1}", authTuioMarkerAngleDeg, sel)
-                : "TUIO: place menu marker (symbol 0) on the table for live angle and highlight.";
+                : "TUIO: place the menu marker (symbol " + TuioControlMarker.MenuAuthSymbolId + ") on the table — symbols 0 and 3 are not museum figures.";
             DrawWrappedCentered(g, hint + Environment.NewLine + tuioHud, fontSmall,
                 Color.FromArgb(198, CPapyrus), new RectangleF(40, hintTop, W - 80, hintBlockH));
             DrawAuthTuioRing(g, W / 2, ringCy, ringR, themeSecondary, CGoldDim);
@@ -3206,7 +3340,10 @@ public class TuioDemo : Form, TuioListener
         if (showIntroOnly)
         {
             if (currentSlide != null)
+            {
                 DrawSlide(g, currentSlide, contentArea, accent, fadeAlpha);
+                DrawLiveGazeEmotionOverlay(g, contentArea);
+            }
         }
         else if (hasSceneObjects)
         {
@@ -3215,6 +3352,7 @@ public class TuioDemo : Form, TuioListener
             {
                 // Match intro/relationship style: story slide only, no scene visible behind.
                 DrawSlide(g, currentSlide, contentArea, accent, fadeAlpha);
+                DrawLiveGazeEmotionOverlay(g, contentArea);
             }
             else
             {
@@ -3224,6 +3362,7 @@ public class TuioDemo : Form, TuioListener
         else if (currentSlide != null)
         {
             DrawSlide(g, currentSlide, contentArea, accent, fadeAlpha);
+            DrawLiveGazeEmotionOverlay(g, contentArea);
         }
 
         DrawProgressDots(g, slideShow.CurrentIndex, slideShow.TotalSlides,
@@ -3373,11 +3512,91 @@ public class TuioDemo : Form, TuioListener
 
         var contentArea = new Rectangle(50, headerH + 22, W - 100, H - headerH - 70);
         if (currentSlide != null)
+        {
             DrawSlide(g, currentSlide, contentArea, CGold, fadeAlpha);
+            DrawLiveGazeEmotionOverlay(g, contentArea);
+        }
 
         DrawProgressDots(g, slideShow.CurrentIndex, slideShow.TotalSlides,
                          W / 2, H - 26, CGoldLight);
         DrawOuterBorder(g);
+    }
+
+    private static string FormatDominantEmotionLabel(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return "Neutral";
+        string t = raw.Trim();
+        if (t.Length == 1) return t.ToUpperInvariant();
+        return char.ToUpperInvariant(t[0]) + t.Substring(1).ToLowerInvariant();
+    }
+
+    private static string FormatGazeIssueHint(string reason)
+    {
+        if (string.IsNullOrWhiteSpace(reason))
+            return "No face — gesture_service.py often locks camera 0; stop it or set GAZE_EMOTION_CAMERA / GESTURE_CAMERA to different indices.";
+        if (reason == "warmup")
+            return "Camera starting…";
+        if (reason == "no_face")
+            return "No face detected — stop gesture_service if it uses the same webcam, try GAZE_EMOTION_MIRROR=1, or improve light.";
+        if (reason == "mediapipe_missing")
+            return "MediaPipe not installed in this Python env (pip install mediapipe).";
+        if (reason.StartsWith("camera_failed:", StringComparison.Ordinal))
+            return "Webcam open failed — try GAZE_EMOTION_CAMERA=1 or close apps using the camera.";
+        if (string.Equals(reason, "camera_failed", StringComparison.Ordinal))
+            return "Webcam open failed — try another GAZE_EMOTION_CAMERA index.";
+        return reason;
+    }
+
+    /// <summary>Live gaze dot + dominant emotion on top of slideshow content (requires gaze_emotion_service).</summary>
+    private void DrawLiveGazeEmotionOverlay(Graphics g, Rectangle contentArea)
+    {
+        if (slideShow == null || !slideShow.IsRunning || currentSlide == null) return;
+
+        bool streamOn, valid;
+        double gx, gy;
+        string dom, issueHint;
+        lock (liveGazeLock)
+        {
+            streamOn = liveGazeStreamActive;
+            valid = liveGazeValid;
+            gx = liveGazeGx;
+            gy = liveGazeGy;
+            dom = liveDominantEmotion;
+            issueHint = liveGazeIssueUserText;
+        }
+
+        string emotionLine;
+        if (!streamOn)
+            emotionLine = "Dominant expression: — (start gaze_emotion_service.py on 127.0.0.1:5002)";
+        else if (!valid)
+            emotionLine = "Dominant expression: — " + (string.IsNullOrEmpty(issueHint)
+                ? "No face yet (see gaze_emotion_service console)"
+                : issueHint);
+        else
+            emotionLine = "Dominant expression: " + FormatDominantEmotionLabel(dom);
+        var labelRect = new RectangleF(contentArea.X + 10, contentArea.Y + 10,
+            Math.Max(40, contentArea.Width - 20), 36);
+        using (var bg = new SolidBrush(Color.FromArgb(210, 12, 14, 20)))
+            g.FillRectangle(bg, labelRect.X, labelRect.Y, labelRect.Width, labelRect.Height);
+        using (var b = new SolidBrush(Color.FromArgb(245, 255, 248, 220)))
+            g.DrawString(emotionLine, fontSmall, b, labelRect);
+
+        if (!valid) return;
+
+        double nx = Math.Max(0.0, Math.Min(1.0, gx));
+        double ny = Math.Max(0.0, Math.Min(1.0, gy));
+        int px = contentArea.X + (int)(nx * contentArea.Width);
+        int py = contentArea.Y + (int)(ny * contentArea.Height);
+        const int outerR = 14;
+        using (var ring = new Pen(Color.FromArgb(240, 255, 255, 255), 3f))
+            g.DrawEllipse(ring, px - outerR, py - outerR, outerR * 2, outerR * 2);
+        using (var fill = new SolidBrush(Color.FromArgb(230, 255, 60, 60)))
+            g.FillEllipse(fill, px - 5, py - 5, 10, 10);
+        using (var cross = new Pen(Color.FromArgb(200, 255, 255, 255), 1.5f))
+        {
+            g.DrawLine(cross, px - 22, py, px + 22, py);
+            g.DrawLine(cross, px, py - 22, px, py + 22);
+        }
     }
 
     // Rendering: slide content
@@ -3726,8 +3945,11 @@ public class TuioDemo : Form, TuioListener
 
     private string GetName(TuioObject o)
     {
-        if (o != null && o.SymbolID == CircularMenuMarkerSymbolId)
-            return "Menu Marker";
+        if (o != null && TuioControlMarker.IsMenuAuthMarker(o.SymbolID))
+            return "Menu / sign-in marker";
+
+        if (o != null && TuioControlMarker.IsReservedEmptySlot(o.SymbolID))
+            return "Reserved (unused)";
 
         if (o != null && MuseumData.Figures.ContainsKey(o.SymbolID))
             return MuseumData.Figures[o.SymbolID].Name;
@@ -3736,8 +3958,11 @@ public class TuioDemo : Form, TuioListener
 
     private Color GetAccent(TuioObject o)
     {
-        if (o != null && o.SymbolID == CircularMenuMarkerSymbolId)
+        if (o != null && TuioControlMarker.IsMenuAuthMarker(o.SymbolID))
             return Color.FromArgb(120, 180, 240);
+
+        if (o != null && TuioControlMarker.IsReservedEmptySlot(o.SymbolID))
+            return Color.FromArgb(90, 90, 95);
 
         if (o != null && MuseumData.Figures.ContainsKey(o.SymbolID))
             return MuseumData.Figures[o.SymbolID].AccentColor;

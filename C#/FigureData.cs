@@ -178,10 +178,10 @@ public static class MuseumData
                 }
             }},
 
-            // Tutankhamun (ID 3)
-            { 3, new Figure
+            // Tutankhamun — TUIO fiducial ID 7 (IDs 0 and 3 reserved for menu / login UI)
+            { 7, new Figure
             {
-                SymbolId = 3,
+                SymbolId = 7,
                 Name = "Tutankhamun",
                 Period = "c. 1341 BC - 1323 BC",
                 ShortDescription = "The Boy King",
@@ -353,7 +353,7 @@ public static class MuseumData
             // Tutankhamun and Akhenaten (father and son)
             new Relationship
             {
-                SymbolIdA = 3,
+                SymbolIdA = 7,
                 SymbolIdB = 6,
                 ConnectionTitle = "Father & Son — A Legacy Reversed",
                 Slides = new List<ContentSlide>
@@ -374,7 +374,7 @@ public static class MuseumData
             new Relationship
             {
                 SymbolIdA = 2,
-                SymbolIdB = 3,
+                SymbolIdB = 7,
                 ConnectionTitle = "Family Ties in Amarna Chaos",
                 Slides = new List<ContentSlide>
                 {
@@ -539,7 +539,7 @@ public static class MuseumData
             new Relationship
             {
                 SymbolIdA = 4,
-                SymbolIdB = 3,
+                SymbolIdB = 7,
                 ConnectionTitle = "From Boy King to Empire Builder",
                 Slides = new List<ContentSlide>
                 {

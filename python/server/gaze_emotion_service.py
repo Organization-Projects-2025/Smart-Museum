@@ -16,11 +16,17 @@ gx, gy are normalized approximations of where the user is looking on a 1x1 "scre
 
 Dependencies: opencv-python, mediapipe (see python/requirements.txt).
 Optional: pip install deepface tf-keras  — if available, emotions use DeepFace; else landmarks heuristic.
+
+Env: GAZE_EMOTION_CAMERA (default 0), GAZE_EMOTION_MIRROR=1 to horizontal-flip frames,
+     dollarpy gesture_service also uses a webcam — use GESTURE_CAMERA vs GAZE_EMOTION_CAMERA
+     or stop gesture_service while testing gaze (only one process can use one USB camera reliably).
 """
 
 import json
+import os
 import select
 import socket
+import sys
 import threading
 import time
 
@@ -33,7 +39,98 @@ try:
     _MP_OK = True
 except Exception as e:
     _MP_OK = False
+    mp = None  # type: ignore
     print("gaze_emotion_service: mediapipe import failed:", e)
+
+try:
+    from mediapipe.tasks import python as _mp_tasks_python
+    from mediapipe.tasks.python import vision as _mp_tasks_vision
+
+    _MP_TASKS_VISION_OK = True
+except Exception as e:
+    _MP_TASKS_VISION_OK = False
+    print("gaze_emotion_service: mediapipe tasks.vision import failed:", e)
+
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_FACE_MODEL_PATH = os.path.join(_SCRIPT_DIR, "face_landmarker.task")
+_FACE_MODEL_URL = (
+    "https://storage.googleapis.com/mediapipe-models/face_landmarker/"
+    "face_landmarker/float16/1/face_landmarker.task"
+)
+
+
+def _ensure_face_landmarker_model():
+    if os.path.isfile(_FACE_MODEL_PATH) and os.path.getsize(_FACE_MODEL_PATH) > 1000:
+        return _FACE_MODEL_PATH
+    import urllib.request
+
+    print("gaze_emotion_service: downloading face_landmarker.task ...")
+    urllib.request.urlretrieve(_FACE_MODEL_URL, _FACE_MODEL_PATH)
+    print(f"gaze_emotion_service: face model saved to {_FACE_MODEL_PATH}")
+    return _FACE_MODEL_PATH
+
+
+class _FaceLandmarksList:
+    """Mimics solutions FaceMesh multi_face_landmarks[0] (.landmark[i].x/y/z)."""
+
+    __slots__ = ("landmark",)
+
+    def __init__(self, landmarks):
+        self.landmark = landmarks
+
+
+class _FaceMeshTasksWrapper:
+    """FaceMesh-like API using mediapipe.tasks FaceLandmarker (MediaPipe 0.10+)."""
+
+    def __init__(self):
+        if not _MP_TASKS_VISION_OK:
+            raise RuntimeError("mediapipe.tasks.python.vision not available")
+        model_path = _ensure_face_landmarker_model()
+        base_opts = _mp_tasks_python.BaseOptions(model_asset_path=model_path)
+        opts = _mp_tasks_vision.FaceLandmarkerOptions(
+            base_options=base_opts,
+            running_mode=_mp_tasks_vision.RunningMode.IMAGE,
+            num_faces=1,
+            min_face_detection_confidence=0.3,
+            min_face_presence_confidence=0.3,
+            min_tracking_confidence=0.3,
+        )
+        self._detector = _mp_tasks_vision.FaceLandmarker.create_from_options(opts)
+
+    def process(self, rgb_image):
+        class _Res:
+            __slots__ = ("multi_face_landmarks",)
+
+            def __init__(self):
+                self.multi_face_landmarks = None
+
+        out = _Res()
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_image)
+        r = self._detector.detect(mp_image)
+        if r.face_landmarks:
+            out.multi_face_landmarks = [
+                _FaceLandmarksList(list(lms)) for lms in r.face_landmarks
+            ]
+        return out
+
+    def close(self):
+        if self._detector is not None:
+            self._detector.close()
+            self._detector = None
+
+
+def _create_face_mesh():
+    """Legacy solutions API when present; else Tasks FaceLandmarker."""
+    if _MP_OK and hasattr(mp, "solutions"):
+        fm = getattr(getattr(mp.solutions, "face_mesh", None), "FaceMesh", None)
+        if fm is not None:
+            return fm(
+                max_num_faces=1,
+                refine_landmarks=True,
+                min_detection_confidence=0.3,
+                min_tracking_confidence=0.3,
+            )
+    return _FaceMeshTasksWrapper()
 
 try:
     from deepface import DeepFace
@@ -41,6 +138,25 @@ try:
     _DEEPFACE_OK = True
 except Exception:
     _DEEPFACE_OK = False
+
+# When set by museum_vision_server, _CameraLoop reads frames from hub instead of opening a camera.
+_shared_hub = None
+
+
+def set_shared_camera_hub(hub):
+    """Use one SharedCameraHub for frames (museum_vision_server). Pass None to clear."""
+    global _shared_hub
+    _shared_hub = hub
+
+
+def clear_shared_camera_hub():
+    global _shared_hub
+    _shared_hub = None
+
+
+def stop_gaze_face_loop():
+    """Stop the MediaPipe worker thread (used by museum_vision_server on shutdown)."""
+    _loop.stop()
 
 
 # MediaPipe FaceMesh landmark indices (with refine_landmarks=True)
@@ -55,6 +171,30 @@ _LM_FOREHEAD = 10
 _LM_CHIN = 152
 _LM_LEFT_IRIS = 468
 _LM_RIGHT_IRIS = 473
+
+
+def _open_video_capture(index: int):
+    """Prefer DirectShow on Windows; small buffer reduces stale/black frames when sharing USB bandwidth."""
+    index = int(index)
+    if sys.platform == "win32":
+        cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
+        if cap.isOpened():
+            try:
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            except Exception:
+                pass
+            return cap
+        try:
+            cap.release()
+        except Exception:
+            pass
+    cap = cv2.VideoCapture(index)
+    if cap.isOpened():
+        try:
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        except Exception:
+            pass
+    return cap
 
 
 def _lm_pt(lms, idx, w, h):
@@ -197,18 +337,104 @@ class _CameraLoop:
             self.face_mesh.close()
             self.face_mesh = None
 
+    def _process_frame(self, frame, t_ms):
+        """BGR frame → updates self.latest under lock."""
+        h, w = frame.shape[:2]
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        res = self.face_mesh.process(rgb)
+        self._frame_i += 1
+
+        if not res.multi_face_landmarks:
+            with self.lock:
+                self.latest = {"ok": False, "t_ms": t_ms, "reason": "no_face"}
+            return
+
+        lms = res.multi_face_landmarks[0]
+        gx, gy = _estimate_gaze_xy(lms, w, h)
+
+        emotions = None
+        if _DEEPFACE_OK and self._frame_i % 4 == 0:
+            emotions = _deepface_emotions_bgr(frame)
+        if emotions is None:
+            emotions = _heuristic_emotions(lms, w, h)
+
+        dominant = max(emotions.items(), key=lambda kv: kv[1])[0]
+        with self.lock:
+            self.latest = {
+                "ok": True,
+                "t_ms": t_ms,
+                "gx": gx,
+                "gy": gy,
+                "emotions": emotions,
+                "dominant": dominant,
+            }
+
     def _run(self):
+        global _shared_hub
         if not _MP_OK:
+            with self.lock:
+                self.latest = {"ok": False, "t_ms": 0, "reason": "mediapipe_missing"}
+            print("gaze_emotion_service: mediapipe not available — pip install mediapipe")
             return
-        self.cap = cv2.VideoCapture(0)
+
+        hub = _shared_hub
+        mirror = os.environ.get("GAZE_EMOTION_MIRROR", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        try:
+            self.face_mesh = _create_face_mesh()
+        except Exception as e:
+            print("gaze_emotion_service: failed to init face mesh / landmarker:", e)
+            with self.lock:
+                self.latest = {
+                    "ok": False,
+                    "t_ms": 0,
+                    "reason": "mediapipe_init_failed",
+                    "detail": str(e)[:240],
+                }
+            return
+
+        if hub is not None:
+            print("gaze_emotion_service: face loop using SharedCameraHub (no local VideoCapture)")
+            while True:
+                with self.lock:
+                    if not self.running:
+                        break
+                frame = hub.get_latest_bgr_copy()
+                if frame is None:
+                    time.sleep(0.012)
+                    continue
+                # Hub already applied GAZE_EMOTION_MIRROR when configured there.
+                t_ms = int(time.time() * 1000.0 - (self._t0 or 0.0))
+                self._process_frame(frame, t_ms)
+            if self.face_mesh is not None:
+                self.face_mesh.close()
+                self.face_mesh = None
+            return
+
+        cam_idx = int(os.environ.get("GAZE_EMOTION_CAMERA", "0"))
+        self.cap = _open_video_capture(cam_idx)
         if not self.cap.isOpened():
-            print("gaze_emotion_service: cannot open camera 0")
+            with self.lock:
+                self.latest = {
+                    "ok": False,
+                    "t_ms": 0,
+                    "reason": "camera_failed",
+                    "detail": cam_idx,
+                }
+            print(
+                f"gaze_emotion_service: cannot open camera index {cam_idx} "
+                f"(try GAZE_EMOTION_CAMERA=1 or close other apps using the webcam)"
+            )
+            if self.face_mesh is not None:
+                self.face_mesh.close()
+                self.face_mesh = None
             return
-        self.face_mesh = mp.solutions.face_mesh.FaceMesh(
-            max_num_faces=1,
-            refine_landmarks=True,
-            min_detection_confidence=0.5,
-            min_tracking_confidence=0.5,
+        print(
+            f"gaze_emotion_service: camera index {cam_idx} opened "
+            f"(if gesture_service.py uses the same index, stop gestures or set a different GAZE_EMOTION_CAMERA)"
         )
         while True:
             with self.lock:
@@ -218,36 +444,10 @@ class _CameraLoop:
             if not ok:
                 time.sleep(0.02)
                 continue
-            h, w = frame.shape[:2]
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            res = self.face_mesh.process(rgb)
+            if mirror:
+                frame = cv2.flip(frame, 1)
             t_ms = int(time.time() * 1000.0 - (self._t0 or 0.0))
-            self._frame_i += 1
-
-            if not res.multi_face_landmarks:
-                with self.lock:
-                    self.latest = {"ok": False, "t_ms": t_ms}
-                continue
-
-            lms = res.multi_face_landmarks[0]
-            gx, gy = _estimate_gaze_xy(lms, w, h)
-
-            emotions = None
-            if _DEEPFACE_OK and self._frame_i % 4 == 0:
-                emotions = _deepface_emotions_bgr(frame)
-            if emotions is None:
-                emotions = _heuristic_emotions(lms, w, h)
-
-            dominant = max(emotions.items(), key=lambda kv: kv[1])[0]
-            with self.lock:
-                self.latest = {
-                    "ok": True,
-                    "t_ms": t_ms,
-                    "gx": gx,
-                    "gy": gy,
-                    "emotions": emotions,
-                    "dominant": dominant,
-                }
+            self._process_frame(frame, t_ms)
         if self.cap is not None:
             self.cap.release()
             self.cap = None
@@ -284,9 +484,12 @@ def _drain_commands(conn, buf):
 
 
 def handle_client(conn, addr):
+    global _shared_hub
     print("gaze_emotion client:", addr)
     streaming = False
     buf = b""
+    hub_gaze_id = f"gaze:{addr}"
+    hub_acquired = False
     try:
         conn.setblocking(True)
         while True:
@@ -304,6 +507,9 @@ def handle_client(conn, addr):
                         conn.sendall((json.dumps({"status": "ok"}) + "\n").encode("utf-8"))
                     elif cmd == "STREAM":
                         streaming = True
+                        if _shared_hub is not None:
+                            _shared_hub.acquire(hub_gaze_id)
+                            hub_acquired = True
                         _loop.start()
                         conn.sendall((json.dumps({"status": "ok"}) + "\n").encode("utf-8"))
                         conn.setblocking(False)
@@ -327,7 +533,10 @@ def handle_client(conn, addr):
                     return
 
                 with _loop.lock:
-                    snap = dict(_loop.latest) if _loop.latest is not None else {"ok": False, "t_ms": 0}
+                    if _loop.latest is not None:
+                        snap = dict(_loop.latest)
+                    else:
+                        snap = {"ok": False, "t_ms": 0, "reason": "warmup"}
                 try:
                     conn.sendall((json.dumps(snap) + "\n").encode("utf-8"))
                 except (BrokenPipeError, ConnectionError, OSError):
@@ -337,6 +546,11 @@ def handle_client(conn, addr):
     except Exception as e:
         print("gaze_emotion client error:", e)
     finally:
+        if hub_acquired and _shared_hub is not None:
+            try:
+                _shared_hub.release(hub_gaze_id)
+            except Exception:
+                pass
         try:
             conn.close()
         except Exception:
@@ -344,7 +558,7 @@ def handle_client(conn, addr):
         print("gaze_emotion disconnected:", addr)
 
 
-def start_server(host, port):
+def run_tcp_server(host, port):
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind((host, port))
@@ -362,4 +576,4 @@ def start_server(host, port):
 
 
 if __name__ == "__main__":
-    start_server("127.0.0.1", 5002)
+    run_tcp_server("127.0.0.1", 5002)

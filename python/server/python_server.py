@@ -347,4 +347,4 @@ def start_server(host, port):
 
 if __name__ == "__main__":
     _port = int(os.environ.get("PYTHON_SERVER_PORT", "5000"))
-    start_server("localhost", _port)
+    start_server("127.0.0.1", _port)
