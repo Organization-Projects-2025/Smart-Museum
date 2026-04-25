@@ -22,11 +22,19 @@ This guide shows how to integrate gesture recognition with your C# circular menu
 
 ## Setup
 
+### 0. Install dependencies (once)
+
+From the **repository root**:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install_python_deps.ps1
+.\.venv\Scripts\Activate.ps1
+```
+
 ### 1. Start Python Service
 
-```bash
-cd Smart-Museum/dollarpy-service
-python gesture_service.py
+```powershell
+python dollarpy-service\gesture_service.py
 ```
 
 The service will:

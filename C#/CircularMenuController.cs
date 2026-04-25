@@ -37,6 +37,9 @@ public class CircularMenuController
     public int SecondIndex;
     public int ThirdIndex;
 
+    /// <summary>Degrees — last TUIO marker angle passed to <see cref="UpdateRotation"/> (for on-screen feedback).</summary>
+    public float LastTuioAngleDegrees { get; private set; }
+
     public Action<string, string> OnAction; // action, payload
 
     public void Show()
@@ -63,6 +66,8 @@ public class CircularMenuController
     {
         if (!IsVisible) return;
 
+        LastTuioAngleDegrees = angleRadians / (float)Math.PI * 180f;
+
         List<string> topItems = GetTopLevelItems();
         int count;
         if (IsInThirdLevel) count = FavoriteActions.Count;
@@ -73,8 +78,9 @@ public class CircularMenuController
         // Top direction is -90 degrees.
         float fromTop = Normalize(angleRadians + (float)Math.PI / 2f);
         float step = (float)(Math.PI * 2.0 / count);
-        int idx = (int)Math.Round(fromTop / step) % count;
-        if (idx < 0) idx += count;
+        int idx = (int)(fromTop / step);
+        if (idx >= count) idx = count - 1;
+        if (idx < 0) idx = 0;
 
         if (IsInThirdLevel) ThirdIndex = idx;
         else if (IsInSecondLevel) SecondIndex = idx;
@@ -271,6 +277,16 @@ public class CircularMenuController
             ? (SelectedThird ?? string.Empty)
             : (IsInSecondLevel ? (SelectedSecond ?? string.Empty) : (SelectedTop ?? string.Empty));
         DrawCentered(g, centerText, titleFont, secondary, new RectangleF(cx - 150, cy - 26, 300, 52));
+
+        int segCount = IsInThirdLevel
+            ? FavoriteActions.Count
+            : (IsInSecondLevel ? GetSecondLevelItems().Count : topItems.Count);
+        float segDeg = segCount > 0 ? 360f / segCount : 0f;
+        string rotHud = segCount > 1
+            ? string.Format("TUIO angle {0:0}° (~{1:0}° per segment)", LastTuioAngleDegrees, segDeg)
+            : string.Format("TUIO angle {0:0}°", LastTuioAngleDegrees);
+        DrawCentered(g, rotHud, smallFont, Color.FromArgb(200, 220, 220, 220),
+            new RectangleF(20, h - 36, w - 40, 22));
     }
 
     private static void DrawDonutSegments(
@@ -327,7 +343,7 @@ public class CircularMenuController
                 g.DrawEllipse(chipPen, tx - iconSize / 2, iconY - iconSize / 2, iconSize, iconSize);
 
             string iconText = iconTextFactory != null ? iconTextFactory(i, labels[i]) : "";
-            using (var iconFont = new Font(labelFont.FontFamily, Math.Max(10f, labelFont.Size - 1f), FontStyle.Bold, GraphicsUnit.Pixel))
+            using (var iconFont = new Font("Georgia", Math.Max(10f, labelFont.Size - 1f), FontStyle.Bold, GraphicsUnit.Pixel))
                 DrawCentered(g, iconText, iconFont, chipText, new RectangleF(tx - 24, iconY - 11, 48, 22));
 
             DrawCentered(g, TrimLabel(labels[i]), labelFont, Color.White, new RectangleF(tx - 52, ty + 2, 104, 24));
@@ -361,6 +377,7 @@ public class CircularMenuController
         if (label == "Watched") return "W";
         if (label == "Home") return "H";
         if (label == "Logout") return "X";
+        if (label == "Analytics") return "A";
         return !string.IsNullOrEmpty(label) ? label.Substring(0, 1).ToUpperInvariant() : "?";
     }
 

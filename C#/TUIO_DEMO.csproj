@@ -61,6 +61,10 @@
     <Compile Include="AuthIntegration.cs" />
     <Compile Include="CircularMenuController.cs" />
     <Compile Include="GestureClient.cs" />
+    <Compile Include="GazeEmotionClient.cs" />
+    <Compile Include="YoloContextClient.cs" />
+    <Compile Include="SessionAnalyticsRecorder.cs" />
+    <Compile Include="AdminAnalyticsPanel.cs" />
     <Compile Include="TUIO\TuioClient.cs" />
     <Compile Include="TUIO\TuioContainer.cs" />
     <Compile Include="TUIO\TuioCursor.cs" />

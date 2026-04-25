@@ -1,10 +1,37 @@
-# Prefer python/requirements.txt (bleak + Windows notes). This file mirrors core deps.
-# Windows face_recognition: see comment block in python/requirements.txt (dlib-bin + --no-deps).
+# Smart Grand Egyptian Museum — full Python stack
+#
+# Recommended (installs everything into .venv — dollarpy, pybluez2, mediapipe, etc.):
+#   powershell -ExecutionPolicy Bypass -File .\install_python_deps.ps1
+#
+# Manual (same packages; use the SAME interpreter you will run servers with):
+#   .\.venv\Scripts\python.exe -m pip install -U pip
+#   .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+#   .\.venv\Scripts\python.exe -m pip install "face_recognition>=1.3.0" --no-deps
+#
+# The face_recognition line is required on Windows: it declares dlib (source build);
+# dlib-bin from this file already satisfies runtime when installed with --no-deps.
 
+# --- Core (python_server: face + Bluetooth) ---
 numpy>=1.24,<3
 opencv-python>=4.8,<5
-bleak>=0.21.0
-face_recognition>=1.3.0
+pybluez2>=0.40
+Click>=6.0
+face-recognition-models>=0.3.0
 dlib-bin>=20.0.0; platform_system == "Windows"
-mediapipe>=0.10.0
+
+# --- MediaPipe (gaze_emotion_service, dollarpy-service, hand_tracking) ---
+mediapipe>=0.10.30
+
+# --- DollarPy gesture service + GUI ---
+dollarpy>=0.1.0
+Pillow>=9.0.0
+
+# --- YOLO context service (real camera mode) ---
+ultralytics>=8.0.0
+
+# face_recognition: install with --no-deps AFTER this file (see header).
+
+# --- Optional: DeepFace emotion backend (large download) ---
+# deepface>=0.0.90
+# tf-keras>=2.15.0
 

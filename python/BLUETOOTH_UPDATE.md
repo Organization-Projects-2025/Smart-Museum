@@ -1,5 +1,7 @@
 # Bluetooth Library Update - Windows Compatibility
 
+> **Current stack (2026):** `python_server.py` uses **PyBluez2** again (`import bluetooth`, `bluetooth.discover_devices`). Root `requirements.txt` lists `pybluez2>=0.40`. The sections below describe an older switch to bleak and are kept for history only.
+
 ## Changes Made
 
 ### 1. Replaced pybluez2 with bleak
@@ -10,7 +12,7 @@
 
 ### 2. Updated Files
 
-#### `python/requirements.txt`
+#### Root `requirements.txt` (see also `python/requirements.txt` → includes root)
 - Removed: `pybluez2>=0.46`
 - Added: `bleak>=0.21.0`
 
@@ -22,22 +24,13 @@
 
 ### 3. Installation Steps
 
-```bash
-# Navigate to python folder
-cd Smart-Museum/python
+From the **repository root** (folder containing `install_python_deps.ps1`):
 
-# Install dlib-bin first (Windows binary)
-..\.venv\Scripts\python.exe -m pip install dlib-bin
-
-# Install face_recognition without dependencies
-..\.venv\Scripts\python.exe -m pip install face_recognition --no-deps
-
-# Install face_recognition dependencies
-..\.venv\Scripts\python.exe -m pip install face-recognition-models Click Pillow
-
-# Install bleak for Bluetooth
-..\.venv\Scripts\python.exe -m pip install bleak
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install_python_deps.ps1
 ```
+
+That installs `bleak`, `dlib-bin`, `face-recognition-models`, `face_recognition` (with `--no-deps`), and all other Python dependencies into `.venv`.
 
 ### 4. How It Works
 
