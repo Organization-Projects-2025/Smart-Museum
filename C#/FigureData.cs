@@ -1,7 +1,7 @@
 ﻿using System.Collections.Generic;
 using System.Drawing;
 
-public enum ContentType { Text, Image, Video }
+public enum ContentType { Text, Image, Video, ThreeD }
 
 public class ContentSlide
 {
@@ -151,6 +151,9 @@ public static class MuseumData
                 MarkerImagePath = "content/figures/1_nefertiti/marker_nefertiti.png",
                 SoloSlides = new List<ContentSlide>
                 {
+                    new ThreeDObjectSlide("nefertiti",
+                        "Move your hand to rotate the Nefertiti bust in 3D",
+                        durationMs: 0),        // stays until next slide trigger
                     new ContentSlide { Type = ContentType.Image,
                         Content = "content/figures/1_nefertiti/marker_nefertiti.png",
                         DurationMs = 6000 },

@@ -349,6 +349,21 @@ public class VisitorProfile
 
 public class BluetoothService
 {
+    /// <summary>Check if a user requires mandatory Bluetooth verification.</summary>
+    /// <returns>True if user has a registered MAC address (not "0" or empty), False otherwise.</returns>
+    public static bool RequiresBluetoothVerification(VisitorProfile profile)
+    {
+        if (profile == null) return false;
+        return !string.IsNullOrWhiteSpace(profile.BluetoothMacAddress) && profile.BluetoothMacAddress != "0";
+    }
+
+    /// <summary>Check if a user requires mandatory Bluetooth verification.</summary>
+    /// <returns>True if MAC address is registered (not "0" or empty), False otherwise.</returns>
+    public static bool RequiresBluetoothVerification(string macAddress)
+    {
+        return !string.IsNullOrWhiteSpace(macAddress) && macAddress != "0";
+    }
+
     /// <summary>Turns Python Bluetooth exception text into a short, user-readable message.</summary>
     public static string FriendlyBluetoothError(string raw)
     {
@@ -374,28 +389,26 @@ public class BluetoothService
 
     public bool Verify(string targetMac, out string status)
     {
-        // Skip 2FA if MAC address is "0" - user doesn't require Bluetooth verification
-        if (targetMac == "0")
+        // MANDATORY Bluetooth verification for users with registered MAC addresses
+        // SKIPPED completely for users without MAC addresses (MAC = "0" or empty)
+
+        // Case 1: User has no Bluetooth device registered - skip verification
+        if (string.IsNullOrWhiteSpace(targetMac) || targetMac == "0")
         {
-            status = "Bluetooth 2FA skipped (user has no device registered)";
-            return true;
+            status = "Bluetooth verification skipped (no device registered)";
+            return true; // Allow login without Bluetooth
         }
 
-        status = "Searching for your Bluetooth device nearby…";
-
-        if (string.IsNullOrWhiteSpace(targetMac))
-        {
-            status = "No Bluetooth device is registered for this account.";
-            return false;
-        }
+        // Case 2: User has registered Bluetooth device - MANDATORY verification
+        status = "Verifying your Bluetooth device…";
 
         try
         {
             SocketClient client = new SocketClient();
             if (!client.connectToSocket("127.0.0.1", 5000))
             {
-                status = "Cannot reach the Python server (port 5000). Start python_server.py, then try again.";
-                return false;
+                status = "Cannot reach authentication server. Please ensure Python server is running.";
+                return false; // BLOCK login - Bluetooth is mandatory
             }
 
             string command = "bluetooth_scan " + targetMac;
@@ -406,8 +419,8 @@ public class BluetoothService
 
             if (response == null || response == "")
             {
-                status = "No response from the Python server. Check that python_server.py is running.";
-                return false;
+                status = "No response from authentication server. Please try again.";
+                return false; // BLOCK login - Bluetooth is mandatory
             }
 
             if (response.StartsWith("FOUND:"))
@@ -430,34 +443,39 @@ public class BluetoothService
                     deviceName = "Unknown";
                     mac = targetMac;
                 }
-                status = "Bluetooth verified — we matched " + deviceName + ". Signing you in…";
-                return true;
+                status = "✓ Bluetooth verified - " + deviceName + " detected";
+                return true; // ALLOW login - Bluetooth verified
             }
 
             if (response.StartsWith("NOT_FOUND"))
             {
-                status = "We could not find your registered device. Turn on Bluetooth, keep the device discoverable, and move it closer to this computer.";
-                return false;
+                status = "✗ Bluetooth verification failed - your device was not found. Please ensure Bluetooth is enabled and your device is nearby.";
+                return false; // BLOCK login - Bluetooth is mandatory
             }
 
             if (response.StartsWith("ERROR:"))
             {
                 string errorMsg = response.Substring(6);
-                status = FriendlyBluetoothError(errorMsg);
-                return false;
+                status = "✗ Bluetooth error: " + FriendlyBluetoothError(errorMsg);
+                return false; // BLOCK login - Bluetooth is mandatory
             }
 
-            status = FriendlyBluetoothError("Unknown response: " + response);
-            return false;
+            status = "✗ Unknown Bluetooth response: " + FriendlyBluetoothError("Unknown response: " + response);
+            return false; // BLOCK login - Bluetooth is mandatory
         }
         catch (Exception ex)
         {
-            status = FriendlyBluetoothError(ex.Message);
-            return false;
+            status = "✗ Bluetooth verification error: " + FriendlyBluetoothError(ex.Message);
+            return false; // BLOCK login - Bluetooth is mandatory
         }
     }
 
     /// <summary>Registration: discover a nearby BLE device (Python picks best named candidate).</summary>
+    /// <remarks>
+    /// This is OPTIONAL during registration. Users can choose to register without Bluetooth.
+    /// If they skip Bluetooth, they will not need Bluetooth verification during login.
+    /// If they register with Bluetooth, it becomes MANDATORY for all future logins.
+    /// </remarks>
     public bool TryPickRegistrationDevice(out string deviceName, out string mac, out string status)
     {
         deviceName = string.Empty;

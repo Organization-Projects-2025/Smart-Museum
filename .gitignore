@@ -16,7 +16,7 @@ venv/
 ENV/
 env/
 .virtualenv/
-
+.museumVenv/
 # IDE & Editors
 .vscode/
 .idea/

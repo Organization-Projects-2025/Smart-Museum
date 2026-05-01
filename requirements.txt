@@ -1,37 +1,269 @@
-# Smart Grand Egyptian Museum — full Python stack
+# ============================================================================
+# Smart Museum Project - Python Dependencies
+# ============================================================================
+# This requirements.txt includes all dependencies needed for the unified
+# museum server and all Python services.
 #
-# Recommended (installs everything into .venv — dollarpy, pybluez2, mediapipe, etc.):
+# INSTALLATION OPTIONS:
+#
+# Option 1 - Using PowerShell script (Recommended for Windows):
 #   powershell -ExecutionPolicy Bypass -File .\install_python_deps.ps1
 #
-# Manual (same packages; use the SAME interpreter you will run servers with):
-#   .\.venv\Scripts\python.exe -m pip install -U pip
-#   .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-#   .\.venv\Scripts\python.exe -m pip install "face_recognition>=1.3.0" --no-deps
+# Option 2 - Manual installation with virtual environment:
+#   python -m venv .venv
+#   .\.venv\Scripts\activate
+#   python -m pip install -U pip
+#   python -m pip install -r requirements.txt
+#   python -m pip install "face_recognition>=1.3.0" --no-deps
 #
-# The face_recognition line is required on Windows: it declares dlib (source build);
-# dlib-bin from this file already satisfies runtime when installed with --no-deps.
+# Option 3 - Using conda (Alternative):
+#   conda create -n smart-museum python=3.10
+#   conda activate smart-museum
+#   pip install -r requirements.txt
+#   pip install "face_recognition>=1.3.0" --no-deps
+#
+# IMPORTANT: The face_recognition line is required on Windows because it
+# declares dlib (source build); dlib-bin from this file already satisfies
+# runtime when installed with --no-deps.
+# ============================================================================
 
-# --- Core (python_server: face + Bluetooth) ---
+# ============================================================================
+# CORE DEPENDENCIES (Required by all services)
+# ============================================================================
+
+# NumPy - Fundamental package for scientific computing
+# Used by: All services for numerical operations, array handling
 numpy>=1.24,<3
+
+# OpenCV - Computer vision library
+# Used by: Face recognition, gaze/emotion, hand tracking, gesture recognition, camera hub
 opencv-python>=4.8,<5
-pybluez2>=0.40
+
+# Click - Command-line interface library
+# Used by: Various command-line tools and utilities
 Click>=6.0
+
+# ============================================================================
+# FACE RECOGNITION & AUTHENTICATION (Port 5000)
+# ============================================================================
+
+# Face Recognition Models - Pre-trained face recognition models
+# Used by: python_server.py (face authentication)
 face-recognition-models>=0.3.0
+
+# dlib - C++ toolkit for machine learning (Windows binary)
+# Used by: Face recognition feature extraction
+# Note: On Windows, we use dlib-bin to avoid compilation issues
 dlib-bin>=20.0.0; platform_system == "Windows"
 
-# --- MediaPipe (gaze_emotion_service, dollarpy-service, hand_tracking) ---
-mediapipe>=0.10.30
-
-# --- DollarPy gesture service + GUI ---
-dollarpy>=0.1.0
+# Pillow - Image processing library
+# Used by: Face recognition image handling, dollarpy GUI
 Pillow>=9.0.0
 
-# --- YOLO context service (real camera mode) ---
+# ============================================================================
+# BLUETOOTH COMMUNICATION (Port 5000 - Optional)
+# ============================================================================
+
+# PyBluez2 - Bluetooth library for Python
+# Used by: python_server.py (Bluetooth authentication)
+# Note: May have installation issues on some Windows systems.
+# If installation fails, the app will work without Bluetooth features.
+# Alternative: Install with: pip install --no-build-isolation pybluez2
+pybluez2>=0.40
+
+# ============================================================================
+# MEDIAPIPE - HAND TRACKING & POSE ESTIMATION
+# ============================================================================
+
+# MediaPipe - Google's machine learning solution for pose/hand tracking
+# Used by: hand_tracker_service.py, gesture_service.py, gaze_emotion_service.py
+# Features: Hand tracking, face mesh, pose estimation
+mediapipe>=0.10.30
+
+# ============================================================================
+# DOLLARPY - GESTURE RECOGNITION (Port 5001)
+# ============================================================================
+
+# DollarPy - $1 Unistroke Recognizer implementation
+# Used by: dollarpy-service (gesture recognition)
+# Features: Stroke-based gesture recognition
+dollarpy>=0.1.0
+
+# ============================================================================
+# YOLO OBJECT DETECTION (Port 5003)
+# ============================================================================
+
+# Ultralytics - YOLO implementation for object detection
+# Used by: yolo_context_service.py (ambient context detection)
+# Features: Real-time object detection, tracking
+# Note: Can be heavy on CPU. Set YOLO_CONTEXT_MOCK=1 to disable.
 ultralytics>=8.0.0
 
-# face_recognition: install with --no-deps AFTER this file (see header).
+# PyTorch - Deep learning framework (auto-installed by ultralytics)
+# Used by: YOLO model inference
+# Note: Version managed by ultralytics, but listed here for clarity
+# torch>=2.0.0,<3.0.0  # Auto-installed by ultralytics
 
-# --- Optional: DeepFace emotion backend (large download) ---
+# torchvision - Computer vision library for PyTorch
+# Used by: YOLO model preprocessing
+# Note: Version managed by ultralytics
+# torchvision>=0.15.0,<1.0.0  # Auto-installed by ultralytics
+
+# ============================================================================
+# OPTIONAL DEPENDENCIES
+# ============================================================================
+
+# DeepFace - Alternative emotion recognition backend
+# Used by: Advanced emotion analysis (large download)
+# Note: Commented out by default to reduce installation time
 # deepface>=0.0.90
 # tf-keras>=2.15.0
 
+# ============================================================================
+# DEVELOPMENT & TESTING (Optional)
+# ============================================================================
+
+# pytest - Testing framework
+# pytest>=7.4.0,<8.0.0
+
+# black - Code formatter
+# black>=23.0.0,<24.0.0
+
+# flake8 - Code linter
+# flake8>=6.0.0,<7.0.0
+
+# ============================================================================
+# SERVICE-SPECIFIC DEPENDENCY SUMMARY
+# ============================================================================
+
+# Service                    | Port | Dependencies
+# ---------------------------|------|------------------------------------------
+# Face Auth + Bluetooth      | 5000 | face-recognition, dlib, opencv, numpy, pybluez2
+# Gesture Recognition        | 5001 | mediapipe, dollarpy, opencv, numpy
+# Gaze + Emotion             | 5002 | mediapipe, opencv, numpy
+# YOLO Context               | 5003 | ultralytics, torch, opencv, numpy
+# Hand Tracking              | 5004 | mediapipe, opencv, numpy
+
+# ============================================================================
+# MINIMAL INSTALLATION (For Testing)
+# ============================================================================
+
+# If you want to test without heavy dependencies:
+# pip install numpy opencv-python mediapipe
+
+# Then disable heavy services:
+# export DISABLE_YOLO_CONTEXT=1
+# export DISABLE_FACE_AUTH=1
+
+# ============================================================================
+# PLATFORM-SPECIFIC NOTES
+# ============================================================================
+
+# Windows:
+# - dlib-bin provides pre-built binaries to avoid compilation
+# - pybluez2 may have limited support; consider Windows Bluetooth APIs
+# - Some packages may require Visual C++ Build Tools
+# - Run PowerShell script for smoothest installation
+
+# Linux:
+# - Install system dependencies: sudo apt-get install python3-dev libopencv-dev
+# - pybluez2 should work natively
+# - dlib may require: sudo apt-get install build-essential cmake
+# - Consider using conda for easier dependency management
+
+# macOS:
+# - Install Xcode Command Line Tools: xcode-select --install
+# - pybluez2 may have limited support
+# - dlib may require: brew install cmake
+# - Consider using conda for better compatibility
+
+# ============================================================================
+# GPU ACCELERATION (Optional)
+# ============================================================================
+
+# For NVIDIA GPU support with PyTorch:
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+
+# For AMD GPU support:
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/rocm5.7
+
+# Note: GPU support significantly improves YOLO performance but is optional
+
+# ============================================================================
+# TROUBLESHOOTING COMMON ISSUES
+# ============================================================================
+
+# Issue: "dlib installation failed"
+# Solution: Use dlib-bin on Windows, or conda install -c conda-forge dlib
+
+# Issue: "pybluez2 not available on Windows"
+# Solution: Skip Bluetooth features or use Windows-specific Bluetooth APIs
+
+# Issue: "ultralytics too slow"
+# Solution: Use YOLO_CONTEXT_MOCK=1 or install GPU-enabled PyTorch
+
+# Issue: "mediapipe not found"
+# Solution: Ensure Python 3.8+ and reinstall: pip install --upgrade mediapipe
+
+# Issue: "opencv-python import error"
+# Solution: Try opencv-python-headless for server environments
+
+# Issue: "face_recognition import error"
+# Solution: Install with --no-deps after other dependencies (see header)
+
+# ============================================================================
+# VERSION COMPATIBILITY MATRIX
+# ============================================================================
+
+# Python 3.8:  ✓ Fully supported (recommended)
+# Python 3.9:  ✓ Fully supported
+# Python 3.10: ✓ Fully supported (recommended)
+# Python 3.11: ✓ Fully supported (some packages may have limited support)
+# Python 3.12: ⚠ Experimental (may have compatibility issues)
+
+# ============================================================================
+# UNIFIED SERVER CONFIGURATION
+# ============================================================================
+
+# After installation, configure the unified server:
+
+# Set camera index (if not using default camera 0):
+# export MUSEUM_CAMERA=1
+
+# Disable specific services (if not needed):
+# export DISABLE_HAND_TRACK=1
+# export DISABLE_GESTURE=1
+# export DISABLE_YOLO_CONTEXT=1
+
+# Use mock YOLO data (faster, no GPU needed):
+# export YOLO_CONTEXT_MOCK=1
+
+# ============================================================================
+# TESTING INSTALLATION
+# ============================================================================
+
+# Test all services are working:
+# python python/server/test_unified_server.py
+
+# Expected output:
+# ✓ All services are running correctly!
+
+# ============================================================================
+# FILE STRUCTURE REFERENCE
+# ============================================================================
+
+# Root directory structure:
+# ├── requirements.txt                 # This file
+# ├── python/
+# │   └── server/
+# │       ├── unified_museum_server.py # Main unified server
+# │       ├── test_unified_server.py   # Service testing
+# │       ├── python_server.py         # Face + Bluetooth (5000)
+# │       ├── gaze_emotion_service.py  # Gaze + Emotion (5002)
+# │       ├── yolo_context_service.py  # YOLO Context (5003)
+# │       └── hand_tracker_service.py  # Hand Tracking (5004)
+# ├── dollarpy-service/
+# │   └── gesture_service.py           # Gesture Recognition (5001)
+# └── run_unified_server.bat           # Windows startup script
+
+# ============================================================================

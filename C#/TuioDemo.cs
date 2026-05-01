@@ -200,6 +200,10 @@ public class TuioDemo : Form, TuioListener
     private System.Windows.Forms.Timer gestureCheckTimer;
     private bool isGestureActive = false;
 
+    // 3-D hand tracking client (port 5002)
+    private HandTrackClient handTrackClient;
+    private float _idleRotY = 0f;      // auto-spin Y angle when no hand is present
+
     private GazeEmotionClient gazeEmotionClient;
     private readonly object liveGazeLock = new object();
     private bool liveGazeStreamActive;
@@ -211,7 +215,15 @@ public class TuioDemo : Form, TuioListener
     private readonly SessionAnalyticsRecorder analyticsRecorder = new SessionAnalyticsRecorder();
     private AdminAnalyticsPanel adminAnalyticsPanel;
     private bool adminAnalyticsVisible;
-    
+
+    // YOLO: cell phone visible → bottom banner inviting download of the museum companion app.
+    // Replace URLs before production. Hysteresis reduces flicker when detection jitters.
+    private const string MuseumAppStoreIosUrl = "https://apps.apple.com/app/id0000000000";
+    private const string MuseumAppStoreAndroidUrl = "https://play.google.com/store/apps/details?id=com.example.smartmuseum";
+    private int _yoloPhonePresenceCounter;
+    private bool _showMuseumAppPhoneBanner;
+    private const int YoloPhoneBannerOnFrames = 2;
+
     // Gesture overlay display
     private string lastDetectedGesture = null;
     private DateTime gestureDisplayTime = DateTime.MinValue;
@@ -323,6 +335,7 @@ public class TuioDemo : Form, TuioListener
         InitializeStoryLibrary();
         InitializeCircularMenu();
         InitializeGestureClient();
+        InitializeHandTracker();
         StartLoginFlow();
     }
 
@@ -1606,6 +1619,8 @@ public class TuioDemo : Form, TuioListener
             yoloContextClient.Dispose();
             yoloContextClient = null;
         }
+        _yoloPhonePresenceCounter = 0;
+        SetMuseumAppPhoneBannerVisible(false);
     }
 
     private void OnYoloFrame(YoloContextFrame frame)
@@ -1623,11 +1638,29 @@ public class TuioDemo : Form, TuioListener
             if (c == "book" || c.IndexOf("laptop", StringComparison.Ordinal) >= 0) book = true;
             if (c == "person" && t.W * t.H >= 0.10) large = true;
         }
+        UpdateMuseumAppPhoneBanner(phone);
         if (visitorProfile.SetCameraAmbientContext(phone, book, large))
         {
             ApplyVisitorTheme();
             Invalidate();
         }
+    }
+
+    private void UpdateMuseumAppPhoneBanner(bool phoneInFrame)
+    {
+        if (phoneInFrame)
+            _yoloPhonePresenceCounter = Math.Min(_yoloPhonePresenceCounter + 1, 20);
+        else
+            _yoloPhonePresenceCounter = Math.Max(_yoloPhonePresenceCounter - 1, 0);
+        bool want = _yoloPhonePresenceCounter >= YoloPhoneBannerOnFrames;
+        SetMuseumAppPhoneBannerVisible(want);
+    }
+
+    private void SetMuseumAppPhoneBannerVisible(bool visible)
+    {
+        if (visible == _showMuseumAppPhoneBanner) return;
+        _showMuseumAppPhoneBanner = visible;
+        Invalidate();
     }
 
     private void TeardownGazeAnalytics()
@@ -1778,9 +1811,24 @@ public class TuioDemo : Form, TuioListener
         }
     }
 
-    /// <summary>Face sign-in / recovery must not compete with gesture_service for the same USB webcam.</summary>
-    private bool LoginFlowBlocksGestureWebcam()
+    private void InitializeHandTracker()
     {
+        try
+        {
+            // Hand tracker is separate from museum_vision_server (which uses 5002 for gaze).
+            // Default port in python/server/hand_tracker_service.py is 5004.
+            handTrackClient = new HandTrackClient(5004);
+            handTrackClient.Connect();
+            Console.WriteLine("[3D] Hand tracker connected on port 5004");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("[3D] Hand tracker not available (start hand_tracker_service.py): " + ex.Message);
+        }
+    }
+
+    /// <summary>Face sign-in / recovery must not compete with gesture_service for the same USB webcam.</summary>
+    private bool LoginFlowBlocksGestureWebcam()    {
         if (isLoggedIn) return false;
         return loginPhase == LoginAuthPhase.NoFaceRecovery
             || loginPhase == LoginAuthPhase.AuthCameraIssue
@@ -2834,6 +2882,7 @@ public class TuioDemo : Form, TuioListener
         {
             adminAnalyticsPanel.Draw(g, W, H, fontTitle, fontBody, fontSmall, themeSecondary, CPapyrus,
                 analyticsRecorder != null ? analyticsRecorder.GetLiveSnapshot() : null);
+            DrawMuseumAppPhoneDownloadBanner(g);
             DrawGestureOverlay(g);
             return;
         }
@@ -2861,11 +2910,39 @@ public class TuioDemo : Form, TuioListener
 
         if (circularMenu.IsVisible)
             circularMenu.Draw(g, W, H, themeSecondary, themeTertiary, fontSubtitle, fontSmall);
-        
+
+        DrawMuseumAppPhoneDownloadBanner(g);
         // Draw gesture overlay on top of everything
         DrawGestureOverlay(g);
     }
-    
+
+    /// <summary>YOLO detected a phone in frame — prompt visitor to install the companion app (URLs are constants above).</summary>
+    private void DrawMuseumAppPhoneDownloadBanner(Graphics g)
+    {
+        if (!_showMuseumAppPhoneBanner) return;
+
+        int padX = 24;
+        int barH = 108;
+        var rect = new Rectangle(padX, H - barH - 20, W - padX * 2, barH);
+        using (var bg = new SolidBrush(Color.FromArgb(230, 18, 20, 28)))
+            g.FillRectangle(bg, rect);
+        using (var outline = new Pen(Color.FromArgb(240, themeSecondary), 2))
+            g.DrawRectangle(outline, rect);
+
+        var titleRect = new RectangleF(rect.X + 16, rect.Y + 10, rect.Width - 32, 34);
+        var bodyRect = new RectangleF(rect.X + 16, rect.Y + 44, rect.Width - 32, rect.Height - 52);
+        using (var titleBrush = new SolidBrush(themeSecondary))
+        using (var bodyBrush = new SolidBrush(Color.FromArgb(235, 235, 240, 245)))
+        using (var sf = new StringFormat { Alignment = StringAlignment.Near, LineAlignment = StringAlignment.Near })
+        {
+            g.DrawString("Download the Museum app", fontSubtitle, titleBrush, titleRect, sf);
+            string body = "We noticed a phone — get maps, audio guides, and favorites on your device.\r\n"
+                + "iOS: " + MuseumAppStoreIosUrl + "\r\n"
+                + "Android: " + MuseumAppStoreAndroidUrl;
+            g.DrawString(body, fontSmall, bodyBrush, bodyRect, sf);
+        }
+    }
+
     private void DrawGestureOverlay(Graphics g)
     {
         // Check if we should display the gesture
@@ -3612,6 +3689,40 @@ public class TuioDemo : Form, TuioListener
             case ContentType.Image: DrawImageSlide(g, slide.Content, area, a); break;
             case ContentType.Text: DrawTextSlide(g, slide.Content, area, accent, a); break;
             case ContentType.Video: DrawVideoSlide(g, slide.Content, area, accent, a); break;
+            case ContentType.ThreeD: Draw3DSlide(g, slide as ThreeDObjectSlide, area, alpha); break;
+        }
+    }
+
+    private void Draw3DSlide(Graphics g, ThreeDObjectSlide slide3d, Rectangle area, float alpha)
+    {
+        if (slide3d == null) return;
+
+        // Advance idle rotation every frame (used when no hand is detected)
+        _idleRotY += 0.008f;
+        if (_idleRotY > (float)(2 * Math.PI)) _idleRotY -= (float)(2 * Math.PI);
+
+        // Get current hand pose (null-safe: returns HandPose.Invalid when no client/hand)
+        HandPose pose = (handTrackClient != null) ? handTrackClient.Current : HandPose.Invalid;
+
+        ThreeDObjectRenderer.Draw(
+            g,
+            area,
+            slide3d.GetMesh(),
+            pose,
+            _idleRotY,
+            slide3d.AccentColor,
+            alpha);
+
+        // Caption
+        if (!string.IsNullOrEmpty(slide3d.Caption))
+        {
+            var capRect = new RectangleF(area.X, area.Bottom - 48, area.Width, 42);
+            using (var tbr = new SolidBrush(Color.FromArgb((int)(200 * alpha), slide3d.AccentColor)))
+            using (var sf  = new StringFormat { Alignment = StringAlignment.Center,
+                                               LineAlignment = StringAlignment.Center })
+            {
+                g.DrawString(slide3d.Caption, fontSmall, tbr, capRect, sf);
+            }
         }
     }
 

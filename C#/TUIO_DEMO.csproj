@@ -66,6 +66,9 @@
     <Compile Include="YoloContextClient.cs" />
     <Compile Include="SessionAnalyticsRecorder.cs" />
     <Compile Include="AdminAnalyticsPanel.cs" />
+    <Compile Include="HandTrackClient.cs" />
+    <Compile Include="ThreeDObjectRenderer.cs" />
+    <Compile Include="Object3DSlide.cs" />
     <Compile Include="TUIO\TuioClient.cs" />
     <Compile Include="TUIO\TuioContainer.cs" />
     <Compile Include="TUIO\TuioCursor.cs" />
