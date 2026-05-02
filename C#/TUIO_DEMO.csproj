@@ -62,6 +62,7 @@
     <Compile Include="AuthIntegration.cs" />
     <Compile Include="CircularMenuController.cs" />
     <Compile Include="GestureClient.cs" />
+    <Compile Include="InputPrioritizer.cs" />
     <Compile Include="GazeEmotionClient.cs" />
     <Compile Include="YoloContextClient.cs" />
     <Compile Include="SessionAnalyticsRecorder.cs" />

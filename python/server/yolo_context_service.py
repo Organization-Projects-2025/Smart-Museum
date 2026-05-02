@@ -170,7 +170,7 @@ def _drain_cmd(conn, buf):
 
 def handle_client(conn, addr):
     global _shared_hub
-    print("yolo_context client:", addr)
+    print(f"yolo_context client connected: {addr}", flush=True)
     streaming = False
     buf = b""
     mock_i = 0
@@ -193,6 +193,7 @@ def handle_client(conn, addr):
                         conn.sendall((json.dumps({"status": "ok"}) + "\n").encode("utf-8"))
                     elif cmd == "STREAM":
                         streaming = True
+                        print(f"yolo_context STREAM started with {addr}, mode={'REAL' if USE_REAL else 'MOCK'}", flush=True)
                         conn.sendall((json.dumps({"status": "ok"}) + "\n").encode("utf-8"))
                         if USE_REAL:
                             if _shared_hub is not None:
@@ -223,8 +224,11 @@ def handle_client(conn, addr):
                     return
                 tracks = _mock_tracks(mock_i)
                 mock_i += 1
+                frame_json = _encode_frame(tracks)
+                if mock_i <= 6:  # Only log first 6 frames to avoid spam
+                    print(f"yolo_context [MOCK] Phase {mock_i % 6}: {frame_json[:80]}...", flush=True)
                 try:
-                    conn.sendall((_encode_frame(tracks) + "\n").encode("utf-8"))
+                    conn.sendall((frame_json + "\n").encode("utf-8"))
                 except (BrokenPipeError, ConnectionError, OSError):
                     break
                 time.sleep(0.18)
@@ -272,7 +276,7 @@ def run_tcp_server(host=None, port=None):
     srv.bind((host, PORT))
     srv.listen(8)
     mode = "MOCK" if not USE_REAL else "REAL"
-    print(f"yolo_context_service [{mode}] on {host}:{PORT}")
+    print(f"yolo_context_service [{mode}] on {host}:{PORT}", flush=True)
     try:
         while True:
             c, a = srv.accept()

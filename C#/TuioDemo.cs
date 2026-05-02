@@ -200,6 +200,9 @@ public class TuioDemo : Form, TuioListener
     private System.Windows.Forms.Timer gestureCheckTimer;
     private bool isGestureActive = false;
 
+    // Input prioritization: blocks gestures when TUIOs present or during cooldown
+    private InputPrioritizer inputPrioritizer = new InputPrioritizer();
+
     // 3-D hand tracking client (port 5002)
     private HandTrackClient handTrackClient;
     private float _idleRotY = 0f;      // auto-spin Y angle when no hand is present
@@ -1853,6 +1856,15 @@ public class TuioDemo : Form, TuioListener
     {
         if (isGestureActive || gestureClient == null || !gestureClient.IsConnected) return;
 
+        // Check input prioritization: block gestures if TUIOs present or in cooldown
+        if (!inputPrioritizer.CanAcceptGestures)
+        {
+            int cooldownRemaining = inputPrioritizer.GetCooldownRemainingMs();
+            if (cooldownRemaining > 0)
+                Console.WriteLine($"[Gesture] Blocked by input prioritizer: {cooldownRemaining}ms cooldown remaining");
+            return;
+        }
+
         if (!isLoggedIn)
         {
             if (authInProgress) return;
@@ -2261,17 +2273,25 @@ public class TuioDemo : Form, TuioListener
     public void addTuioObject(TuioObject o)
     {
         lock (objectList) objectList[o.SessionID] = o;
+        inputPrioritizer.SetTuioPresent(true);
     }
 
     public void updateTuioObject(TuioObject o)
     {
         lock (objectList)
             if (objectList.ContainsKey(o.SessionID)) objectList[o.SessionID] = o;
+        inputPrioritizer.SetTuioPresent(true);
     }
 
     public void removeTuioObject(TuioObject o)
     {
         lock (objectList) objectList.Remove(o.SessionID);
+        
+        // Check if any TUIOs remain
+        bool anyTuioPresent;
+        lock (objectList) anyTuioPresent = objectList.Count > 0;
+        
+        inputPrioritizer.SetTuioPresent(anyTuioPresent);
     }
 
     public void addTuioCursor(TuioCursor c) { }
