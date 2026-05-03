@@ -8,7 +8,11 @@ import cv2
 from PIL import Image, ImageTk
 from dollarpy import Point
 from gesture_recognizer import SmartMuseumGestureRecognizer
+from gesture_preprocessing import preprocess_gesture_frames
+from gesture_config import GESTURE_MODE, GESTURE_NORMALIZATION_MODE, MIN_MOTION_DISTANCE, DEBUG_GESTURES
 import threading
+from copy import deepcopy
+from dollarpy import Recognizer
 # Use compatibility layer for mediapipe 0.10.30+
 import mediapipe_compat as mp
 
@@ -35,7 +39,16 @@ class GestureRecognitionGUI:
         self.cap = None
         self.is_running = False
         self.is_recording = False
-        self.recorded_points = []
+        self.recorded_frames_data = []  # Store MediaPipe landmarks + frame, not raw Points
+        
+        # Real-time detection state
+        self.realtime_active = False
+        self.realtime_frames_data = []  # Store MediaPipe landmarks + frame, not raw Points
+        self.realtime_min_points = 10  # Minimum points after preprocessing
+        self.realtime_max_points = 150  # Max points before forced recognition
+        self.realtime_last_recognition = 0
+        self.realtime_cooldown = 0.5  # Cooldown between recognitions
+        self.realtime_no_hand_frames = 0
         
         self.setup_ui()
         
@@ -96,15 +109,7 @@ class GestureRecognitionGUI:
         self.fps_combo.pack(side=tk.LEFT, padx=2)
         self.fps_combo.bind("<<ComboboxSelected>>", self.on_fps_changed)
         
-        # Real-time detection state
-        self.realtime_active = False
-        self.realtime_points = []
-        self.realtime_last_recognition = 0
-        self.realtime_cooldown = 1.0  # 1 second between recognitions for responsiveness
-        # Real-time recognition capture window. These defaults are overridden once
-        # templates are loaded (template point counts are typically ~500+).
-        self.realtime_min_points = 300
-        self.realtime_max_points = 700
+        # Real-time detection state is initialized in __init__ after recognizer setup
         self.realtime_no_hand_frames = 0  # Count frames without hand detection
         self.frame_delay = 16  # milliseconds between frames (default ~60 FPS)
         
@@ -216,7 +221,7 @@ for accurate recognition.
         print(f"FPS changed to {fps} (delay: {self.frame_delay}ms)")
     
     def start_camera(self):
-        if self.recognizer.recognizer is None:
+        if not self.recognizer.templates:
             messagebox.showwarning("Warning", 
                                    "Please build or load templates first!")
             return
@@ -258,7 +263,7 @@ for accurate recognition.
     def toggle_recording(self):
         if not self.is_recording:
             self.is_recording = True
-            self.recorded_points = []
+            self.recorded_frames_data = []
             self.record_btn.config(text="Stop Recording Gesture")
             self.recognize_btn.config(state=tk.DISABLED)
             self.status_label.config(text="Recording gesture...", foreground='orange')
@@ -266,13 +271,13 @@ for accurate recognition.
             self.is_recording = False
             self.record_btn.config(text="Start Recording Gesture")
             self.recognize_btn.config(state=tk.NORMAL)
-            self.status_label.config(text=f"Recorded {len(self.recorded_points)} points", 
+            self.status_label.config(text=f"Recorded {len(self.recorded_frames_data)} frames", 
                                      foreground='blue')
     
     def toggle_realtime(self):
         if not self.realtime_active:
             self.realtime_active = True
-            self.realtime_points = []
+            self.realtime_frames_data = []
             self.realtime_last_recognition = 0
             self.realtime_btn.config(text="Stop Real-Time Detection")
             self.record_btn.config(state=tk.DISABLED)
@@ -281,60 +286,51 @@ for accurate recognition.
             self.result_label.config(text="Waiting for gesture...", foreground='blue')
         else:
             self.realtime_active = False
-            self.realtime_points = []
+            self.realtime_frames_data = []
             self.realtime_btn.config(text="Start Real-Time Detection")
             self.record_btn.config(state=tk.NORMAL)
             self.status_label.config(text="Real-time detection stopped", foreground='blue')
             self.result_label.config(text="No gesture recognized", foreground='black')
     
     def recognize_gesture(self):
-        if len(self.recorded_points) < 2:
-            messagebox.showwarning("Warning", "Not enough points recorded. Please record a gesture first.")
+        if len(self.recorded_frames_data) < 2:
+            messagebox.showwarning("Warning", "Not enough frames recorded. Please record a gesture first.")
             return
         
-        # Debug: Show point distribution
-        print(f"\nDebug: Recorded {len(self.recorded_points)} points")
+        # Debug: Show frame count
+        print(f"\nDebug: Recorded {len(self.recorded_frames_data)} frames")
         
-        # Check if points have movement (not all at same location) BEFORE recognition
-        if len(self.recorded_points) > 1:
-            x_coords = [p.x for p in self.recorded_points]
-            y_coords = [p.y for p in self.recorded_points]
-            
-            x_range = max(x_coords) - min(x_coords)
-            y_range = max(y_coords) - min(y_coords)
-            
-            print(f"Debug: X range = {x_range:.1f}px, Y range = {y_range:.1f}px")
-            print(f"Debug: X coords: min={min(x_coords):.1f}, max={max(x_coords):.1f}")
-            print(f"Debug: Y coords: min={min(y_coords):.1f}, max={max(y_coords):.1f}")
-            
-            # Need at least 20 pixels of movement (increased threshold for multi-point)
-            if x_range < 20 and y_range < 20:
-                messagebox.showwarning("Warning", 
-                    f"Not enough movement detected!\n\n"
-                    f"Movement: X={x_range:.1f}px, Y={y_range:.1f}px\n"
-                    f"Required: At least 20px in any direction\n\n"
-                    f"Tips:\n"
-                    f"• Move your WHOLE HAND while recording\n"
-                    f"• Try larger gestures (swipe across screen)\n"
-                    f"• Keep your hand visible to camera")
-                self.result_label.config(text="No movement detected", foreground='red')
-                self.score_label.config(text=f"Movement: {max(x_range, y_range):.1f}px")
-                return
+        # Use shared preprocessing pipeline (MUST match template preprocessing)
+        points = preprocess_gesture_frames(
+            self.recorded_frames_data,
+            mode=GESTURE_MODE,
+            normalize_mode=GESTURE_NORMALIZATION_MODE,
+            min_motion=MIN_MOTION_DISTANCE
+        )
+        
+        if points is None:
+            messagebox.showwarning("Warning", 
+                "Not enough movement detected!\n\n"
+                "Tips:\n"
+                "• Move your WHOLE HAND while recording\n"
+                "• Try larger gestures (swipe across screen)\n"
+                "• Keep your hand visible to camera")
+            self.result_label.config(text="No movement detected", foreground='red')
+            self.score_label.config(text="Score: 0.00")
+            return
         
         try:
-            gesture_name, score = self.recognizer.recognize(self.recorded_points)
+            gesture_name, score = self.recognizer.recognize(points)
             
-            print(f"Debug: Recognition result = {gesture_name}, score = {score}")
+            print(f"Debug: Recognition result = {gesture_name}, score = {score:.4f}")
             
-            # Check if recognition returned an error message
-            if score == 0.0 and ("error" in gesture_name.lower() or "no movement" in gesture_name.lower()):
-                self.result_label.config(text=gesture_name, foreground='red')
-                self.score_label.config(text="Score: 0.00")
+            # Check if recognition failed
+            if gesture_name is None:
+                self.result_label.config(text="No match", foreground='red')
+                self.score_label.config(text=f"Score: {score:.4f}")
                 return
             
-            base_name = self.recognizer.get_gesture_base_name(gesture_name)
-            
-            self.result_label.config(text=f"{base_name.replace('_', ' ').title()}")
+            self.result_label.config(text=f"{gesture_name.replace('_', ' ').title()}")
             self.score_label.config(text=f"Score: {score:.4f}")
             
             if score > 0.7:
@@ -375,31 +371,23 @@ for accurate recognition.
                     self.mp_drawing.draw_landmarks(
                         frame, hand_landmarks, self.mp_hands.HAND_CONNECTIONS)
                     
-                    # Track key landmarks for recording OR real-time detection
+                    # Store frame data for preprocessing (MUST match gesture_processor.py format)
                     if self.is_recording or self.realtime_active:
-                        # Track wrist (0), thumb tip (4), index tip (8), middle tip (12), ring tip (16), pinky tip (20)
-                        key_landmarks = [0, 4, 8, 12, 16, 20]
+                        frames_data_list = self.recorded_frames_data if self.is_recording else self.realtime_frames_data
                         
-                        # Choose which points list to use
-                        points_list = self.recorded_points if self.is_recording else self.realtime_points
+                        # Store MediaPipe landmarks + frame (same format as gesture_processor.py)
+                        frames_data_list.append({
+                            "hand_landmarks": hand_landmarks,
+                            "frame": frame
+                        })
                         
-                        # Use current point count as stroke ID so all landmarks in same frame are grouped
-                        stroke_id = len(points_list) // 6 + 1
-                        
-                        for landmark_id in key_landmarks:
-                            landmark = hand_landmarks.landmark[landmark_id]
-                            x = int(landmark.x * image_width)
-                            y = int(landmark.y * image_height)
-                            # All points in same frame get same stroke ID
-                            points_list.append(Point(x, y, stroke_id))
-                            
-                            # Draw recording indicator on key points
-                            if landmark_id == 8:  # Highlight index finger
-                                cv2.circle(frame, (x, y), 10, (0, 0, 255), -1)
-                            else:
-                                cv2.circle(frame, (x, y), 5, (255, 0, 0), -1)
+                        # Draw recording indicator on index finger
+                        index_tip = hand_landmarks.landmark[8]
+                        x = int(index_tip.x * image_width)
+                        y = int(index_tip.y * image_height)
+                        cv2.circle(frame, (x, y), 10, (0, 0, 255), -1)
             
-            # Real-time detection logic
+            # Real-time detection logic - SLIDING WINDOW
             if self.realtime_active:
                 import time
                 current_time = time.time()
@@ -412,74 +400,90 @@ for accurate recognition.
                 else:
                     self.realtime_no_hand_frames += 1
                 
-                # Trigger recognition when:
-                # 1. We have 80+ points (enough for recognition)
-                # 2. Cooldown has passed
+                # SLIDING WINDOW APPROACH:
+                # 1. Accumulate frames
+                # 2. Once we have minimum frames, start recognizing every frame
+                # 3. Keep buffer size constant by removing old frames
+                
+                # Preprocess accumulated frames to get points
+                points = None
+                if self.realtime_frames_data:
+                    points = preprocess_gesture_frames(
+                        self.realtime_frames_data,
+                        mode=GESTURE_MODE,
+                        normalize_mode=GESTURE_NORMALIZATION_MODE,
+                        min_motion=MIN_MOTION_DISTANCE
+                    )
+                
+                # Trigger recognition continuously once we have enough frames
+                # Use adaptive minimum based on template analysis
+                min_threshold = getattr(self, 'realtime_min_points', 10)
                 should_recognize = (
-                    len(self.realtime_points) >= self.realtime_min_points and
-                    (current_time - self.realtime_last_recognition) > self.realtime_cooldown
+                    points is not None and
+                    len(points) >= min_threshold and
+                    (current_time - self.realtime_last_recognition) > 0.05  # Even faster (50ms)
                 )
                 
                 if should_recognize:
                     # Try to recognize
                     try:
-                        print(f"\nINFO: Real-time recognition with {len(self.realtime_points)} points")
-                        gesture_name, score = self.recognizer.recognize(self.realtime_points)
+                        if len(self.realtime_frames_data) % 5 == 0:  # Log every 5th frame to avoid spam
+                            print(f"INFO: Sliding window recognition with {len(points)} points")
                         
-                        # Show result if confidence is above minimum threshold (0.13)
-                        if score > 0.13:
-                            base_name = self.recognizer.get_gesture_base_name(gesture_name)
-                            
-                            # Update UI - always show the best match
-                            self.result_label.config(text=f"OK: {base_name.replace('_', ' ').title()}")
-                            self.score_label.config(text=f"Score: {score:.4f}")
-                            
-                            # Color based on confidence
-                            if score > 0.7:
-                                self.result_label.config(foreground='green')
-                            elif score > 0.4:
-                                self.result_label.config(foreground='orange')
-                            else:
-                                self.result_label.config(foreground='red')
-                            
-                            print(f"OK: DETECTED: {base_name} (score: {score:.4f})")
+                        gesture_name, score = self.recognizer.recognize(points)
+                        
+                        # Show result with better feedback
+                        if gesture_name is not None:
+                            # Above threshold - show in green
+                            self.result_label.config(text=f"✓ {gesture_name.replace('_', ' ').title()}", foreground='green')
+                            if len(self.realtime_frames_data) % 5 == 0:
+                                print(f"✓ DETECTED: {gesture_name} (score: {score:.4f})")
                         else:
-                            print(f"LOW_CONFIDENCE: {score:.4f} (minimum: 0.13)")
-                            self.result_label.config(text="No clear gesture", foreground='gray')
-                            self.score_label.config(text=f"Score: {score:.4f}")
+                            # Below threshold - show best match for feedback
+                            if score > 0.1:
+                                fresh_recognizer = Recognizer(deepcopy(self.recognizer.templates))
+                                result = fresh_recognizer.recognize(points)
+                                if result:
+                                    best_gesture, _ = result
+                                    self.result_label.config(text=f"≈ {best_gesture.replace('_', ' ').title()}", foreground='orange')
+                            else:
+                                self.result_label.config(text="No gesture", foreground='gray')
                         
-                        # Only reset when we actually detect a clear gesture.
-                        # If confidence is too low, keep collecting so swipel/swiper
-                        # can reach the full point sequence length.
+                        # Always show score
+                        self.score_label.config(text=f"Score: {score:.4f}")
+                        
+                        # Update recognition time for cooldown
                         self.realtime_last_recognition = current_time
-                        self.realtime_no_hand_frames = 0
-                        if score > 0.13:
-                            self.realtime_points = []
                         
                     except Exception as e:
                         print(f"Real-time recognition error: {e}")
-                        self.realtime_points = []
-                        self.realtime_no_hand_frames = 0
                 
-                # Reset if we reach max points (gesture complete)
-                elif len(self.realtime_points) >= self.realtime_max_points:
-                    print(f"INFO: Resetting: reached max points ({len(self.realtime_points)})")
-                    self.realtime_points = []
-                    self.realtime_no_hand_frames = 0
+                # Maintain strict sliding window: ALWAYS keep exactly 60 frames max
+                # When frame 61 arrives, remove frame 0 (FIFO queue behavior)
+                MAX_WINDOW_FRAMES = 60
+                if len(self.realtime_frames_data) > MAX_WINDOW_FRAMES:
+                    # Remove oldest frame to maintain window size
+                    self.realtime_frames_data.pop(0)
                 
-                # Add real-time indicator
-                cv2.putText(frame, "REAL-TIME DETECTION", (10, 30), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                cv2.putText(frame, f"Points: {len(self.realtime_points)}", (10, 60), 
+                # Add real-time indicator with sliding window info
+                cv2.putText(frame, "REAL-TIME DETECTION (SLIDING WINDOW)", (10, 30), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                
+                # Show frame count with max limit
+                frame_text = f"Frames: {len(self.realtime_frames_data)}/60"
+                if len(self.realtime_frames_data) >= 60:
+                    frame_text += " (SLIDING)"
+                cv2.putText(frame, frame_text, (10, 60), 
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
                 
-                # Show status
-                if len(self.realtime_points) < self.realtime_min_points:
+                # Show status with adaptive thresholds
+                min_pts = getattr(self, 'realtime_min_points', 10)
+                if len(self.realtime_frames_data) < min_pts // 2:
                     status_text = "Collecting..."
-                elif self.realtime_no_hand_frames > 0:
-                    status_text = f"Recognizing... ({self.realtime_no_hand_frames}/5)"
+                elif points is None or len(points) < min_pts:
+                    status_text = f"Need {min_pts - (len(points) if points else 0)} more pts"
                 else:
-                    status_text = "Keep going..."
+                    status_text = "Live Recognition"
                 cv2.putText(frame, status_text, (10, 90), 
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
             
@@ -487,7 +491,7 @@ for accurate recognition.
             elif self.is_recording:
                 cv2.putText(frame, "RECORDING", (10, 30), 
                             cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-                cv2.putText(frame, f"Points: {len(self.recorded_points)}", (10, 60), 
+                cv2.putText(frame, f"Frames: {len(self.recorded_frames_data)}", (10, 60), 
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
             
             # Convert to PhotoImage
@@ -521,7 +525,7 @@ for accurate recognition.
 
         Using the *maximum* template length (not average) ensures the window is
         wide enough to capture even the longest gesture.  Recognition starts as
-        soon as we have ~40 % of that length so shorter gestures are detected
+        soon as we have ~30% of that length so shorter gestures are detected
         quickly and the loop keeps re-testing iteratively until the window fills.
         """
         if not self.recognizer.templates:
@@ -529,19 +533,20 @@ for accurate recognition.
 
         template_lengths = [len(t) for t in self.recognizer.templates]
         max_len = max(template_lengths)
+        avg_len = sum(template_lengths) / len(template_lengths)
 
         def round_to_multiple(n, m):
             return max(m, int(round(n / m)) * m)
 
-        # Start recognising at 40 % of the largest template so short gestures
-        # are caught early; the window grows up to 120 % of the largest template.
-        min_points = round_to_multiple(max_len * 0.40, 6)
-        max_points = round_to_multiple(max_len * 1.20, 6)
+        # More aggressive: start at 30% for faster detection
+        # Use average length for typical gestures, not max
+        min_points = round_to_multiple(avg_len * 0.30, 6)
+        max_points = round_to_multiple(max_len * 1.10, 6)
 
-        self.realtime_min_points = int(max(min_points, 60))
-        self.realtime_max_points = int(max(max_points, self.realtime_min_points + 60))
+        self.realtime_min_points = int(max(min_points, 12))  # Lower floor
+        self.realtime_max_points = int(max(max_points, self.realtime_min_points + 30))
         print(f"Point window: min={self.realtime_min_points}, max={self.realtime_max_points} "
-              f"(largest template: {max_len} pts)")
+              f"(avg template: {int(avg_len)} pts, max: {max_len} pts)")
 
 def main():
     root = tk.Tk()

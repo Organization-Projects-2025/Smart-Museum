@@ -1797,6 +1797,7 @@ public class TuioDemo : Form, TuioListener
             if (connected)
             {
                 Console.WriteLine("Connected to gesture recognition service");
+                await gestureClient.StartTrackingAsync();
                 
                 // Start continuous gesture detection (check every 300ms instead of 100ms)
                 gestureCheckTimer = new System.Windows.Forms.Timer { Interval = 300 };
@@ -1871,23 +1872,26 @@ public class TuioDemo : Form, TuioListener
             if (LoginFlowBlocksGestureWebcam()) return;
             try
             {
+                // NEW SLIDING WINDOW API: Check status for last_gesture
                 var status = await gestureClient.GetStatusAsync();
-                if (status != null && status.PointsCollected > 80)
+                if (status != null && !string.IsNullOrEmpty(status.LastGesture))
                 {
-                    isGestureActive = true;
+                    // Gesture detected! Get it (this also clears it)
                     var result = await gestureClient.StopAndRecognizeAsync();
-                    if (result.Score > 0.13 && !string.IsNullOrEmpty(result.Gesture))
+                    if (!string.IsNullOrEmpty(result.Gesture))
+                    {
+                        Console.WriteLine($"✓ Gesture detected: {result.Gesture}");
                         HandleGesture(result.Gesture);
-                    await gestureClient.ResetAsync();
-                    await System.Threading.Tasks.Task.Delay(500);
-                    await gestureClient.StartTrackingAsync();
-                    isGestureActive = false;
+                    }
                 }
                 else if (status != null && !status.IsTracking)
+                {
                     await gestureClient.StartTrackingAsync();
+                }
             }
-            catch
+            catch (Exception ex)
             {
+                Console.WriteLine($"[Gesture] Error: {ex.Message}");
                 isGestureActive = false;
             }
             return;
@@ -1897,36 +1901,20 @@ public class TuioDemo : Form, TuioListener
 
         try
         {
+            // NEW SLIDING WINDOW API: Check status for last_gesture
             var status = await gestureClient.GetStatusAsync();
 
-            // Wait for 80+ points for better accuracy
-            if (status != null && status.PointsCollected > 80)
+            if (status != null && !string.IsNullOrEmpty(status.LastGesture))
             {
                 isGestureActive = true;
 
-                Console.WriteLine($"→ Attempting recognition with {status.PointsCollected} points...");
-                
-                // Stop tracking and recognize
+                // Get gesture (this also clears it from service)
                 var result = await gestureClient.StopAndRecognizeAsync();
-
-                Console.WriteLine($"→ Recognition result: gesture={result.Gesture}, score={result.Score:F4}, confidence={result.Confidence}");
-
-                // Accept gestures with score > 0.13 (lowered threshold)
-                // Always use the highest confidence gesture returned
-                if (result.Score > 0.13 && !string.IsNullOrEmpty(result.Gesture))
+                if (!string.IsNullOrEmpty(result.Gesture))
                 {
-                    Console.WriteLine($"✓ Gesture recognized: {result.Gesture} (score: {result.Score:F4})");
+                    Console.WriteLine($"✓ Gesture detected: {result.Gesture}");
                     HandleGesture(result.Gesture);
                 }
-                else
-                {
-                    Console.WriteLine($"✗ Gesture too weak: score {result.Score:F4}");
-                }
-
-                // Reset and start tracking again
-                await gestureClient.ResetAsync();
-                await System.Threading.Tasks.Task.Delay(500);
-                await gestureClient.StartTrackingAsync();
 
                 isGestureActive = false;
             }
@@ -1938,7 +1926,7 @@ public class TuioDemo : Form, TuioListener
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Gesture check error: {ex.Message}");
+            Console.WriteLine($"[Gesture] Error: {ex.Message}");
             isGestureActive = false;
         }
     }

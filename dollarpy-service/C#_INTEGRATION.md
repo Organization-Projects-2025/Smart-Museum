@@ -71,7 +71,7 @@ public class MyCircularMenu
     public async void Initialize()
     {
         // Connect to service
-        gestureClient = new GestureClient("localhost", 5001);
+        gestureClient = new GestureClient("127.0.0.1", 5001);
         await gestureClient.ConnectAsync();
         
         // Subscribe to gesture events

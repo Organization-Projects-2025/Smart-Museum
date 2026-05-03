@@ -72,28 +72,25 @@ class GestureRecognitionService:
         )
         cap = None
         is_tracking = False
-        gesture_points = []
+        
+        # SLIDING WINDOW APPROACH (matches gesture_gui.py)
+        gesture_frames_data = []  # Store MediaPipe landmarks + frame
+        MAX_WINDOW_FRAMES = 60  # Strict 60-frame sliding window
+        
         last_gesture = None
         last_gesture_time = 0
-        gesture_cooldown = 1.0
+        gesture_cooldown = 3.0  # 3 seconds cooldown after detection
+        last_recognition_time = 0
+        recognition_interval = 0.05  # Recognize every 50ms (match GUI)
+        confidence_threshold = 0.4  # Only trigger if confidence > 0.4
+        
         camera_thread = None
         camera_running = False
-        # --- Gesture capture window: only record after user moves hand from "rest" pose ---
-        # Avoids filling the buffer with idle hand pixels before the user intends a stroke.
-        motion_ref_nx = None  # type: ignore[assignment]
-        motion_ref_ny = None
-        capture_window_open = False
-        no_hand_frames = 0
-        # Normalized-image Euclidean distance; ~0.035 ≈ 3–4 cm at arm's length on 640-wide frame
-        motion_start_threshold = float(
-            os.environ.get("GESTURE_MOTION_START_THRESHOLD", "0.035")
-        )
-        no_hand_reset_frames = int(os.environ.get("GESTURE_NO_HAND_RESET_FRAMES", "45"))
 
         def camera_loop():
-            """Continuously process camera frames for this client"""
-            nonlocal is_tracking, gesture_points, camera_running
-            nonlocal motion_ref_nx, motion_ref_ny, capture_window_open, no_hand_frames
+            """Continuously process camera frames for this client - SLIDING WINDOW"""
+            nonlocal is_tracking, gesture_frames_data, camera_running
+            nonlocal last_recognition_time, last_gesture, last_gesture_time
 
             while camera_running:
                 if self.camera_hub is not None:
@@ -109,8 +106,6 @@ class GestureRecognitionService:
                         continue
 
                 frame = cv2.resize(frame, (640, 480))
-                # Removed flip - keep camera natural orientation
-
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 results = hands.process(rgb_frame)
 
@@ -118,53 +113,78 @@ class GestureRecognitionService:
                     time.sleep(0.016)
                     continue
 
-                image_height, image_width, _ = frame.shape
+                # SLIDING WINDOW: Always collect frames when hand is detected
+                if results.multi_hand_landmarks:
+                    for hand_landmarks in results.multi_hand_landmarks:
+                        # Store MediaPipe landmarks + frame (same format as GUI)
+                        gesture_frames_data.append({
+                            "hand_landmarks": hand_landmarks,
+                            "frame": frame
+                        })
+                        
+                        # Maintain strict sliding window: remove oldest when exceeding limit
+                        if len(gesture_frames_data) > MAX_WINDOW_FRAMES:
+                            gesture_frames_data.pop(0)  # Remove frame 0 when frame 61 arrives
+                        
+                        break  # Only process first hand
 
-                if not results.multi_hand_landmarks:
-                    no_hand_frames += 1
-                    if no_hand_frames >= no_hand_reset_frames:
-                        # Hand left view long enough — next appearance starts a new "rest" reference
-                        motion_ref_nx = None
-                        motion_ref_ny = None
-                        capture_window_open = False
-                        no_hand_frames = 0
-                    time.sleep(0.016)
-                    continue
-
-                no_hand_frames = 0
-
-                for hand_landmarks in results.multi_hand_landmarks:
-                    lm0 = hand_landmarks.landmark[0]
-                    nx, ny = float(lm0.x), float(lm0.y)
-
-                    if motion_ref_nx is None or motion_ref_ny is None:
-                        motion_ref_nx = nx
-                        motion_ref_ny = ny
-                        capture_window_open = False
-                        continue
-
-                    if not capture_window_open:
-                        dx = nx - motion_ref_nx
-                        dy = ny - motion_ref_ny
-                        if (dx * dx + dy * dy) ** 0.5 >= motion_start_threshold:
-                            capture_window_open = True
-                            gesture_points.clear()
-                            key_landmarks = [0, 4, 8, 12, 16, 20]
-                            stroke_id = 1
-                            for landmark_id in key_landmarks:
-                                landmark = hand_landmarks.landmark[landmark_id]
-                                x = int(landmark.x * image_width)
-                                y = int(landmark.y * image_height)
-                                gesture_points.append(Point(x, y, stroke_id))
-                        continue
-
-                    key_landmarks = [0, 4, 8, 12, 16, 20]
-                    stroke_id = len(gesture_points) // 6 + 1
-                    for landmark_id in key_landmarks:
-                        landmark = hand_landmarks.landmark[landmark_id]
-                        x = int(landmark.x * image_width)
-                        y = int(landmark.y * image_height)
-                        gesture_points.append(Point(x, y, stroke_id))
+                # CONTINUOUS RECOGNITION (like GUI real-time mode)
+                current_time = time.time()
+                
+                # Check if we're in cooldown period (3 seconds after last gesture)
+                in_cooldown = (current_time - last_gesture_time) < gesture_cooldown
+                
+                if (len(gesture_frames_data) >= 10 and 
+                    (current_time - last_recognition_time) >= recognition_interval and
+                    not in_cooldown):  # Only recognize if NOT in cooldown
+                    
+                    # Import preprocessing here to avoid circular imports
+                    from gesture_preprocessing import preprocess_gesture_frames
+                    from gesture_config import GESTURE_MODE, GESTURE_NORMALIZATION_MODE, MIN_MOTION_DISTANCE
+                    
+                    # Preprocess frames to get points
+                    points = preprocess_gesture_frames(
+                        gesture_frames_data,
+                        mode=GESTURE_MODE,
+                        normalize_mode=GESTURE_NORMALIZATION_MODE,
+                        min_motion=MIN_MOTION_DISTANCE
+                    )
+                    
+                    if points is not None and len(points) >= 10:
+                        try:
+                            gesture_name, score = self.recognizer.recognize(points)
+                            
+                            # Only trigger if confidence > 0.4
+                            if score > confidence_threshold:
+                                base_name = self.recognizer.get_gesture_base_name(gesture_name)
+                                
+                                # Determine confidence level
+                                if score > 0.7:
+                                    confidence = "high"
+                                elif score > 0.55:
+                                    confidence = "medium"
+                                else:
+                                    confidence = "low"
+                                
+                                print(f"  ✓ GESTURE TRIGGERED: {base_name} (score: {score:.4f}, confidence: {confidence})")
+                                print(f"  → Cooldown active for 3 seconds...")
+                                
+                                last_gesture = base_name
+                                last_gesture_time = current_time
+                                
+                                # Clear buffer after successful detection to start fresh
+                                gesture_frames_data.clear()
+                            
+                        except Exception as e:
+                            print(f"  Recognition error: {e}")
+                        
+                        last_recognition_time = current_time
+                
+                # Show cooldown status periodically
+                elif in_cooldown and len(gesture_frames_data) % 30 == 0:
+                    remaining = gesture_cooldown - (current_time - last_gesture_time)
+                    if remaining > 0:
+                        print(f"  ⏸ Cooldown: {remaining:.1f}s remaining...")
 
                 time.sleep(0.016)  # ~60 FPS
         
@@ -217,8 +237,7 @@ class GestureRecognitionService:
         
         def process_command(command):
             """Process commands from C# client"""
-            nonlocal is_tracking, gesture_points, last_gesture, last_gesture_time
-            nonlocal motion_ref_nx, motion_ref_ny, capture_window_open, no_hand_frames
+            nonlocal is_tracking, gesture_frames_data, last_gesture, last_gesture_time
 
             if command == "START_TRACKING":
                 # Hub mode keeps cap=None forever — use camera_running, not cap.
@@ -227,89 +246,90 @@ class GestureRecognitionService:
                         return {"status": "error", "message": "Failed to start camera"}
 
                 is_tracking = True
-                gesture_points = []
-                motion_ref_nx = None
-                motion_ref_ny = None
-                capture_window_open = False
-                no_hand_frames = 0
+                gesture_frames_data = []
                 return {"status": "ok", "message": "Tracking started"}
 
             elif command == "STOP_TRACKING":
                 is_tracking = False
                 stop_camera_pipeline()
-                return {"status": "ok", "message": "Tracking stopped", "points": len(gesture_points)}
+                return {"status": "ok", "message": "Tracking stopped", "frames": len(gesture_frames_data)}
             
             elif command == "RECOGNIZE":
-                if len(gesture_points) < 10:
-                    print(f"  INFO: Not enough points: {len(gesture_points)}")
-                    return {"status": "error", "message": "Not enough points", "gesture": None, "score": 0.0}
+                # With sliding window, recognition happens continuously in camera_loop
+                # This command just returns the last detected gesture
                 
-                # Check cooldown
                 current_time = time.time()
-                if current_time - last_gesture_time < gesture_cooldown:
-                    print(f"  INFO: Cooldown active")
-                    return {"status": "cooldown", "message": "Gesture cooldown active", "gesture": None, "score": 0.0}
                 
-                # Recognize gesture
-                print(f"  INFO: Recognizing with {len(gesture_points)} points...")
-                gesture_name, score = self.recognizer.recognize(gesture_points)
-                print(f"  INFO: Result: {gesture_name} (score: {score:.4f})")
-                
-                # Only return if confidence is above minimum threshold (0.08 - lowered for better detection)
-                if score > 0.08:
-                    base_name = self.recognizer.get_gesture_base_name(gesture_name)
-                    last_gesture = base_name
-                    last_gesture_time = current_time
-                    
-                    # Determine confidence level
-                    if score > 0.7:
-                        confidence = "high"
-                    elif score > 0.4:
-                        confidence = "medium"
-                    else:
-                        confidence = "low"
-                    
-                    print(f"  OK: GESTURE DETECTED: {base_name} (confidence: {confidence})")
-                    
+                # Check if we're in cooldown
+                if (current_time - last_gesture_time) < gesture_cooldown:
+                    cooldown_remaining = gesture_cooldown - (current_time - last_gesture_time)
                     return {
-                        "status": "ok",
-                        "gesture": base_name,
-                        "score": round(score, 4),
-                        "confidence": confidence
+                        "status": "cooldown",
+                        "gesture": None,
+                        "score": 0.0,
+                        "confidence": "cooldown",
+                        "cooldown_remaining": round(cooldown_remaining, 1),
+                        "message": f"Cooldown active ({cooldown_remaining:.1f}s remaining)"
                     }
-                else:
-                    print(f"  LOW_CONFIDENCE: {score:.4f} (minimum: 0.08)")
+                
+                if last_gesture is None:
                     return {
                         "status": "ok",
                         "gesture": None,
-                        "score": round(score, 4),
-                        "confidence": "too_low"
+                        "score": 0.0,
+                        "confidence": "none",
+                        "message": "No gesture detected yet"
                     }
+                
+                # Check if gesture is recent (within last 3 seconds)
+                if (current_time - last_gesture_time) > 3.0:
+                    return {
+                        "status": "ok",
+                        "gesture": None,
+                        "score": 0.0,
+                        "confidence": "stale",
+                        "message": "Last gesture too old"
+                    }
+                
+                # Return last detected gesture (only if confidence was > 0.4)
+                return {
+                    "status": "ok",
+                    "gesture": last_gesture,
+                    "score": 1.0,  # Score not stored in continuous mode
+                    "confidence": "high",
+                    "message": f"Last gesture: {last_gesture}"
+                }
             
             elif command == "RESET":
-                gesture_points = []
+                gesture_frames_data = []
                 is_tracking = False
-                motion_ref_nx = None
-                motion_ref_ny = None
-                capture_window_open = False
-                no_hand_frames = 0
+                last_gesture = None
+                last_gesture_time = 0
                 stop_camera_pipeline()
                 return {"status": "ok", "message": "Reset complete"}
 
             elif command == "STATUS":
+                current_time = time.time()
+                in_cooldown = (current_time - last_gesture_time) < gesture_cooldown
+                cooldown_remaining = max(0, gesture_cooldown - (current_time - last_gesture_time))
+                
                 status_info = {
                     "status": "ok",
                     "tracking": is_tracking,
-                    "points": len(gesture_points),
+                    "frames": len(gesture_frames_data),
                     "templates": len(self.recognizer.templates) if self.recognizer.templates else 0,
                     "last_gesture": last_gesture,
-                    # True while hand is in view but stroke not started yet (waiting for movement)
-                    "waiting_for_motion": is_tracking and not capture_window_open,
-                    "capturing": is_tracking and capture_window_open,
+                    "sliding_window": len(gesture_frames_data) >= MAX_WINDOW_FRAMES,
+                    "window_size": f"{len(gesture_frames_data)}/{MAX_WINDOW_FRAMES}",
+                    "in_cooldown": in_cooldown,
+                    "cooldown_remaining": round(cooldown_remaining, 1),
                 }
-                # Only print if tracking and has significant points (reduce spam)
-                if is_tracking and len(gesture_points) > 0 and len(gesture_points) % 30 == 0:
-                    print(f"  INFO: Tracking: {len(gesture_points)} points collected")
+                # Only print if tracking and has significant frames (reduce spam)
+                if is_tracking and len(gesture_frames_data) > 0 and len(gesture_frames_data) % 30 == 0:
+                    if in_cooldown:
+                        print(f"  INFO: Cooldown active ({cooldown_remaining:.1f}s remaining)")
+                    else:
+                        print(f"  INFO: Tracking: {len(gesture_frames_data)} frames collected")
                 return status_info
             
             elif command == "PING":

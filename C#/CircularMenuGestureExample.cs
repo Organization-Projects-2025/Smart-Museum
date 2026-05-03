@@ -23,7 +23,7 @@ namespace SmartMuseum
 
         private async void InitializeGestureClient()
         {
-            gestureClient = new GestureClient("localhost", 5001);
+            gestureClient = new GestureClient("127.0.0.1", 5001);
 
             // Subscribe to events
             gestureClient.GestureRecognized += OnGestureRecognized;
@@ -33,17 +33,17 @@ namespace SmartMuseum
             bool connected = await gestureClient.ConnectAsync();
             if (connected)
             {
-                Console.WriteLine("Connected to gesture service");
+                Console.WriteLine("✓ Connected to gesture service");
                 StartGestureDetection();
             }
             else
             {
-                Console.WriteLine("Failed to connect to gesture service");
+                Console.WriteLine("✗ Failed to connect to gesture service");
                 MessageBox.Show(
                     "Could not connect to gesture service.\n" +
                     "Please start the Python service first:\n" +
-                    "python gesture_service.py",
-                    "Gesture Service",
+                    "python python/server/unified_museum_server.py",
+                    "Gesture Service - Connection Failed",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Warning
                 );
@@ -73,8 +73,8 @@ namespace SmartMuseum
             {
                 var status = await gestureClient.GetStatusAsync();
 
-                // If hand is detected and we have enough points, recognize
-                if (status != null && status.PointsCollected > 30)
+                // If hand is detected and we have enough frames (25 frames = ~0.4s at 60 FPS), recognize
+                if (status != null && status.PointsCollected >= 25)
                 {
                     isGestureActive = true;
 
@@ -88,7 +88,7 @@ namespace SmartMuseum
 
                     // Reset and start tracking again
                     await gestureClient.ResetAsync();
-                    await Task.Delay(500); // Small delay
+                    await Task.Delay(500); // Small delay before restarting
                     await gestureClient.StartTrackingAsync();
 
                     isGestureActive = false;
@@ -101,7 +101,7 @@ namespace SmartMuseum
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Gesture check error: {ex.Message}");
+                Console.WriteLine($"✗ Gesture check error: {ex.Message}");
                 isGestureActive = false;
             }
         }

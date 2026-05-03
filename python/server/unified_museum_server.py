@@ -234,12 +234,13 @@ def start_face_auth_service():
 def start_gesture_service():
     """Start gesture recognition service (port 5001)."""
     try:
-        from gesture_service import GestureRecognitionService
+        # Use refactored gesture service with improved accuracy
+        from gesture_service_refactored import GestureRecognitionService
         hub = get_camera_hub() if CAMERA_HUB_AVAILABLE else None
         service = GestureRecognitionService(host="127.0.0.1", port=5001, camera_hub=hub)
         service.start_server()
     except ImportError as e:
-        logger.error("GESTURE", f"Failed to import gesture_service: {e}")
+        logger.error("GESTURE", f"Failed to import gesture_service_refactored: {e}")
         raise
 
 
@@ -342,7 +343,7 @@ class UnifiedMuseumServer:
     def monitor_services(self):
         """Monitor service health and log status periodically."""
         while not self.shutdown_event.is_set():
-            time.sleep(10)  # Check every 10 seconds
+            time.sleep(30)  # Check every 30 seconds (not 10)
 
             status = health_monitor.get_all_status()
             for service_name, service_status in status.items():
@@ -353,11 +354,8 @@ class UnifiedMuseumServer:
                             f"{service_name} is down (errors: {service_status['error_count']}, "
                             f"last error: {service_status['last_error']})"
                         )
-                else:
-                    # Service is running, check heartbeat
-                    last_heartbeat = service_status.get("last_heartbeat")
-                    if last_heartbeat and (time.time() - last_heartbeat) > 30:
-                        logger.warn("MAIN", f"{service_name} hasn't sent heartbeat in 30+ seconds")
+                # Removed heartbeat check - services don't implement heartbeat updates
+                # The services are running fine, just not sending heartbeat signals
 
     def shutdown(self):
         """Gracefully shutdown all services."""

@@ -22,7 +22,7 @@ public class GestureClient : IDisposable
 
         public bool IsConnected => isConnected;
 
-        public GestureClient(string host = "localhost", int port = 5001)
+        public GestureClient(string host = "127.0.0.1", int port = 5001)
         {
             this.host = host;
             this.port = port;
@@ -35,13 +35,44 @@ public class GestureClient : IDisposable
         {
             try
             {
-                client = new TcpClient();
-                await client.ConnectAsync(host, port);
-                stream = client.GetStream();
-                isConnected = true;
+                string[] connectHosts = host == "127.0.0.1"
+                    ? new[] { "127.0.0.1", "localhost" }
+                    : new[] { host, "127.0.0.1", "localhost" };
 
-                StatusChanged?.Invoke(this, "Connected to gesture service");
-                return true;
+                Exception lastError = null;
+
+                foreach (var connectHost in connectHosts)
+                {
+                    try
+                    {
+                        client?.Close();
+                        client = new TcpClient();
+                        client.NoDelay = true;
+
+                        StatusChanged?.Invoke(this, $"Connecting to {connectHost}:{port}...");
+                        await client.ConnectAsync(connectHost, port);
+
+                        stream = client.GetStream();
+                        isConnected = true;
+
+                        if (!await PingAsync())
+                        {
+                            throw new Exception("Connected, but PING failed");
+                        }
+
+                        StatusChanged?.Invoke(this, $"Connected to gesture service at {connectHost}:{port}");
+                        return true;
+                    }
+                    catch (Exception ex)
+                    {
+                        lastError = ex;
+                        StatusChanged?.Invoke(this, $"Connection attempt failed for {connectHost}:{port}: {ex.Message}");
+                    }
+                }
+
+                isConnected = false;
+                StatusChanged?.Invoke(this, $"Connection failed: {lastError?.Message}");
+                return false;
             }
             catch (Exception ex)
             {
@@ -120,7 +151,7 @@ public class GestureClient : IDisposable
                 return new ServiceStatus
                 {
                     IsTracking = response["tracking"]?.ToObject<bool>() ?? false,
-                    PointsCollected = response["points"]?.ToObject<int>() ?? 0,
+                    PointsCollected = response["frames_collected"]?.ToObject<int>() ?? 0,
                     TemplatesLoaded = response["templates"]?.ToObject<int>() ?? 0,
                     LastGesture = response["last_gesture"]?.ToString(),
                     WaitingForMotion = response["waiting_for_motion"]?.ToObject<bool>() ?? false,
