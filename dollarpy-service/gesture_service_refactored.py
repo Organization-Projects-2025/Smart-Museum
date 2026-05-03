@@ -394,6 +394,25 @@ class GestureRecognitionService:
                     "status": "ok",
                     "message": "Last gesture cleared"
                 }
+            
+            elif command == "PAUSE_DETECTION":
+                # Pause gesture detection (but keep camera running)
+                is_tracking = False
+                frames_data.clear()
+                return {
+                    "status": "ok",
+                    "message": "Gesture detection paused"
+                }
+            
+            elif command == "RESUME_DETECTION":
+                # Resume gesture detection
+                is_tracking = True
+                frames_data.clear()
+                last_gesture = None
+                return {
+                    "status": "ok",
+                    "message": "Gesture detection resumed"
+                }
 
             elif command == "RESET":
                 frames_data = []

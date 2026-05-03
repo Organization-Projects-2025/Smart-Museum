@@ -132,6 +132,23 @@ public class GestureClient : IDisposable
         }
 
         /// <summary>
+        /// Pause gesture detection (keeps camera running, stops collecting frames)
+        /// Use when TUIO objects are detected
+        /// </summary>
+        public async Task PauseDetectionAsync()
+        {
+            await SendCommandAsync("PAUSE_DETECTION");
+        }
+
+        /// <summary>
+        /// Resume gesture detection after pause
+        /// </summary>
+        public async Task ResumeDetectionAsync()
+        {
+            await SendCommandAsync("RESUME_DETECTION");
+        }
+
+        /// <summary>
         /// Reset the gesture tracking
         /// </summary>
         public async Task ResetAsync()

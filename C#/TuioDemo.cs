@@ -1857,13 +1857,29 @@ public class TuioDemo : Form, TuioListener
     {
         if (isGestureActive || gestureClient == null || !gestureClient.IsConnected) return;
 
-        // Check input prioritization: block gestures if TUIOs present or in cooldown
+        // Check input prioritization: pause gestures if TUIOs present or in cooldown
         if (!inputPrioritizer.CanAcceptGestures)
         {
+            // Pause detection to prevent background recognition
+            var status = await gestureClient.GetStatusAsync();
+            if (status != null && status.IsTracking)
+            {
+                await gestureClient.PauseDetectionAsync();
+            }
+            
             int cooldownRemaining = inputPrioritizer.GetCooldownRemainingMs();
             if (cooldownRemaining > 0)
                 Console.WriteLine($"[Gesture] Blocked by input prioritizer: {cooldownRemaining}ms cooldown remaining");
             return;
+        }
+        else
+        {
+            // Resume detection if it was paused
+            var status = await gestureClient.GetStatusAsync();
+            if (status != null && !status.IsTracking)
+            {
+                await gestureClient.ResumeDetectionAsync();
+            }
         }
 
         if (!isLoggedIn)
