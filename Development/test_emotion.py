@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--camera", type=int,
                         default=int(os.environ.get("MUSEUM_CAMERA", "0")))
     args = parser.parse_args()
-
+``
     cap = cv2.VideoCapture(args.camera, cv2.CAP_DSHOW)
     if not cap.isOpened():
         cap = cv2.VideoCapture(args.camera)
