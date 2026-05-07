@@ -3,22 +3,23 @@
 Unified Smart Museum Server - Single process with fault-isolated services.
 
 All Python services run in one process but each service is isolated:
-- Face ID + Bluetooth (port 5000)
-- Gesture recognition (port 5001)
-- Gaze + emotion (port 5002)
-- YOLO context (port 5003)
-- Hand tracking (port 5004)
+- Face ID + Bluetooth  (port 5000)
+- Gesture recognition  (port 5001)  ← uses SharedCameraHub
+- Gaze + emotion       (port 5002)  ← uses SharedCameraHub
+- YOLO context         (port 5003)  ← uses SharedCameraHub
+- Hand tracking        (port 5004)
 
 If one service fails, it logs the error but other services continue running.
-Shared camera hub for vision services to avoid camera conflicts.
+A single SharedCameraHub is created once and shared across all vision services
+so the webcam is only opened once.
 
 Usage:
     python python/server/unified_museum_server.py
 
 Environment variables:
-    MUSEUM_CAMERA - Camera index (default: 0)
+    MUSEUM_CAMERA        - Camera index (default: 0)
     GAZE_EMOTION_MIRROR=1 - Mirror camera frames
-    DISABLE_<SERVICE>=1 - Disable specific service (e.g., DISABLE_HAND_TRACK=1)
+    DISABLE_<SERVICE>=1  - Disable specific service (e.g., DISABLE_GESTURE=1)
 """
 
 import os
@@ -65,17 +66,21 @@ class ServiceLogger:
         timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
         color = self.service_colors.get(service, "\033[97m")
         level_symbols = {
-            "INFO": "✓",
-            "WARN": "⚠",
-            "ERROR": "✗",
-            "DEBUG": "○"
+            "INFO":  "OK ",
+            "WARN":  "!  ",
+            "ERROR": "ERR",
+            "DEBUG": "dbg"
         }
-        symbol = level_symbols.get(level, "•")
+        symbol = level_symbols.get(level, "---")
         return f"{color}[{timestamp}] {service} {symbol} {message}{self.reset_color}"
 
     def log(self, service: str, level: str, message: str):
         with self.lock:
-            print(self._format_message(service, level, message))
+            msg = self._format_message(service, level, message)
+            try:
+                print(msg)
+            except UnicodeEncodeError:
+                print(msg.encode("ascii", errors="replace").decode("ascii"))
 
     def info(self, service: str, message: str):
         self.log(service, "INFO", message)
@@ -196,33 +201,36 @@ class ServiceWrapper:
 # Shared Camera Hub
 # ============================================================================
 
+# ── Shared camera hub (singleton) ─────────────────────────────────────────────
+# Created once in UnifiedMuseumServer.start_all_services() so all vision
+# services share a single VideoCapture thread.
+
 try:
     from shared_camera_hub import SharedCameraHub, default_camera_index, default_mirror
     CAMERA_HUB_AVAILABLE = True
 except ImportError:
     CAMERA_HUB_AVAILABLE = False
-    logger.warn("MAIN", "shared_camera_hub not available, services will use individual cameras")
+    logger.warn("MAIN", "shared_camera_hub not available — each service will open the camera independently")
 
 
-def get_camera_hub():
-    """Get shared camera hub or None if not available."""
+def _make_camera_hub():
+    """Create and return the shared camera hub, or None on failure."""
     if not CAMERA_HUB_AVAILABLE:
         return None
-
     try:
-        idx = default_camera_index()
+        idx    = default_camera_index()
         mirror = default_mirror()
-        hub = SharedCameraHub(camera_index=idx, mirror=mirror)
-        logger.info("MAIN", f"Camera hub initialized: camera={idx}, mirror={mirror}")
+        hub    = SharedCameraHub(camera_index=idx, mirror=mirror)
+        logger.info("MAIN", f"SharedCameraHub created: camera={idx}, mirror={mirror}")
         return hub
     except Exception as e:
-        logger.error("MAIN", f"Failed to initialize camera hub: {e}")
+        logger.error("MAIN", f"SharedCameraHub init failed: {e}")
         return None
 
 
-# ============================================================================
-# Service Start Functions
-# ============================================================================
+# ── Service start functions ────────────────────────────────────────────────────
+# Each function receives `camera_hub` via a closure set in initialize_services().
+# This way every vision service uses the SAME hub instance.
 
 def start_face_auth_service():
     """Start Face ID + Bluetooth service (port 5000)."""
@@ -231,26 +239,25 @@ def start_face_auth_service():
     python_server.start_server("127.0.0.1", port)
 
 
-def start_gesture_service():
-    """Start gesture recognition service (port 5001)."""
+def start_gesture_service(camera_hub=None):
+    """Start gesture recognition service (port 5001) using the shared camera hub."""
     try:
-        # Use refactored gesture service with improved accuracy
-        from gesture_service_refactored import GestureRecognitionService
-        hub = get_camera_hub() if CAMERA_HUB_AVAILABLE else None
-        service = GestureRecognitionService(host="127.0.0.1", port=5001, camera_hub=hub)
+        from gesture_service import GestureRecognitionService
+        service = GestureRecognitionService(
+            host="127.0.0.1", port=5001, camera_hub=camera_hub
+        )
         service.start_server()
     except ImportError as e:
-        logger.error("GESTURE", f"Failed to import gesture_service_refactored: {e}")
+        logger.error("GESTURE", f"Failed to import gesture_service: {e}")
         raise
 
 
-def start_gaze_emotion_service():
-    """Start gaze + emotion service (port 5002)."""
+def start_gaze_emotion_service(camera_hub=None):
+    """Start gaze + emotion service (port 5002) using the shared camera hub."""
     try:
         import gaze_emotion_service as ge
-        hub = get_camera_hub() if CAMERA_HUB_AVAILABLE else None
-        if hub:
-            ge.set_shared_camera_hub(hub)
+        if camera_hub:
+            ge.set_shared_camera_hub(camera_hub)
         ge.run_tcp_server("127.0.0.1", 5002)
     except ImportError as e:
         logger.error("GAZE_EMOTION", f"Failed to import gaze_emotion_service: {e}")
@@ -259,17 +266,16 @@ def start_gaze_emotion_service():
         try:
             import gaze_emotion_service as ge
             ge.clear_shared_camera_hub()
-        except:
+        except Exception:
             pass
 
 
-def start_yolo_context_service():
-    """Start YOLO context service (port 5003)."""
+def start_yolo_context_service(camera_hub=None):
+    """Start YOLO context service (port 5003) using the shared camera hub."""
     try:
         import yolo_context_service as yc
-        hub = get_camera_hub() if CAMERA_HUB_AVAILABLE else None
-        if hub:
-            yc.set_shared_camera_hub(hub)
+        if camera_hub:
+            yc.set_shared_camera_hub(camera_hub)
         yc.run_tcp_server("127.0.0.1", 5003)
     except ImportError as e:
         logger.error("YOLO_CONTEXT", f"Failed to import yolo_context_service: {e}")
@@ -278,7 +284,7 @@ def start_yolo_context_service():
         try:
             import yolo_context_service as yc
             yc.clear_shared_camera_hub()
-        except:
+        except Exception:
             pass
 
 
@@ -306,22 +312,41 @@ class UnifiedMuseumServer:
         self.shutdown_event = threading.Event()
 
     def initialize_services(self):
-        """Initialize all service wrappers."""
+        """
+        Create the single shared camera hub, then build service wrappers.
+        Vision services (gesture, gaze, YOLO) all receive the SAME hub so
+        the webcam VideoCapture is opened only once.
+        """
+        # Build hub first — needed by closures below
+        self.camera_hub = _make_camera_hub()
+        hub = self.camera_hub  # captured by lambdas
+
         self.services = {
-            "FACE_AUTH": ServiceWrapper("FACE_AUTH", start_face_auth_service, 5000),
-            "GESTURE": ServiceWrapper("GESTURE", start_gesture_service, 5001),
-            "GAZE_EMOTION": ServiceWrapper("GAZE_EMOTION", start_gaze_emotion_service, 5002),
-            "YOLO_CONTEXT": ServiceWrapper("YOLO_CONTEXT", start_yolo_context_service, 5003),
-            "HAND_TRACK": ServiceWrapper("HAND_TRACK", start_hand_track_service, 5004),
+            "FACE_AUTH":    ServiceWrapper(
+                "FACE_AUTH",
+                start_face_auth_service,
+                5000),
+            "GESTURE":      ServiceWrapper(
+                "GESTURE",
+                lambda: start_gesture_service(camera_hub=hub),
+                5001),
+            "GAZE_EMOTION": ServiceWrapper(
+                "GAZE_EMOTION",
+                lambda: start_gaze_emotion_service(camera_hub=hub),
+                5002),
+            "YOLO_CONTEXT": ServiceWrapper(
+                "YOLO_CONTEXT",
+                lambda: start_yolo_context_service(camera_hub=hub),
+                5003),
+            "HAND_TRACK":   ServiceWrapper(
+                "HAND_TRACK",
+                start_hand_track_service,
+                5004),
         }
 
     def start_all_services(self):
-        """Start all enabled services."""
-        logger.info("MAIN", "Starting all services...")
-
-        # Initialize camera hub first if available
-        if CAMERA_HUB_AVAILABLE:
-            self.camera_hub = get_camera_hub()
+        """Start all enabled services (camera hub already created in initialize_services)."""
+        logger.info("MAIN", "Starting all services…")
 
         # Start each service
         for name, service in self.services.items():
