@@ -4,10 +4,10 @@ user1,Sara,Nabil,11,female,white,0,python/data/faces/user1.jpg,visitor
 user2,Omar,Farid,16,male,asian,0,python/data/faces/user2.jpg,visitor
 user3,Youssef,Khalaf,22,male,indian,0,python/data/faces/user3.jpg,visitor
 user4,Youssef,Afifi,21,male,black,0,python/data/faces/user4.jpg,visitor
-user5,Ana,Lopez,34,female,latino,AnaPhone,python/data/faces/user5.jpg,visitor
-user6,Yousef,Kamal,45,male,indian,YousefCar,python/data/faces/user6.jpg,visitor
-user7,Nour,Salem,52,female,asian,NourTablet,python/data/faces/user7.jpg,visitor
-user8,Ibrahim,Saad,66,male,black,IbrahimPhone,python/data/faces/user8.jpg,visitor
-user9,Mona,Fouad,71,female,white,MonaWatch,python/data/faces/user9.jpg,visitor
-user10,Carlos,Diaz,28,male,latino,CarlosPhone,python/data/faces/user10.jpg,visitor
-user11,Mei,Lin,67,female,asian,MeiPhone,python/data/faces/user11.jpg,visitor
+user5,Ana,Lopez,34,female,latino,0,python/data/faces/user5.jpg,visitor
+user6,Yousef,Kamal,45,male,indian,0,python/data/faces/user6.jpg,visitor
+user7,Nour,Salem,52,female,asian,0,python/data/faces/user7.jpg,visitor
+user8,Ibrahim,Saad,66,male,black,0,python/data/faces/user8.jpg,visitor
+user9,Mona,Fouad,71,female,white,0,python/data/faces/user9.jpg,visitor
+user10,Carlos,Diaz,28,male,latino,0,python/data/faces/user10.jpg,visitor
+user11,Mei,Lin,67,female,asian,0,python/data/faces/user11.jpg,visitor

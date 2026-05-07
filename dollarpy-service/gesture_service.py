@@ -224,8 +224,8 @@ class GestureRecognitionService:
                 camera_thread.start()
                 return True
 
-            cam_idx = int(os.environ.get("GESTURE_CAMERA", "0"))
-            cap = cv2.VideoCapture(cam_idx)
+            cam_idx = int(os.environ.get("GESTURE_CAMERA", os.environ.get("MUSEUM_CAMERA", "0")))
+            cap = cv2.VideoCapture(cam_idx, cv2.CAP_DSHOW) if os.name == "nt" else cv2.VideoCapture(cam_idx)
             if not cap.isOpened():
                 print(f"Error: Could not open camera index {cam_idx} for client {addr} (set GESTURE_CAMERA)")
                 return False

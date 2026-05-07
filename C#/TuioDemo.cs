@@ -1560,7 +1560,7 @@ public class TuioDemo : Form, TuioListener
         }
 
         // 127.0.0.1: Python services bind IPv4 only; "localhost" can resolve to ::1 and never connect.
-        gazeEmotionClient = new GazeEmotionClient("127.0.0.1", 5002);
+        gazeEmotionClient = new GazeEmotionClient("127.0.0.1", 5002, this);
         bool ok = await gazeEmotionClient.ConnectAsync();
         if (!ok)
         {
