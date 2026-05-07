@@ -315,6 +315,11 @@ public class BluetoothTwoFactorService
             if (response.StartsWith("ERROR:"))
             {
                 string errorMsg = response.Substring(6);
+                if (errorMsg.Contains("PyBluez not installed") || errorMsg.Contains("disabled"))
+                {
+                    status = "Bluetooth skipped (not available on this machine).";
+                    return true;  // Skip Bluetooth if not installed or disabled
+                }
                 status = "Bluetooth 2FA failed. " + errorMsg;
                 return false;
             }

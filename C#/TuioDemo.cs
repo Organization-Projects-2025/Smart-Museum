@@ -131,6 +131,7 @@ public class TuioDemo : Form, TuioListener
 	private volatile bool _authInProgress = false;
 	private string _authStatus = "Waiting for Face ID";
 	private VisitorProfile _visitorProfile;
+	private UserPreferencesManager _preferencesManager;
 
 	private Color _themePrimary = Color.FromArgb(12, 12, 12);
 	private Color _themeSecondary = Color.FromArgb(212, 175, 55);
@@ -148,19 +149,47 @@ public class TuioDemo : Form, TuioListener
 	private bool _hasLastMenuMarkerY = false;
 	private float _lastMenuMarkerY = 0.5f;
 	private float _menuGestureAccumY = 0f;
+	private DateTime _menuMarkerLostTime = DateTime.MinValue;
 	private DateTime _lastTouchTime = DateTime.MinValue;
 	private readonly Dictionary<string, int> _lastPalmX = new Dictionary<string, int>();
 	private readonly Dictionary<string, DateTime> _lastPalmTime = new Dictionary<string, DateTime>();
 	private DateTime _lastWaveTime = DateTime.MinValue;
 	private const int CircularMenuMarkerSymbolId = 0;
 	private const bool MenuUpIsPositiveY = true;
-	private const float MenuMoveTriggerDeltaY = 0.035f;
+	private const float MenuMoveTriggerDeltaY = 0.04f; // Reduced from 0.06f for easier swipe detection
 	private const float MenuMoveNeutralBandY = 0.015f;
 
-	// ── Recognition countdown ────────────────────────────────────────────────
 	private System.Windows.Forms.Timer _recognitionTimer;
 	private float _recognitionProgress = 0f;   // 0..1
 	private const int RecognitionMs    = 2500; // ms before slideshow starts
+
+	// ── Toast notification ───────────────────────────────────────────────────
+	private string   _toastMessage = "";
+	private DateTime _toastExpiry  = DateTime.MinValue;
+
+	private void ShowToast(string message)
+	{
+		_toastMessage = message;
+		_toastExpiry  = DateTime.Now.AddMilliseconds(2500);
+		SafeInvalidate();
+	}
+
+	private void DrawToast(Graphics g)
+	{
+		if (string.IsNullOrEmpty(_toastMessage)) return;
+		if (DateTime.Now > _toastExpiry) { _toastMessage = ""; return; }
+
+		double remaining = (_toastExpiry - DateTime.Now).TotalMilliseconds;
+		int alpha = remaining < 500 ? (int)(255 * remaining / 500) : 255;
+
+		var rect = new RectangleF(_W / 2f - 300, _H - 90, 600, 54);
+		using (var bg = new SolidBrush(Color.FromArgb(alpha * 220 / 255, 20, 20, 20)))
+			g.FillRectangle(bg, rect.X, rect.Y, rect.Width, rect.Height);
+		using (var pen = new Pen(Color.FromArgb(alpha, _themeSecondary), 1.5f))
+			g.DrawRectangle(pen, rect.X, rect.Y, rect.Width, rect.Height);
+		DrawCentered(g, _toastMessage, _fontBody,
+			Color.FromArgb(alpha, _themeSecondary), rect);
+	}
 
 	// ── Single-figure object interaction ────────────────────────────────────
 	private SceneObjectDef _hoverObject;
@@ -278,6 +307,10 @@ public class TuioDemo : Form, TuioListener
 		};
 		_handReceiver.Start();
 
+		string workspaceRoot = GetWorkspaceRoot();
+		string prefsPath = Path.Combine(workspaceRoot, "C#", "content", "auth", "user_preferences.csv");
+		_preferencesManager = new UserPreferencesManager(prefsPath);
+
 		InitializeStoryLibrary();
 		InitializeCircularMenu();
 		StartLoginFlow();
@@ -338,6 +371,19 @@ public class TuioDemo : Form, TuioListener
 
 				_visitorProfile = ProfileMapper.ToVisitorProfile(selected);
 				_authStatus = "Welcome " + _visitorProfile.FullName + " (" + _visitorProfile.Language + ")";
+
+				// Load user preferences (favorites, watched)
+				UserPreferences prefs = _preferencesManager.Load(_visitorProfile.FaceUserId);
+				if (prefs != null)
+				{
+					_circularMenu.Favorites.Clear();
+					_circularMenu.Watched.Clear();
+					foreach (var fav in prefs.Favorites)
+						_circularMenu.Favorites.Add(fav);
+					foreach (var watched in prefs.Watched)
+						_circularMenu.Watched.Add(watched);
+					Console.WriteLine($"[TuioDemo] Loaded {prefs.Favorites.Count} favorites and {prefs.Watched.Count} watched items for {_visitorProfile.FullName}");
+				}
 
 				if (IsHandleCreated)
 				{
@@ -416,11 +462,7 @@ public class TuioDemo : Form, TuioListener
 	private void InitializeCircularMenu()
 	{
 		_circularMenu.OnAction = HandleMenuAction;
-
-		// Seed favorites with stable defaults.
-		AddFavoriteIfExists("figure:1");
-		AddFavoriteIfExists("figure:2");
-		AddFavoriteIfExists("relationship:1_2");
+		// Favorites and watched are loaded from user preferences after login
 	}
 
 	private void RegisterStory(string key, string title, List<ContentSlide> slides)
@@ -451,12 +493,13 @@ public class TuioDemo : Form, TuioListener
 
 	private void HandleMenuAction(string action, string payload)
 	{
+		Console.WriteLine($"[TuioDemo] HandleMenuAction: action={action} payload={payload}");
 		if (action == "Favorite")
 		{
 			string key = GetCurrentFigureStoryKey();
 			if (string.IsNullOrEmpty(key))
 			{
-				_authStatus = "No active figure to favorite right now.";
+				ShowToast("No active figure to favorite.");
 				return;
 			}
 
@@ -466,11 +509,25 @@ public class TuioDemo : Form, TuioListener
 				if (!_circularMenu.Favorites.Contains(title))
 				{
 					_circularMenu.Favorites.Add(title);
-					_authStatus = "Added to favorites: " + title;
+					ShowToast("Added to Favorites: " + title);
 				}
 				else
 				{
-					_authStatus = "Already in favorites: " + title;
+					ShowToast("Already in Favorites: " + title);
+				}
+
+				// Auto-play the slideshow after a short delay so toast is visible
+				List<ContentSlide> slides;
+				if (_storySlidesByKey.TryGetValue(key, out slides))
+				{
+					_circularMenu.Hide();
+					var t = new System.Windows.Forms.Timer { Interval = 1200 };
+					t.Tick += (s, e) =>
+					{
+						t.Stop(); t.Dispose();
+						StartLockedSlideShow(slides, SlideShowContext.MenuStory, key);
+					};
+					t.Start();
 				}
 			}
 			return;
@@ -488,6 +545,20 @@ public class TuioDemo : Form, TuioListener
 		{
 			_circularMenu.Hide();
 			StopAndUnlockSlides();
+
+			// Save user preferences before logout
+			if (_visitorProfile != null)
+			{
+				var prefs = new UserPreferences
+				{
+					UserId = _visitorProfile.FaceUserId,
+					Favorites = new List<string>(_circularMenu.Favorites),
+					Watched = new List<string>(_circularMenu.Watched)
+				};
+				_preferencesManager.Save(prefs);
+				Console.WriteLine($"[TuioDemo] Saved preferences for {_visitorProfile.FullName}");
+			}
+
 			_visitorProfile = null;
 			_authStatus = "Logged out.";
 			StartLoginFlow();
@@ -519,27 +590,50 @@ public class TuioDemo : Form, TuioListener
 
 		if ((action == "Favorites" || action == "Watched") && !string.IsNullOrEmpty(payload))
 		{
+			Console.WriteLine($"[TuioDemo] Playing from {action}: payload='{payload}'");
+			Console.WriteLine($"[TuioDemo] Available story titles: {string.Join(", ", _storyTitleByKey.Values.Select(s => "'" + s + "'"))}");
 			string key;
 			if (_storyKeyByTitle.TryGetValue(payload, out key))
 			{
+				Console.WriteLine($"[TuioDemo] Found key: {key}");
 				List<ContentSlide> slides;
 				if (_storySlidesByKey.TryGetValue(key, out slides))
 				{
+					Console.WriteLine($"[TuioDemo] Found {slides.Count} slides, starting slideshow");
 					_circularMenu.Hide();
 					StartLockedSlideShow(slides, SlideShowContext.MenuStory, key);
 				}
+				else
+				{
+					Console.WriteLine($"[TuioDemo] ERROR: No slides found for key {key}");
+				}
 			}
+			else
+			{
+				Console.WriteLine($"[TuioDemo] ERROR: Payload '{payload}' not found in story titles");
+				Console.WriteLine($"[TuioDemo] Available titles in _storyKeyByTitle: {string.Join(", ", _storyKeyByTitle.Keys.Select(s => "'" + s + "'"))}");
+			}
+			return;
 		}
+
+		Console.WriteLine($"[TuioDemo] UNHANDLED ACTION: action={action} payload={payload}");
 	}
 
 	private string GetCurrentFigureStoryKey()
 	{
 		if (_activeFig != null)
+		{
+			Console.WriteLine($"[TuioDemo] GetCurrentFigureStoryKey: _activeFig={_activeFig.Name}");
 			return "figure:" + _activeFig.SymbolId;
+		}
 
 		if (!string.IsNullOrEmpty(_activeStoryKey) && _activeStoryKey.StartsWith("figure:", StringComparison.OrdinalIgnoreCase))
+		{
+			Console.WriteLine($"[TuioDemo] GetCurrentFigureStoryKey: _activeStoryKey={_activeStoryKey}");
 			return _activeStoryKey;
+		}
 
+		Console.WriteLine($"[TuioDemo] GetCurrentFigureStoryKey: returning null (_activeFig={_activeFig}, _activeStoryKey={_activeStoryKey})");
 		return null;
 	}
 
@@ -1015,17 +1109,56 @@ public class TuioDemo : Form, TuioListener
 			_menuGestureAccumY = 0f;
 			_hasLastMenuMarkerY = true;
 			_lastMenuMarkerY = marker.Y;
+			_menuMarkerLostTime = DateTime.MinValue;
 		}
 
-		// If menu was opened by marker control, hide when marker is removed.
-		if (_circularMenu.IsVisible && marker == null && hands.Count == 0)
+		// If marker disappears, fire any pending gesture before deciding to hide.
+		if (_circularMenu.IsVisible && marker == null)
 		{
-			_circularMenu.Hide();
-			_hasLastMenuMarkerY = false;
-			_menuGestureArmed = true;
-			_menuGestureAccumY = 0f;
+			// First frame marker is gone — record the time
+			if (_menuMarkerLostTime == DateTime.MinValue)
+				_menuMarkerLostTime = DateTime.Now;
+
+			// If accumulated movement was enough for a select, fire it now
+			if (_menuGestureArmed)
+			{
+				float upDelta = MenuUpIsPositiveY ? (-_menuGestureAccumY) : _menuGestureAccumY;
+				float downDelta = -upDelta;
+				if (upDelta >= MenuMoveTriggerDeltaY)
+				{
+					_circularMenu.MoveUpAction();
+					_menuGestureArmed = false;
+					_menuGestureAccumY = 0f;
+					_menuMarkerLostTime = DateTime.MinValue;
+					return;
+				}
+				else if (downDelta >= MenuMoveTriggerDeltaY)
+				{
+					_circularMenu.MoveDownAction();
+					_menuGestureArmed = false;
+					_menuGestureAccumY = 0f;
+					_menuMarkerLostTime = DateTime.MinValue;
+					return;
+				}
+			}
+
+			// Only hide if marker has been gone for more than 1.5 seconds and no hands
+			if (hands.Count == 0 && (DateTime.Now - _menuMarkerLostTime).TotalMilliseconds > 1500)
+			{
+				_circularMenu.Hide();
+				_hasLastMenuMarkerY = false;
+				_menuGestureArmed = true;
+				_menuGestureAccumY = 0f;
+				_menuMarkerLostTime = DateTime.MinValue;
+				return;
+			}
+
+			// Marker temporarily gone — keep menu open, don't process further
 			return;
 		}
+
+		// Marker is back — reset lost timer
+		_menuMarkerLostTime = DateTime.MinValue;
 
 		if (!_circularMenu.IsVisible && DetectWaveHi(hands))
 		{
@@ -1039,7 +1172,12 @@ public class TuioDemo : Form, TuioListener
 		if (!_circularMenu.IsVisible) return;
 
 		// Hide/show Favorite entry dynamically based on whether a figure context exists.
-		_circularMenu.ShowFavorite = !string.IsNullOrEmpty(GetCurrentFigureStoryKey());
+		bool shouldShowFavorite = !string.IsNullOrEmpty(GetCurrentFigureStoryKey());
+		if (shouldShowFavorite != _circularMenu.ShowFavorite)
+		{
+			Console.WriteLine($"[TuioDemo] ShowFavorite changed: {_circularMenu.ShowFavorite} -> {shouldShowFavorite}");
+			_circularMenu.ShowFavorite = shouldShowFavorite;
+		}
 
 		if (marker != null)
 		{
@@ -1051,35 +1189,38 @@ public class TuioDemo : Form, TuioListener
 				_hasLastMenuMarkerY = true;
 				_lastMenuMarkerY = marker.Y;
 				_menuGestureAccumY = 0f;
+				_menuGestureArmed = true;
 			}
 			else
 			{
 				float frameDy = marker.Y - _lastMenuMarkerY;
 				_menuGestureAccumY += frameDy;
 
-				// Rearm gestures when marker returns near neutral vertical band.
-				if (Math.Abs(marker.Y - 0.5f) <= MenuMoveNeutralBandY)
-				{
-					_menuGestureArmed = true;
-					_menuGestureAccumY = 0f;
-				}
-
 				// upDelta is positive when marker moves UP (Y decreases towards top of screen).
 				// downDelta is positive when marker moves DOWN (Y increases towards bottom of screen).
 				float upDelta = MenuUpIsPositiveY ? (-_menuGestureAccumY) : _menuGestureAccumY;
 				float downDelta = -upDelta;
 
+				Console.WriteLine($"[Menu] markerY={marker.Y:F3} accum={_menuGestureAccumY:F3} up={upDelta:F3} down={downDelta:F3} armed={_menuGestureArmed} selected={_circularMenu.SelectedTop}");
+
 				if (_menuGestureArmed && upDelta >= MenuMoveTriggerDeltaY)
 				{
+					Console.WriteLine($"[Menu] UP SWIPE fired → TopIndex={_circularMenu.TopIndex} item={_circularMenu.SelectedTop}");
 					_circularMenu.MoveUpAction();
 					_menuGestureArmed = false;
 					_menuGestureAccumY = 0f;
 				}
 				else if (_menuGestureArmed && downDelta >= MenuMoveTriggerDeltaY)
 				{
+					Console.WriteLine($"[Menu] DOWN SWIPE fired → TopIndex={_circularMenu.TopIndex} item={_circularMenu.SelectedTop}");
 					_circularMenu.MoveDownAction();
 					_menuGestureArmed = false;
 					_menuGestureAccumY = 0f;
+				}
+				else if (!_menuGestureArmed && Math.Abs(upDelta) < 0.01f && Math.Abs(downDelta) < 0.01f)
+				{
+					// Rearm when marker is relatively still (allows chaining swipes)
+					_menuGestureArmed = true;
 				}
 
 				_lastMenuMarkerY = marker.Y;
@@ -1202,13 +1343,25 @@ public class TuioDemo : Form, TuioListener
 
 		DrawStarField(g);
 
-		switch (_state)
+		// If a locked slideshow is playing, draw it regardless of state
+		if (_slideshowLocked && _currentSlide != null)
 		{
-			case AppState.Idle:          DrawIdle(g);          break;
-			case AppState.Recognition:   DrawRecognition(g);   break;
-			case AppState.SingleFigure:  DrawSingleFigure(g);  break;
-			case AppState.PairNotFacing: DrawPairNotFacing(g); break;
-			case AppState.PairFacing:    DrawPairFacing(g);    break;
+			var contentArea = new Rectangle(50, 50, _W - 100, _H - 100);
+			DrawSlide(g, _currentSlide, contentArea, _themeSecondary, _fadeAlpha);
+			DrawProgressDots(g, _slideShow.CurrentIndex, _slideShow.TotalSlides,
+							 _W / 2, _H - 26, _themeSecondary);
+			DrawOuterBorder(g);
+		}
+		else
+		{
+			switch (_state)
+			{
+				case AppState.Idle:          DrawIdle(g);          break;
+				case AppState.Recognition:   DrawRecognition(g);   break;
+				case AppState.SingleFigure:  DrawSingleFigure(g);  break;
+				case AppState.PairNotFacing: DrawPairNotFacing(g); break;
+				case AppState.PairFacing:    DrawPairFacing(g);    break;
+			}
 		}
 
 		if (_circularMenu.IsVisible)
@@ -1216,6 +1369,9 @@ public class TuioDemo : Form, TuioListener
 
 		// Hand overlay always drawn on top regardless of app state
 		DrawHandOverlay(g);
+
+		// Toast always on top
+		DrawToast(g);
 	}
 
 	private void DrawLoginScreen(Graphics g)
@@ -1696,6 +1852,23 @@ public class TuioDemo : Form, TuioListener
 				_fontHint, Color.FromArgb(alpha, Color.FromArgb(160, CPapyrus)),
 				new RectangleF(area.X, area.Y + area.Height / 2f - 18, area.Width, 36));
 		}
+
+		// Title overlay — show figure name and period at bottom of image
+		if (_activeFig != null)
+		{
+			int barH = 80;
+			var bar = new Rectangle(area.X, area.Bottom - barH, area.Width, barH);
+			using (var bg = new SolidBrush(Color.FromArgb(alpha * 200 / 255, 0, 0, 0)))
+				g.FillRectangle(bg, bar);
+
+			DrawCentered(g, _activeFig.Name,
+				_fontTitle, Color.FromArgb(alpha, _themeSecondary),
+				new RectangleF(area.X, area.Bottom - barH, area.Width, 50));
+
+			DrawCentered(g, _activeFig.Period,
+				_fontSmall, Color.FromArgb(alpha * 180 / 255, CPapyrus),
+				new RectangleF(area.X, area.Bottom - barH + 46, area.Width, 28));
+		}
 	}
 
 	private void DrawTextSlide(Graphics g, string text, Rectangle area,
@@ -2135,6 +2308,8 @@ public class TuioDemo : Form, TuioListener
 
 	// ─────────────────────────────────────────────────────────────────────────
 	//  Keyboard & Form events
+	// ─────────────────────────────────────────────────────────────────────────
+
 	// ─────────────────────────────────────────────────────────────────────────
 
 	private void OnKeyDown(object sender, KeyEventArgs e)

@@ -229,8 +229,12 @@ public static class MuseumData
                 Period           = "c. 1341 BC – 1323 BC",
                 ShortDescription = "The Boy King",
                 AccentColor      = Color.FromArgb(218, 165, 32),
+                MarkerImagePath  = "content/figures/3_tutankhamun/marker_tutankhamun.png",
                 SoloSlides       = new List<ContentSlide>
                 {
+                    new ContentSlide { Type = ContentType.Image,
+                        Content    = "content/figures/3_tutankhamun/marker_tutankhamun.png",
+                        DurationMs = 6000 },
                     new ContentSlide { Type = ContentType.Text,
                         Content    = "Tutankhamun became Pharaoh at approximately 8–9 years of age. He reigned for roughly a decade before dying at around 18. His relatively short, unremarkable reign would have been forgotten — had his tomb not survived nearly intact for 3,000 years.",
                         DurationMs = 9000 },
@@ -303,8 +307,12 @@ public static class MuseumData
                 Period           = "c. 1380 BC – 1336 BC",
                 ShortDescription = "The Heretic Pharaoh",
                 AccentColor      = Color.FromArgb(255, 160, 50),
+                MarkerImagePath  = "content/figures/6_akhenaten/marker_akhenaten.png",
                 SoloSlides       = new List<ContentSlide>
                 {
+                    new ContentSlide { Type = ContentType.Image,
+                        Content    = "content/figures/6_akhenaten/marker_akhenaten.png",
+                        DurationMs = 6000 },
                     new ContentSlide { Type = ContentType.Text,
                         Content    = "Akhenaten — born Amenhotep IV — overturned thousands of years of Egyptian polytheism. He declared the sun disk Aten to be the sole true god, closed the temples of other gods, and redirected all religious and state resources to Aten worship.",
                         DurationMs = 9000 },
