@@ -142,6 +142,18 @@ public class SessionAnalyticsRecorder
                     ["segments"] = new JArray(segments.Select(SegmentToJson))
                 };
                 File.WriteAllText(path, doc.ToString(Formatting.Indented));
+
+                // Mirror save to python/data/analytics/ for Python-side access
+                try
+                {
+                    string pyRoot = Path.Combine(
+                        Path.GetDirectoryName(Path.GetDirectoryName(analyticsRoot)), // workspace root
+                        "python", "data", "analytics");
+                    Directory.CreateDirectory(pyRoot);
+                    string pyPath = Path.Combine(pyRoot, Path.GetFileName(path));
+                    File.WriteAllText(pyPath, doc.ToString(Formatting.Indented));
+                }
+                catch { /* best effort */ }
             }
             catch
             {

@@ -29,10 +29,6 @@ pybluez2>=0.40
 # ── MediaPipe — gaze, hand tracking, gesture ─────────────────────────────────
 mediapipe>=0.10.30
 
-# ── EyeTrax — calibrated gaze estimation (port 5002) ─────────────────────────
-# Replaces manual iris geometry. Requires one-time 9-point calibration per session.
-eyetrax>=0.1.0
-
 # ── HSEmotion — facial expression recognition (port 5002) ────────────────────
 # Replaces DeepFace. Uses EfficientNet-B0 trained on AffectNet via ONNX.
 hsemotion-onnx>=0.3.0

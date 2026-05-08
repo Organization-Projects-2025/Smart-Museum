@@ -2,6 +2,9 @@
 gaze_emotion_service.py — TCP server on port 5002.
 Streams gaze + emotion JSON to C#.
 
+Gaze:    MediaPipe FaceLandmarker — iris offset + head pose (manual geometry)
+Emotion: HSEmotion ONNX — EfficientNet-B0 trained on AffectNet
+
 Wire protocol:
   PING   → {"status":"ok"}
   STREAM → {"status":"ok"} then continuous JSON lines
@@ -16,16 +19,7 @@ import json, os, select, socket, sys, threading, time, urllib.request
 import cv2
 import numpy as np
 
-# ── EyeTrax (gaze) ───────────────────────────────────────────────────────────
-try:
-    from eyetrax import GazeEstimator, run_9_point_calibration
-    _EYETRAX_OK = True
-    print("[GazeEmotion] EyeTrax ready")
-except Exception as e:
-    _EYETRAX_OK = False
-    print(f"[GazeEmotion] EyeTrax unavailable: {e}")
-
-# ── MediaPipe (face detection for emotion bbox + fallback gaze) ───────────────
+# ── MediaPipe (gaze + face detection) ────────────────────────────────────────
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _MODEL_PATH = os.path.join(_SCRIPT_DIR, "face_landmarker.task")
 _MODEL_URL  = ("https://storage.googleapis.com/mediapipe-models/face_landmarker/"
@@ -55,7 +49,7 @@ except Exception as e:
 _HSE_LABELS = ["Anger","Contempt","Disgust","Fear","Happiness","Neutral","Sadness","Surprise"]
 _HSE_TO_STD = {
     "Anger":     "angry",
-    "Contempt":  "disgust",  # merge into disgust
+    "Contempt":  "disgust",
     "Disgust":   "disgust",
     "Fear":      "fear",
     "Happiness": "happy",
@@ -65,15 +59,15 @@ _HSE_TO_STD = {
 }
 _EMOTIONS = ("angry","disgust","fear","happy","sad","surprise","neutral")
 
-# Temporal smoothing — rolling average over last N results
+# Temporal smoothing for emotion
 _SMOOTH_WINDOW   = 6
 _emotion_history: list = []
 
 # ── Landmark indices ──────────────────────────────────────────────────────────
-_LE_OUT,_LE_IN   = 33, 133
-_RE_IN, _RE_OUT  = 362, 263
-_NOSE,_FORE,_CHIN= 1,  10, 152
-_L_IRIS,_R_IRIS  = 468, 473
+_LE_OUT, _LE_IN  = 33,  133
+_RE_IN,  _RE_OUT = 362, 263
+_NOSE, _FORE, _CHIN = 1, 10, 152
+_L_IRIS, _R_IRIS    = 468, 473
 
 # ── Hub ───────────────────────────────────────────────────────────────────────
 _hub = None
@@ -97,84 +91,11 @@ def _pt(lms, i, w, h):
     p = lms.landmark[i]
     return np.array([p.x*w, p.y*h], dtype=np.float64)
 
-# EyeTrax estimator — loads saved calibration model if available
-_gaze_estimator  = None
-_gaze_calibrated = False
-_EYETRAX_MODEL   = os.path.join(_SCRIPT_DIR, "eyetrax_model.pkl")
-
-def _ensure_gaze_estimator():
-    global _gaze_estimator, _gaze_calibrated
-    if _gaze_estimator is None and _EYETRAX_OK:
-        _gaze_estimator = GazeEstimator(face_landmarker_model=_ensure_model())
-        # Load saved calibration if it exists
-        if os.path.isfile(_EYETRAX_MODEL):
-            try:
-                _gaze_estimator.load_model(_EYETRAX_MODEL)
-                _gaze_calibrated = True
-                print(f"[GazeEmotion] EyeTrax model loaded from {_EYETRAX_MODEL}")
-            except Exception as e:
-                print(f"[GazeEmotion] Could not load EyeTrax model: {e}")
-        else:
-            print(f"[GazeEmotion] No calibration found at {_EYETRAX_MODEL}")
-            print(f"[GazeEmotion] Run: .venv\\Scripts\\python.exe Development\\calibrate_gaze.py")
-    return _gaze_estimator
-
-# Load at module startup so it's ready when the first frame arrives
-if _EYETRAX_OK:
-    _ensure_gaze_estimator()
-    if _gaze_calibrated:
-        print("[GazeEmotion] EyeTrax gaze ACTIVE (calibrated)")
-    else:
-        print("[GazeEmotion] EyeTrax gaze INACTIVE — run: .venv\\Scripts\\python.exe Development\\calibrate_gaze.py")
-
-def _run_calibration():
-    """Run 9-point calibration in-process. Must be called from main thread."""
-    global _gaze_calibrated
-    _gaze_calibrated = False
-    est = _ensure_gaze_estimator()
-    if est is None:
-        return
-    cam = int(os.environ.get("MUSEUM_CAMERA", "0"))
-    print("[GazeEmotion] Starting 9-point calibration...")
-    try:
-        run_9_point_calibration(est, camera_index=cam)
-        est.save_model(_EYETRAX_MODEL)
-        _gaze_calibrated = True
-        print("[GazeEmotion] Calibration complete and saved")
-    except Exception as e:
-        _gaze_calibrated = False
-        print(f"[GazeEmotion] Calibration failed: {e}")
-
-def _gaze_eyetrax(frame_bgr):
-    """Use EyeTrax to predict gaze. Returns (gx, gy) normalised 0-1 or None."""
-    if not _gaze_calibrated or _gaze_estimator is None:
-        return None
-    try:
-        result = _gaze_estimator.extract_features(frame_bgr)
-        if result is None:
-            return None
-        features, is_blink = result
-        if is_blink or features is None:
-            return None
-        pred = _gaze_estimator.predict(features.reshape(1, -1))
-        gx = float(np.clip(1.0 - pred[0][0] / 1920.0, 0, 1))
-        gy = float(np.clip(pred[0][1] / 1080.0, 0, 1))
-        return gx, gy
-    except Exception as e:
-        print(f"[GazeEmotion] EyeTrax error: {e}")
-        return None
-
-# Fallback: manual iris geometry (used before calibration)
-_LE_OUT,_LE_IN   = 33, 133
-_RE_IN, _RE_OUT  = 362, 263
-_NOSE,_FORE,_CHIN= 1,  10, 152
-_L_IRIS,_R_IRIS  = 468, 473
-
-def _gaze_manual(lms, w, h):
-    """Fallback iris-based gaze before EyeTrax is calibrated."""
-    le_o,le_i = _pt(lms,_LE_OUT,w,h), _pt(lms,_LE_IN,w,h)
-    re_i,re_o = _pt(lms,_RE_IN, w,h), _pt(lms,_RE_OUT,w,h)
-    li,  ri   = _pt(lms,_L_IRIS,w,h), _pt(lms,_R_IRIS,w,h)
+def _gaze(lms, w, h):
+    """Iris offset + head pose → normalised screen gaze (0-1)."""
+    le_o, le_i = _pt(lms,_LE_OUT,w,h), _pt(lms,_LE_IN,w,h)
+    re_i, re_o = _pt(lms,_RE_IN, w,h), _pt(lms,_RE_OUT,w,h)
+    li,   ri   = _pt(lms,_L_IRIS,w,h), _pt(lms,_R_IRIS,w,h)
     lw = max(1e-6, np.linalg.norm(le_o-le_i))
     rw = max(1e-6, np.linalg.norm(re_o-re_i))
     ox = ((li[0]-(le_o+le_i)[0]*.5)/lw + (ri[0]-(re_o+re_i)[0]*.5)/rw)*.5
@@ -189,15 +110,14 @@ def _gaze_manual(lms, w, h):
     return gx, gy
 
 def _emotion(frame_bgr, face_bbox):
-    """Crop face from frame and run HSEmotion. Returns smoothed emotion dict or None."""
+    """Crop face and run HSEmotion. Returns smoothed emotion dict or None."""
     global _emotion_history
     if not _HSE_OK or _emotion_rec is None:
         return None
     try:
-        # Crop face with padding
         top, right, bottom, left = face_bbox
         fh, fw = frame_bgr.shape[:2]
-        pad = 20
+        pad  = 20
         crop = frame_bgr[max(0,top-pad):min(fh,bottom+pad),
                          max(0,left-pad):min(fw,right+pad)]
         if crop.size == 0:
@@ -206,18 +126,15 @@ def _emotion(frame_bgr, face_bbox):
         _, scores = _emotion_rec.predict_emotions(crop, logits=False)
         total = sum(scores) or 1.0
 
-        # Accumulate scores into 7 standard emotions (Contempt → disgust)
         raw: dict = {}
         for label, score in zip(_HSE_LABELS, scores):
             key = _HSE_TO_STD[label]
-            raw[key] = raw.get(key, 0.0) + float(score) / total  # float() converts numpy float32
-        emo = {k: float(raw.get(k, 0.0)) for k in _EMOTIONS}  # ensure all plain Python floats
+            raw[key] = raw.get(key, 0.0) + float(score) / total
+        emo = {k: float(raw.get(k, 0.0)) for k in _EMOTIONS}
 
-        # Normalise
         t = sum(emo.values()) or 1.0
         emo = {k: v/t for k, v in emo.items()}
 
-        # Temporal smoothing
         _emotion_history.append(emo)
         if len(_emotion_history) > _SMOOTH_WINDOW:
             _emotion_history.pop(0)
@@ -225,7 +142,6 @@ def _emotion(frame_bgr, face_bbox):
                     for k in _EMOTIONS}
         t2 = sum(smoothed.values()) or 1.0
         smoothed = {k: float(v/t2) for k, v in smoothed.items()}
-
         return {"dominant": max(smoothed, key=smoothed.get), "emotions": smoothed}
     except Exception as e:
         print(f"[GazeEmotion] HSEmotion error: {e}")
@@ -302,29 +218,25 @@ class _Loop:
                 continue
 
             lms = _LM(list(res.face_landmarks[0]))
+            gx, gy = _gaze(lms, w, h)
 
-            # Gaze: manual iris geometry (EyeTrax disabled — recalibrate for better accuracy)
-            gx, gy = _gaze_manual(lms, w, h)
-
-            # Face bbox from landmarks
-            xs = [lm.x*w for lm in lms.landmark]
-            ys = [lm.y*h for lm in lms.landmark]
+            # Face bbox from landmarks for emotion crop
+            xs   = [lm.x*w for lm in lms.landmark]
+            ys   = [lm.y*h for lm in lms.landmark]
             bbox = (int(min(ys)), int(max(xs)), int(max(ys)), int(min(xs)))
 
-            # Emotion via HSEmotion — run every 4th frame, but always on frame 1
+            # Emotion — every 4th frame, always on frame 1
             if self._fi == 1 or self._fi % 4 == 0:
                 emo = _emotion(frame, bbox)
                 if emo:
                     self._last_emo = emo
 
-            # If emotion not ready yet, still send gaze with neutral placeholder
             if self._last_emo is None:
                 neutral = {k: (1.0/7.0) for k in _EMOTIONS}
                 self._last_emo = {"dominant": "neutral", "emotions": neutral}
 
             if self._fi <= 4 or self._fi % 300 == 0:
-                mode = "EyeTrax" if _gaze_calibrated else "manual"
-                print(f"[GazeEmotion] frame={self._fi} dominant={self._last_emo['dominant']} gx={gx:.2f} gy={gy:.2f} gaze={mode}")
+                print(f"[GazeEmotion] frame={self._fi} dominant={self._last_emo['dominant']} gx={gx:.2f} gy={gy:.2f}")
 
             with self.lock:
                 self.latest = {
@@ -373,10 +285,6 @@ def _handle(conn, addr):
                     if not cmd: continue
                     if cmd == "PING":
                         conn.sendall((json.dumps({"status":"ok"})+"\n").encode())
-                    elif cmd == "CALIBRATE":
-                        # Run EyeTrax calibration in a background thread (opens a window)
-                        threading.Thread(target=_run_calibration, daemon=True).start()
-                        conn.sendall((json.dumps({"status":"ok","msg":"calibration started"})+"\n").encode())
                     elif cmd == "STREAM":
                         streaming = True
                         _loop.start()
