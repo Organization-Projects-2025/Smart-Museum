@@ -3,7 +3,7 @@ Smart Museum — Real-Time Gesture Recognition
 Simple, single-purpose: show camera + detect gestures live.
 """
 
-import os, sys, time, math, pickle, threading, cv2
+import os, sys, time, math, pickle, threading, collections, cv2
 import tkinter as tk
 from tkinter import ttk, messagebox
 from PIL import Image, ImageTk
@@ -17,13 +17,20 @@ import mediapipe_compat as mp
 
 # ── Tunable constants ──────────────────────────────────────────────────────────
 TEMPLATES_FILE   = os.path.join(SCRIPT_DIR, "gesture_templates.pkl")
-VIDEOS_DIR       = os.path.join(SCRIPT_DIR, "gesture_videos")
+VIDEOS_DIR       = os.path.join(SCRIPT_DIR, "gesture_videos")   # legacy subfolder dir
+MOVES_DIR        = os.path.join(SCRIPT_DIR, "moves")            # flat .mp4 files
 MAX_FRAMES       = 60      # sliding window size (frames)
 MIN_POINTS       = 10      # min points to attempt recognition
 MIN_MOTION       = 0.03    # min cumulative index-tip travel (0–1 scale)
 SCORE_THRESHOLD  = 0.30    # min score to show a green "detected" label
-FRAME_DELAY_MS   = 16      # ~60 FPS tkinter loop
+FRAME_DELAY_MS   = 30      # ~33 FPS tkinter loop (was 16)
 INDEX_TIP        = 8       # MediaPipe landmark id
+RECO_EVERY_N     = 7       # run dollarpy every N new hand frames
+TRACK_TIPS       = (4, 8, 12)   # thumb, index, middle fingertip IDs — centroid = pen
+CLEAR_THRESHOLD  = 0.40   # clear buffer on any detection at/above this score
+MP_W, MP_H       = 320, 240  # resolution fed to MediaPipe (smaller = faster)
+DISP_W, DISP_H   = 480, 360  # resolution shown in the GUI label
+SMOOTH_WIN       = 3       # frames to average for tip-position smoothing
 
 
 # ── Colours ────────────────────────────────────────────────────────────────────
@@ -39,6 +46,19 @@ SUBTEXT  = "#888899"
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
+def _is_pointing(lm):
+    """
+    Return True when ONLY the index finger is clearly extended (pointing pose).
+    Uses MediaPipe landmark y-coords: tip.y < pip.y means finger is up
+    (y increases downward in image space).
+    """
+    index_up  = lm.landmark[8].y  < lm.landmark[6].y   # index tip above PIP
+    middle_up = lm.landmark[12].y < lm.landmark[10].y  # middle curled?
+    ring_up   = lm.landmark[16].y < lm.landmark[14].y  # ring curled?
+    pinky_up  = lm.landmark[20].y < lm.landmark[18].y  # pinky curled?
+    return index_up and not middle_up and not ring_up and not pinky_up
+
+
 def _extract_points(frames_buffer):
     """
     Index-fingertip path in raw normalised coords → list[Point].
@@ -46,11 +66,19 @@ def _extract_points(frames_buffer):
     """
     pts = []
     for fd in frames_buffer:
-        lm = fd.get("lm")
-        if lm is None:
-            continue
-        tip = lm.landmark[INDEX_TIP]
-        pts.append(Point(tip.x, tip.y, stroke_id=0))
+        # New live-capture format: pre-smoothed (x, y)
+        if "x" in fd and "y" in fd:
+            pts.append(Point(fd["x"], fd["y"], stroke_id=0))
+        else:
+            # Legacy / template-build format: raw MediaPipe landmark object
+            lm = fd.get("lm")
+            if lm is None:
+                continue
+            # Centroid of index, middle, ring tips
+            tips = [lm.landmark[i] for i in TRACK_TIPS]
+            tx = sum(t.x for t in tips) / len(tips)
+            ty = sum(t.y for t in tips) / len(tips)
+            pts.append(Point(tx, ty, stroke_id=0))
 
     if len(pts) < MIN_POINTS:
         return None
@@ -81,9 +109,103 @@ def _recognize_points(templates, pts):
     return None, 0.0
 
 
+def _build_templates_from_moves(moves_dir, progress_cb=None):
+    """
+    Process every flat video file directly inside `moves_dir`.
+
+    Gesture name is derived from the filename stem:
+        circle.mp4  → "circle"
+        left.mp4    → "left"
+        top.mp4     → "top"
+
+    Only landmark 8 (index fingertip) is used — single-stroke path.
+    Multiple overlapping windows are generated per video for augmentation.
+
+    Returns list[Template].
+    """
+    mp_hands_module = mp.solutions.hands
+    hands = mp_hands_module.Hands(
+        static_image_mode=False,
+        max_num_hands=1,
+        min_detection_confidence=0.5,
+        min_tracking_confidence=0.5,
+    )
+
+    all_templates = []
+    video_exts    = ('.mp4', '.avi', '.mov', '.mkv', '.flv')
+
+    # Collect flat video files (no subdirectory walk)
+    videos = [
+        f for f in os.listdir(moves_dir)
+        if f.lower().endswith(video_exts)
+        and os.path.isfile(os.path.join(moves_dir, f))
+    ]
+
+    if not videos:
+        if progress_cb:
+            progress_cb(f"No video files found in {moves_dir}")
+        hands.__del__()
+        return all_templates
+
+    for vfile in sorted(videos):
+        # Gesture name = filename without extension, lowercased
+        gesture_name = os.path.splitext(vfile)[0].lower().replace(" ", "_").replace("-", "_")
+        vpath = os.path.join(moves_dir, vfile)
+
+        if progress_cb:
+            progress_cb(f"Processing {gesture_name} — {vfile}")
+
+        cap  = cv2.VideoCapture(vpath)
+        fps  = cap.get(cv2.CAP_PROP_FPS) or 60.0
+        step = max(1, round(fps / 60.0))
+        idx  = 0
+        fbuf = []
+
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+            idx += 1
+            if (idx - 1) % step != 0:
+                continue
+            frame = cv2.resize(frame, (640, 480))
+            rgb   = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            res   = hands.process(rgb)
+            if res.multi_hand_landmarks:
+                fbuf.append({"lm": res.multi_hand_landmarks[0]})
+        cap.release()
+
+        if not fbuf:
+            if progress_cb:
+                progress_cb(f"  ✗ {gesture_name}: no hand detected in {vfile}")
+            continue
+
+        # ── Augment: generate multiple overlapping windows ─────────────────
+        windows = [fbuf]  # full sequence always included
+        total   = len(fbuf)
+        for frac in (0.60, 0.75, 0.85):
+            win = max(15, int(total * frac))
+            for s_frac in (0.0, 0.15, 0.30):
+                s = min(int(total * s_frac), total - win)
+                windows.append(fbuf[s : s + win])
+
+        created = 0
+        for win in windows:
+            pts = _extract_points(win)
+            if pts:
+                all_templates.append(Template(gesture_name, pts))
+                created += 1
+
+        if progress_cb:
+            progress_cb(f"  ✓ {gesture_name}: {created} templates from {vfile}")
+
+    hands.__del__()
+    return all_templates
+
+
 def _build_templates_from_videos(videos_dir, progress_cb=None):
     """
-    Process every video in every sub-folder of `videos_dir`.
+    (Legacy) Process every video in every sub-folder of `videos_dir`.
     Returns list[Template].  Skips the 'archive' folder.
     """
     mp_hands_module = mp.solutions.hands
@@ -179,6 +301,14 @@ class GestureGUI:
         self.last_score = 0.0
         self.last_time  = 0.0   # time of last confident detection
         self.cooldown   = 1.5   # seconds before accepting next gesture
+
+        # Per-frame counters for throttled recognition
+        self._new_frames   = 0   # new hand frames since last reco run
+        self._reco_running = False  # guard against overlapping reco threads
+
+        # Pointing-pose gate + tip smoothing
+        self._raw_tip_buf = collections.deque(maxlen=SMOOTH_WIN)  # last N raw tips
+        self._pointing    = False   # True when pointing pose is active
 
         # MediaPipe
         mp_h = mp.solutions.hands
@@ -319,48 +449,84 @@ class GestureGUI:
             self.root.after(FRAME_DELAY_MS, self._update_frame)
             return
 
-        frame = cv2.resize(frame, (640, 480))
-        rgb   = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        # ── Run MediaPipe on a small frame for speed ──────────────────────
+        small = cv2.resize(frame, (MP_W, MP_H))
+        rgb   = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
         res   = self.hands.process(rgb)
+
+        # Display frame (slightly larger than MP input, less than full 640×480)
+        disp  = cv2.resize(frame, (DISP_W, DISP_H))
 
         hand_detected = bool(res.multi_hand_landmarks)
 
         if hand_detected:
             lm = res.multi_hand_landmarks[0]
-            # Draw skeleton
-            self.mp_drawing.draw_landmarks(
-                frame, lm, mp.solutions.hands.Hands.HAND_CONNECTIONS)
 
-            # Push into sliding window
-            self.buf.append({"lm": lm})
+            # Draw skeleton scaled to display frame
+            import copy
+            lm_disp = copy.deepcopy(lm)
+            self.mp_drawing.draw_landmarks(
+                disp, lm_disp, mp.solutions.hands.Hands.HAND_CONNECTIONS)
+
+            # ── Always record — centroid of 3 fingertips, smoothed ────────────
+            self._pointing = True
+            h, w, _ = disp.shape
+
+            # Centroid of index, middle, ring tips
+            tips3 = [lm.landmark[i] for i in TRACK_TIPS]
+            raw_x = sum(t.x for t in tips3) / len(tips3)
+            raw_y = sum(t.y for t in tips3) / len(tips3)
+
+            # ── 3-frame moving-average smoothing ──────────────────────────────
+            self._raw_tip_buf.append((raw_x, raw_y))
+            sx = sum(p[0] for p in self._raw_tip_buf) / len(self._raw_tip_buf)
+            sy = sum(p[1] for p in self._raw_tip_buf) / len(self._raw_tip_buf)
+
+            # Push smoothed centroid into sliding window
+            self.buf.append({"x": sx, "y": sy})
             if len(self.buf) > MAX_FRAMES:
                 self.buf.pop(0)
+            self._new_frames += 1
 
-            # Highlight index fingertip
-            h, w, _ = frame.shape
-            tip = lm.landmark[INDEX_TIP]
-            cx, cy = int(tip.x * w), int(tip.y * h)
-            cv2.circle(frame, (cx, cy), 10, (0, 200, 255), -1)
-            cv2.circle(frame, (cx, cy), 12, (255, 255, 255), 2)
+            # Draw small dots on each of the 3 tracked tips
+            for tid in TRACK_TIPS:
+                t = lm.landmark[tid]
+                tcx, tcy = int(t.x * w), int(t.y * h)
+                cv2.circle(disp, (tcx, tcy), 5, (0, 160, 220), -1)
+            # Draw centroid (larger, white ring)
+            cx, cy = int(sx * w), int(sy * h)
+            cv2.circle(disp, (cx, cy), 9, (0, 200, 255), -1)
+            cv2.circle(disp, (cx, cy), 12, (255, 255, 255), 2)
         else:
             # Hand lost — slowly drain buffer
+            self._pointing = False
+            self._raw_tip_buf.clear()
             if self.buf:
                 self.buf.pop(0)
+            self._new_frames = 0
 
-        # OSD overlay
-        self._draw_osd(frame, hand_detected)
+        # OSD overlay on display frame
+        self._draw_osd(disp, hand_detected)
 
-        # Run recognition if we have enough data
-        if self.templates and len(self.buf) >= MIN_POINTS:
-            self._do_recognition()
+        # ── Throttled recognition: every RECO_EVERY_N new hand frames ─────
+        if (self.templates
+                and len(self.buf) >= MIN_POINTS
+                and self._new_frames >= RECO_EVERY_N
+                and not self._reco_running):
+            self._new_frames = 0
+            self._reco_running = True
+            buf_snap = list(self.buf)   # snapshot so camera loop can keep going
+            threading.Thread(
+                target=self._reco_worker, args=(buf_snap,), daemon=True
+            ).start()
 
         # Update sidebar stats
         self.frames_label.config(
             text=f"Buffer: {len(self.buf)}/{MAX_FRAMES} frames")
 
         # Show frame in GUI
-        img    = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-        imgtk  = ImageTk.PhotoImage(image=img)
+        img   = Image.fromarray(cv2.cvtColor(disp, cv2.COLOR_BGR2RGB))
+        imgtk = ImageTk.PhotoImage(image=img)
         self.video_label.imgtk = imgtk
         self.video_label.config(image=imgtk)
 
@@ -368,50 +534,68 @@ class GestureGUI:
 
     def _draw_osd(self, frame, hand_detected):
         """Draw on-screen debug info on the camera frame."""
-        buf_len = len(self.buf)
-        # Background strip
-        cv2.rectangle(frame, (0, 0), (640, 95), (0, 0, 0), -1)
-        cv2.rectangle(frame, (0, 0), (640, 95), (30, 30, 60), 1)
+        buf_len  = len(self.buf)
+        fh, fw   = frame.shape[:2]
+        bar_max  = fw // 2 - 20
+
+        # Background strip (full width, compact height)
+        cv2.rectangle(frame, (0, 0), (fw, 80), (0, 0, 0), -1)
+        cv2.rectangle(frame, (0, 0), (fw, 80), (30, 30, 60), 1)
 
         # Hand status
-        hand_color  = (0, 230, 118) if hand_detected else (200, 60, 60)
-        hand_text   = "HAND: DETECTED" if hand_detected else "HAND: NOT FOUND"
-        cv2.putText(frame, hand_text, (12, 26),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, hand_color, 2)
+        hand_color = (0, 230, 118) if hand_detected else (200, 60, 60)
+        hand_text  = "HAND: DETECTED" if hand_detected else "HAND: NOT FOUND"
+        cv2.putText(frame, hand_text, (10, 20),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, hand_color, 2)
 
-        # Buffer bar
-        bar_w = int((buf_len / MAX_FRAMES) * 280)
-        cv2.rectangle(frame, (12, 36), (292, 50), (40, 40, 60), -1)
-        bar_color = (0, 200, 100) if buf_len >= MIN_POINTS else (200, 130, 0)
+        # ── Tracking indicator ────────────────────────────────────────────────
+        if hand_detected:
+            rec_color = (0, 200, 255)
+            rec_text  = "● TRACKING"
+        else:
+            rec_color = (120, 120, 140)
+            rec_text  = "○ NO HAND"
+        cv2.putText(frame, rec_text, (fw // 2 - 10, 20),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, rec_color, 2)
+
+        # Buffer bar (scales with frame width)
+        bar_w = int((buf_len / MAX_FRAMES) * bar_max)
+        cv2.rectangle(frame, (10, 30), (10 + bar_max, 42), (40, 40, 60), -1)
+        bar_color = (0, 255, 80) if self._pointing else (200, 130, 0) if buf_len >= MIN_POINTS else (80, 80, 100)
         if bar_w > 0:
-            cv2.rectangle(frame, (12, 36), (12 + bar_w, 50), bar_color, -1)
-        cv2.putText(frame, f"Buffer {buf_len}/{MAX_FRAMES}", (12, 70),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (180, 180, 200), 1)
+            cv2.rectangle(frame, (10, 30), (10 + bar_w, 42), bar_color, -1)
+        cv2.putText(frame, f"Buffer {buf_len}/{MAX_FRAMES}", (10, 62),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 200), 1)
 
-        # Templates
-        cv2.putText(frame, f"Templates: {len(self.templates)}", (310, 26),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (180, 180, 200), 1)
+        # Templates count (right half, below recording indicator)
+        cv2.putText(frame, f"Templates: {len(self.templates)}", (fw // 2 - 10, 62),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 200), 1)
 
-        # Last result on camera
+        # Last result (bottom of frame)
         if self.last_name and (time.time() - self.last_time) < 2.0:
             label = self.last_name.replace("_", " ").upper()
             score_color = (0, 230, 118) if self.last_score >= SCORE_THRESHOLD else (255, 176, 0)
-            cv2.putText(frame, label, (12, 460),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, score_color, 3)
-            cv2.putText(frame, f"{self.last_score:.3f}", (12, 430),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, score_color, 2)
+            cv2.putText(frame, label, (10, fh - 12),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, score_color, 2)
+            cv2.putText(frame, f"{self.last_score:.3f}", (10, fh - 42),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, score_color, 2)
 
     # ── Recognition ──────────────────────────────────────────────────────────
 
-    def _do_recognition(self):
-        pts = _extract_points(self.buf)
-        if pts is None:
-            return
+    def _reco_worker(self, buf_snap):
+        """Run dollarpy in a background thread, post results back to UI thread."""
+        try:
+            pts = _extract_points(buf_snap)
+            if pts is None:
+                return
+            name, score = _recognize_points(self.templates, pts)
+            if name is not None:
+                self.root.after(0, lambda n=name, s=score: self._on_reco_result(n, s))
+        finally:
+            self._reco_running = False
 
-        name, score = _recognize_points(self.templates, pts)
-        if name is None:
-            return
-
+    def _on_reco_result(self, name, score):
+        """Called on the UI thread with dollarpy result."""
         self.last_name  = name
         self.last_score = score
 
@@ -422,14 +606,18 @@ class GestureGUI:
         self._update_score_bar(score)
         self.score_label.config(text=f"Score: {score:.3f}")
 
+        # Always clear buffer once we're confident enough — fresh start for next gesture
+        if score >= CLEAR_THRESHOLD:
+            self.buf.clear()
+            self._new_frames = 0
+            self._raw_tip_buf.clear()
+
         if score >= SCORE_THRESHOLD and not in_cooldown:
             display = name.replace("_", " ").title()
             self.gesture_label.config(text=display, fg=GREEN)
             self.last_time = now
-            self.buf.clear()   # reset after confirmed detection
             self._log(f"✓ {display}  [{score:.3f}]", GREEN)
         elif score >= SCORE_THRESHOLD * 0.6:
-            # Low-confidence hint
             display = name.replace("_", " ").title()
             self.gesture_label.config(text=f"≈ {display}", fg=ORANGE)
             self._log(f"≈ {display}  [{score:.3f}]", ORANGE)
@@ -479,20 +667,31 @@ class GestureGUI:
         self._load_templates(silent=False)
 
     def _on_rebuild(self):
-        """Rebuild templates from gesture_videos in a background thread."""
-        if not os.path.isdir(VIDEOS_DIR):
-            messagebox.showerror("Error", f"Videos folder not found:\n{VIDEOS_DIR}")
+        """Rebuild templates — prefer gesture_videos/ (subfolder layout), fall back to moves/."""
+        if os.path.isdir(VIDEOS_DIR):
+            source_dir   = VIDEOS_DIR
+            build_fn     = _build_templates_from_videos
+            source_label = "gesture_videos/"
+        elif os.path.isdir(MOVES_DIR):
+            source_dir   = MOVES_DIR
+            build_fn     = _build_templates_from_moves
+            source_label = "moves/"
+        else:
+            messagebox.showerror(
+                "Error",
+                f"Neither gesture_videos/ nor moves/ folder was found.\n"
+                f"Expected at:\n  {VIDEOS_DIR}\n  {MOVES_DIR}")
             return
 
         self.rebuild_btn.config(state=tk.DISABLED, text="Building…")
-        self._set_status("Building templates…", ORANGE)
-        self._log("Starting template rebuild…", ORANGE)
+        self._set_status(f"Building templates from {source_label}…", ORANGE)
+        self._log(f"Starting template rebuild from {source_label}…", ORANGE)
 
         def _worker():
             def _cb(msg):
                 self.root.after(0, lambda m=msg: self._log(m, SUBTEXT))
 
-            templates = _build_templates_from_videos(VIDEOS_DIR, progress_cb=_cb)
+            templates = build_fn(source_dir, progress_cb=_cb)
 
             if templates:
                 try:
