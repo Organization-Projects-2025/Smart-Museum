@@ -3,10 +3,12 @@ Gesture Recognition Service — Smart Museum
 TCP socket server (port 5001) for C# integration.
 
 Uses the SAME recognition pipeline as gesture_gui.py:
-  - index-fingertip path (raw normalised coords)
+  - centroid of thumb+index+middle fingertips (landmarks 4, 8, 12)
+  - 3-frame moving-average smoothing on centroid
   - 60-frame sliding window
   - dollarpy $N recogniser with deepcopy (non-mutating)
-  - SharedCameraHub when running inside unified_museum_server
+  - buffer cleared on any detection ≥ CLEAR_THRESHOLD (0.40)
+  - CameraHub (camera_hub.py) when running inside main.py
 
 C# protocol (newline-delimited JSON over TCP):
   Commands  -> plain text strings (one per line)
@@ -25,6 +27,7 @@ import sys
 import socket
 import json
 import threading
+import collections
 import time
 import math
 import pickle
@@ -41,31 +44,55 @@ if SCRIPT_DIR not in sys.path:
 from dollarpy import Recognizer, Template, Point
 import mediapipe_compat as mp
 
+# ── CameraHub (same camera as main.py server) ────────────────────────────────
+# Import from python/server/camera_hub.py so standalone runs use the same
+# camera index (MUSEUM_CAMERA env var) and DSHOW logic as the full server.
+_SERVER_DIR = os.path.join(os.path.dirname(SCRIPT_DIR), "python", "server")
+if _SERVER_DIR not in sys.path:
+    sys.path.insert(0, _SERVER_DIR)
+
+try:
+    from camera_hub import CameraHub
+    _HUB_AVAILABLE = True
+except ImportError:
+    _HUB_AVAILABLE = False
+    print("[GESTURE] camera_hub not found — will fall back to direct VideoCapture")
+
 # ── Constants — MUST match gesture_gui.py ─────────────────────────────────────
 TEMPLATES_FILE   = os.path.join(SCRIPT_DIR, "gesture_templates.pkl")
 MAX_FRAMES       = 60      # sliding window (frames)
 MIN_POINTS       = 10      # min pts before recognition attempt
-MIN_MOTION       = 0.02    # min cumulative index-tip travel (lenient)
+MIN_MOTION       = 0.02    # min cumulative centroid travel (lenient)
 SCORE_THRESHOLD  = 0.20    # min score to confirm a gesture (lenient)
 GESTURE_COOLDOWN = 1.5     # seconds before next gesture accepted
-INDEX_TIP        = 8       # MediaPipe landmark id
+TRACK_TIPS       = (4, 8, 12)  # thumb, index, middle tip landmark IDs — centroid = pen
+CLEAR_THRESHOLD  = 0.40   # clear buffer on any detection at/above this score
+SMOOTH_WIN       = 3       # frames to average for centroid smoothing
 
 
 # ── Shared helpers (identical to gesture_gui.py) ───────────────────────────────
 
 def _extract_points(buf):
     """
-    Index-fingertip path in raw normalised coords → list[Point].
-    `buf` is a list of {"lm": hand_landmarks} dicts.
+    Centroid of thumb+index+middle fingertips → list[Point].
+    Accepts two frame formats:
+      {"x": float, "y": float}  — pre-smoothed live capture (preferred)
+      {"lm": hand_landmarks}    — raw MediaPipe object (legacy / template build)
     Returns None when data is insufficient.
     """
     pts = []
     for fd in buf:
-        lm = fd.get("lm")
-        if lm is None:
-            continue
-        tip = lm.landmark[INDEX_TIP]
-        pts.append(Point(tip.x, tip.y, stroke_id=0))
+        if "x" in fd and "y" in fd:
+            pts.append(Point(fd["x"], fd["y"], stroke_id=0))
+        else:
+            lm = fd.get("lm")
+            if lm is None:
+                continue
+            # Centroid of thumb, index, middle tips
+            tips = [lm.landmark[i] for i in TRACK_TIPS]
+            tx = sum(t.x for t in tips) / len(tips)
+            ty = sum(t.y for t in tips) / len(tips)
+            pts.append(Point(tx, ty, stroke_id=0))
 
     if len(pts) < MIN_POINTS:
         return None
@@ -132,6 +159,9 @@ class _ClientState:
         self.buf: list = []
         self.lock       = threading.Lock()
 
+        # 3-frame centroid smoothing
+        self._raw_tip_buf = collections.deque(maxlen=SMOOTH_WIN)
+
         # Tracking / recognition flags
         self.is_tracking     = False
         self.is_paused       = False   # PAUSE_DETECTION suspends frame collection
@@ -147,7 +177,7 @@ class _ClientState:
 
         # Continuous recognition timing
         self.last_recog_time  = 0.0
-        self.recog_interval   = 0.05   # 50 ms → ~20 Hz
+        self.recog_interval   = 0.23   # ~230 ms → every ~7 frames at 30 fps
 
     # ── Camera pipeline ──────────────────────────────────────────────────────
 
@@ -222,15 +252,24 @@ class _ClientState:
                 time.sleep(0.016)
                 continue
 
-            # ── Sliding window ────────────────────────────────────────────────
+            # ── Sliding window — 3-finger centroid + smoothing ────────────────
             if res.multi_hand_landmarks:
                 lm = res.multi_hand_landmarks[0]
+                # Centroid of thumb, index, middle tips
+                tips3  = [lm.landmark[i] for i in TRACK_TIPS]
+                raw_x  = sum(t.x for t in tips3) / len(tips3)
+                raw_y  = sum(t.y for t in tips3) / len(tips3)
+                # 3-frame moving-average smoothing
+                self._raw_tip_buf.append((raw_x, raw_y))
+                sx = sum(p[0] for p in self._raw_tip_buf) / len(self._raw_tip_buf)
+                sy = sum(p[1] for p in self._raw_tip_buf) / len(self._raw_tip_buf)
                 with self.lock:
-                    self.buf.append({"lm": lm})
+                    self.buf.append({"x": sx, "y": sy})
                     if len(self.buf) > MAX_FRAMES:
                         self.buf.pop(0)
             else:
-                # Hand lost — slowly drain
+                # Hand lost — slowly drain, reset smoothing
+                self._raw_tip_buf.clear()
                 with self.lock:
                     if self.buf:
                         self.buf.pop(0)
@@ -250,13 +289,13 @@ class _ClientState:
                 if pts is not None:
                     name, score = _recognize_points(self.templates, pts)
                     self.last_recog_time = now
-                    if name and score >= SCORE_THRESHOLD:  # only log successful recognitions
+                    print(f"[GESTURE] attempt: {name}  score={score:.3f}  buf={len(buf_snapshot)}")
+
+                    if name and score >= SCORE_THRESHOLD:
                         print(f"[GESTURE:{self.client_id}] ✓ DETECTED: {name}  score={score:.3f}")
                         self.last_gesture      = name
                         self.last_score        = score
                         self.last_gesture_time = now
-                        with self.lock:
-                            self.buf.clear()   # fresh start after detection
 
             time.sleep(0.016)  # ~60 FPS
 
@@ -396,10 +435,28 @@ class GestureRecognitionService:
                  camera_hub=None):
         self.host       = host
         self.port       = port
-        self.camera_hub = camera_hub
         self.is_running = False
         self.server_socket = None
         self.templates  = _load_templates()
+
+        # Auto-create CameraHub with server default settings when none
+        # is injected (i.e. running standalone, not from main.py server).
+        self._owned_hub = False
+        if camera_hub is None and _HUB_AVAILABLE:
+            try:
+                cam_idx    = int(os.environ.get("MUSEUM_CAMERA", "0"))
+                camera_hub = CameraHub(camera_index=cam_idx)
+                camera_hub.start()          # CameraHub requires explicit start()
+                self._owned_hub = True
+                print(f"[GESTURE] CameraHub created and started (camera={cam_idx})")
+            except Exception as e:
+                print(f"[GESTURE] CameraHub init failed: {e} — using direct VideoCapture")
+        elif camera_hub is not None:
+            print("[GESTURE] Using injected CameraHub (server mode)")
+        else:
+            print("[GESTURE] CameraHub unavailable — using direct VideoCapture")
+
+        self.camera_hub = camera_hub
 
     def start_server(self):
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -479,6 +536,14 @@ class GestureRecognitionService:
         if self.server_socket:
             try:
                 self.server_socket.close()
+            except Exception:
+                pass
+        # Shut down the hub only if this service created it (standalone mode).
+        # When injected from main.py server, the server owns the lifecycle.
+        if self._owned_hub and self.camera_hub is not None:
+            try:
+                self.camera_hub.stop()      # CameraHub uses stop(), not shutdown()
+                print("[GESTURE] CameraHub stopped")
             except Exception:
                 pass
         print("[GESTURE] Service stopped")
