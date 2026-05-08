@@ -65,6 +65,7 @@ os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 # ── Imports ───────────────────────────────────────────────────────────────────
 import camera_hub as _cam_mod
 import auth_service
+import demographics_service
 import gaze_emotion_service
 import yolo_service
 import hand_service
@@ -111,6 +112,9 @@ def main():
     _run("GAZE_EMO",   gaze_emotion_service.start)
     _run("YOLO",       yolo_service.start)
     _run("HAND",       hand_service.start)
+
+    # 4. Pre-download DeepFace models in background (first-time only)
+    _run("DEMOGRAPHICS", demographics_service.warmup)
 
     # Gesture service (dollarpy) — optional, failures are isolated
     if os.environ.get("DISABLE_GESTURE", "").strip() not in ("1","true","yes"):

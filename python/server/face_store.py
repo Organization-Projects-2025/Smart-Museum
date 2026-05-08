@@ -86,8 +86,13 @@ def next_user_id() -> str:
     return f"user{max_n + 1}"
 
 
+def reload():
+    """Reload all face encodings from CSV."""
+    load()
+
+
 def save_face_crop(frame_bgr: np.ndarray, face_location: Tuple, user_id: str) -> str:
-    """Crop and save face image. Returns absolute path."""
+    """Crop and save face image. Returns relative path (e.g. 'python/data/faces/user3.jpg')."""
     ensure_faces_dir()
     top, right, bottom, left = face_location
     h, w = frame_bgr.shape[:2]

@@ -90,6 +90,36 @@ public class SocketClient
             return null;
         }
     }
+
+    public string sendCommandAndStream(string cmd, Action<string> onProgress)
+    {
+        try
+        {
+            sendMessage(cmd);
+            using (var reader = new System.IO.StreamReader(stream, Encoding.UTF8))
+            {
+                while (true)
+                {
+                    string line = reader.ReadLine();
+                    if (line == null) return null;
+                    line = line.Trim();
+                    if (line.StartsWith("PROGRESS:"))
+                    {
+                        onProgress?.Invoke(line.Substring(9));
+                    }
+                    else
+                    {
+                        return line; // Final result (e.g. FOUND:..., NEW:...)
+                    }
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            Console.WriteLine("Stream error: " + e.Message);
+            return null;
+        }
+    }
 }
 
 public class VisitorProfile
@@ -284,16 +314,17 @@ public class VisitorProfile
             TitleSizePx = 54f;
         }
 
-        // --- Gender rubric → gold / accent (distinct paths for female / male) ---
+        // --- Gender rubric → primary background / gold / accent (distinct paths for female / male) ---
         string g = (Gender ?? string.Empty).Trim().ToLowerInvariant();
-        PrimaryColor = Color.FromArgb(10, 10, 14);
         if (g == "female")
         {
+            PrimaryColor = Color.FromArgb(28, 14, 20); // Dark burgundy/wine background
             SecondaryColor = Color.FromArgb(232, 185, 55);
             TertiaryColor = Color.FromArgb(72, 118, 178);
         }
         else
         {
+            PrimaryColor = Color.FromArgb(12, 18, 28); // Dark slate blue background
             SecondaryColor = Color.FromArgb(212, 175, 55);
             TertiaryColor = Color.FromArgb(175, 145, 85);
         }
@@ -609,11 +640,11 @@ public class FaceRecognitionService
     /// OpenCV lobby on Python (oval guide, centering, hold-still, countdown for new users).
     /// Same wire protocol as RegisterFaceScan: FOUND:userId, NEW:userId, NOT_FOUND, ERROR:, plus CANCELLED.
     /// </summary>
-    public bool AuthLobbyScan(out FaceRegisterScanResult result, out string userId, out string status)
+    public bool AuthLobbyScan(out FaceRegisterScanResult result, out string userId, out string status, Action<string> onProgress = null)
     {
         result = FaceRegisterScanResult.Error;
         userId = string.Empty;
-        status = "Opening your webcam — look for the “Face sign-in” window on this PC.";
+        status = "Warming up camera...";
 
         try
         {
@@ -624,8 +655,17 @@ public class FaceRecognitionService
                 return false;
             }
 
-            string response = client.sendCommandAndWait("face_auth_lobby");
-            client.closeConnection();
+            string response;
+            if (onProgress != null)
+            {
+                response = client.sendCommandAndStream("face_auth_lobby", onProgress);
+            }
+            else
+            {
+                response = client.sendCommandAndWait("face_auth_lobby");
+            }
+            
+            try { client.closeConnection(); } catch { }
 
             if (string.IsNullOrEmpty(response))
             {
@@ -734,6 +774,32 @@ public class FaceRecognitionService
     }
 }
 
+public struct NewFaceDemographics
+{
+    public string UserId;
+    public int Age;
+    public string Gender;
+    public string Race;
+
+    public static bool TryParseNewResponse(string response, out NewFaceDemographics demo)
+    {
+        demo = new NewFaceDemographics { Age = 25, Gender = "male", Race = "white" };
+        if (string.IsNullOrEmpty(response) || !response.StartsWith("NEW:")) return false;
+
+        var parts = response.Split(':');
+        if (parts.Length < 2) return false;
+
+        demo.UserId = parts[1];
+        if (parts.Length >= 5)
+        {
+            if (int.TryParse(parts[2], out int a)) demo.Age = a;
+            demo.Gender = parts[3];
+            demo.Race = parts[4];
+        }
+        return true;
+    }
+}
+
 /// <summary>Append a new visitor row to users.csv (Face ID server must already have saved the face image).</summary>
 public static class AuthCsvStore
 {
@@ -758,7 +824,9 @@ public static class AuthCsvStore
                 SanitizeField(profile.FaceImagePath),
                 SanitizeField(string.IsNullOrEmpty(profile.Role) ? "visitor" : profile.Role));
 
-            File.AppendAllText(csvPath, Environment.NewLine + line, Encoding.UTF8);
+            string text = File.Exists(csvPath) ? File.ReadAllText(csvPath) : "";
+            string prefix = text.EndsWith("\n") || text.Length == 0 ? "" : Environment.NewLine;
+            File.AppendAllText(csvPath, prefix + line + Environment.NewLine, Encoding.UTF8);
             return true;
         }
         catch

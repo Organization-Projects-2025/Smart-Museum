@@ -95,6 +95,8 @@ public class TuioDemo : Form, TuioListener
     private bool isLoggedIn = false;
     private bool authInProgress = false;
     private string authStatus = "Waiting for Face ID";
+    private string authProgressState = "NO_FACE";
+    private float authProgressCountdown = 0f;
     private VisitorProfile visitorProfile;
 
     private enum LoginAuthPhase
@@ -428,7 +430,7 @@ public class TuioDemo : Form, TuioListener
     {
         authInProgress = true;
         loginPhase = LoginAuthPhase.RegisterScanning;
-        authStatus = "Opening the camera window… If you don’t see it, look for “Face sign-in” on the Windows taskbar.";
+        authStatus = "Warming up camera...";
         SafeInvalidate();
 
         Thread t = new Thread(() =>
@@ -440,9 +442,34 @@ public class TuioDemo : Form, TuioListener
                 FaceRegisterScanResult outcome;
                 string uid;
                 string st;
-                bool ok = faceService.AuthLobbyScan(out outcome, out uid, out st);
-                authStatus = st;
-                SafeInvalidate();
+                
+                Action<string> onProgress = (msg) => {
+                    if (IsHandleCreated) {
+                        BeginInvoke(new Action(() => {
+                            if (msg.Contains("|")) {
+                                var parts = msg.Split(new[] { '|' }, 2);
+                                authProgressState = parts[0];
+                                authStatus = parts[1];
+                                if (authProgressState.StartsWith("COUNTDOWN:")) {
+                                    float.TryParse(authProgressState.Substring(10), out authProgressCountdown);
+                                    authProgressState = "COUNTDOWN";
+                                }
+                            } else {
+                                authStatus = msg;
+                            }
+                            Invalidate();
+                        }));
+                    }
+                };
+
+                bool ok = faceService.AuthLobbyScan(out outcome, out uid, out st, onProgress);
+                
+                if (IsHandleCreated) {
+                    BeginInvoke(new Action(() => {
+                        authStatus = st;
+                        Invalidate();
+                    }));
+                }
 
                 if (!ok && outcome == FaceRegisterScanResult.Error)
                 {
@@ -490,7 +517,45 @@ public class TuioDemo : Form, TuioListener
 
                 if (outcome == FaceRegisterScanResult.NewUserCreated)
                 {
-                    pendingNewFaceUserId = uid;
+                    pendingNewFaceUserId = uid; // This actually contains the raw string with colons if DeepFace worked
+
+                    if (NewFaceDemographics.TryParseNewResponse("NEW:" + uid, out var demo))
+                    {
+                        pendingNewFaceUserId = demo.UserId;
+                        pendingDuplicateUserId = demo.UserId; // This allows the auto-continue to bluetooth step to work seamlessly
+
+                        // Create profile instantly
+                        VisitorProfile profile = new VisitorProfile
+                        {
+                            FaceUserId = demo.UserId,
+                            FirstName = "Visitor",
+                            LastName = demo.UserId.Replace("user", ""),
+                            Age = demo.Age,
+                            Gender = demo.Gender,
+                            Race = demo.Race,
+                            Role = "visitor",
+                            BluetoothMacAddress = "0",
+                            FaceImagePath = $"python/data/faces/{demo.UserId}.jpg"
+                        };
+                        string csvPath = Path.Combine(GetWorkspaceRoot(), "C#", "content", "auth", "users.csv");
+                        AuthCsvStore.AppendUser(csvPath, profile);
+
+                        if (IsHandleCreated)
+                        {
+                            BeginInvoke(new Action(() =>
+                            {
+                                authInProgress = false;
+                                authLobbyProfilePreview = profile;
+                                loginPhase = LoginAuthPhase.ProfileWelcome;
+                                profileWelcomeAutoContinueUtc = DateTime.UtcNow.AddSeconds(4);
+                                authStatus = "Welcome to the museum! Your profile has been automatically generated.";
+                                Invalidate();
+                            }));
+                        }
+                        return;
+                    }
+
+                    // Fallback if demographics failed to parse for some reason
                     if (IsHandleCreated)
                     {
                         BeginInvoke(new Action(() =>
@@ -3060,7 +3125,7 @@ public class TuioDemo : Form, TuioListener
         if (loginPhase == LoginAuthPhase.MainPicker)
         {
             title = "WELCOME";
-            subtitle = "We will open your webcam, then show who you are on this table. Follow the gold oval in the webcam window.";
+            subtitle = "We will look for your face using the built-in camera, and show you who you are on this table.";
         }
         else if (loginPhase == LoginAuthPhase.LoginScanning)
         {
@@ -3070,7 +3135,7 @@ public class TuioDemo : Form, TuioListener
         else if (loginPhase == LoginAuthPhase.RegisterScanning)
         {
             title = "FACE SIGN-IN";
-            subtitle = "Use the small webcam window: line up with the gold oval and hold still. If you’re new here, you’ll see a short countdown before a photo is saved.";
+            subtitle = "Look directly at the camera. If you're new here, hold still and you'll see a short countdown before your photo is saved.";
         }
         else if (loginPhase == LoginAuthPhase.NoFaceRecovery)
         {
@@ -3145,6 +3210,33 @@ public class TuioDemo : Form, TuioListener
         else
             DrawCentered(g, authStatus, fontBody, Color.White,
                 new RectangleF(40, statusTop, W - 80, statusH));
+
+        if (loginPhase == LoginAuthPhase.RegisterScanning)
+        {
+            float cx = W / 2f;
+            float cy = H / 2f + 60f;
+            float radius = 30f;
+            Color statusColor = Color.Gray;
+
+            if (authProgressState == "NO_FACE") statusColor = Color.FromArgb(200, 50, 50); // Red
+            else if (authProgressState == "UNSTABLE") statusColor = Color.Orange;
+            else if (authProgressState == "LOCKED") statusColor = Color.LimeGreen;
+            else if (authProgressState == "COUNTDOWN" || authProgressState == "DEMOGRAPHICS") statusColor = CGoldLight;
+
+            using (SolidBrush b = new SolidBrush(statusColor))
+            {
+                g.FillEllipse(b, cx - radius, cy - radius, radius * 2, radius * 2);
+            }
+
+            if (authProgressState == "COUNTDOWN" && authProgressCountdown > 0)
+            {
+                float sweep = (3.0f - authProgressCountdown) / 3.0f * 360f;
+                using (Pen p = new Pen(Color.White, 6f))
+                {
+                    g.DrawArc(p, cx - radius - 10, cy - radius - 10, radius * 2 + 20, radius * 2 + 20, -90, sweep);
+                }
+            }
+        }
 
         if (loginPhase == LoginAuthPhase.RegisterEnterFirstName ||
             loginPhase == LoginAuthPhase.RegisterEnterLastName ||
@@ -3231,6 +3323,31 @@ public class TuioDemo : Form, TuioListener
 
     private void DrawIdle(Graphics g)
     {
+        if (isLoggedIn && visitorProfile != null && !string.IsNullOrEmpty(visitorProfile.Language))
+        {
+            string langText = "Language: " + visitorProfile.Language;
+            using (var font = new Font("Segoe UI", 16, FontStyle.Bold))
+            {
+                var size = g.MeasureString(langText, font);
+                float paddingX = 15f;
+                float paddingY = 8f;
+                var rect = new RectangleF(W - size.Width - (paddingX * 2) - 40, 30, size.Width + (paddingX * 2), size.Height + (paddingY * 2));
+                
+                using (var brush = new SolidBrush(Color.FromArgb(180, themeSecondary)))
+                {
+                    g.FillRectangle(brush, rect);
+                }
+                using (var pen = new Pen(Color.FromArgb(220, 255, 255, 255), 2f))
+                {
+                    g.DrawRectangle(pen, rect.X, rect.Y, rect.Width, rect.Height);
+                }
+                using (var textBrush = new SolidBrush(Color.White))
+                {
+                    g.DrawString(langText, font, textBrush, rect.X + paddingX, rect.Y + paddingY);
+                }
+            }
+        }
+
         DrawAnimatedSunRing(g, W / 2, H / 2, idlePhase);
         DrawEyeOfRa(g, W / 2, H / 2);
 

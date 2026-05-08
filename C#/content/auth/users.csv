@@ -11,5 +11,4 @@ user8,Ibrahim,Saad,66,male,black,0,python/data/faces/user8.jpg,visitor
 user9,Mona,Fouad,71,female,white,0,python/data/faces/user9.jpg,visitor
 user10,Carlos,Diaz,28,male,latino,0,python/data/faces/user10.jpg,visitor
 user11,Mei,Lin,67,female,asian,0,python/data/faces/user11.jpg,visitor
-
-user12,Visitor,12,30,male,latino,0,python/data/faces/user12.jpg,visitor
+user12,Visitor,12,28,male,black,0,python/data/faces/user12.jpg,visitor
