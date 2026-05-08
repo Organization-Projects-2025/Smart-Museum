@@ -1717,9 +1717,10 @@ public class TuioDemo : Form, TuioListener
         TuioObject marker = GetSingleMenuMarker();
         bool has = marker != null;
         float ang = has ? marker.Angle : 0f;
-        float y = has ? marker.Y : 0.5f;
+        float x   = has ? marker.X : 0.5f;
+        float y   = has ? marker.Y : 0.5f;
         bool closePanel;
-        adminAnalyticsPanel.OnMarker(has, ang, y, out closePanel);
+        adminAnalyticsPanel.OnMarker(has, ang, x, y, out closePanel);
         if (closePanel)
         {
             adminAnalyticsVisible = false;

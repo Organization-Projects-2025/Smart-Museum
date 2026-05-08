@@ -6,21 +6,23 @@ using System.IO;
 using System.Linq;
 
 /// <summary>
-/// Full-screen 3-level analytics dashboard navigated via TUIO marker (rotate + vertical flick).
+/// Full-screen 3-level analytics dashboard navigated via TUIO marker (rotate + flick).
 ///
-/// Level 0 — USER LIST:
-///   Shows all unique users parsed from visit_*.json files. Paginated, 6 users per page.
-///   Rotate = scroll through users on current page (wraps to next/prev page at boundaries).
-///   Flick UP  = select user → go to Level 1.
-///   Flick DOWN = close panel (requestCloseAppPanel = true).
+/// Level 0 — USER LIST (vertical rows, paginated, web-style):
+///   Rotate marker CW  = scroll DOWN (next row).
+///   Rotate marker CCW = scroll UP (prev row).
+///   Flick RIGHT = select highlighted user → Level 1.
+///   Flick DOWN  = close panel.
 ///
-/// Level 1 — SLIDESHOW LIST:
-///   Shows all visit files for the selected user, newest first. Paginated, 5 per page.
-///   Rotate = scroll. Flick UP = open visit → go to Level 2. Flick DOWN = back to Level 0.
+/// Level 1 — VISIT LIST (vertical rows, paginated):
+///   Rotate = scroll rows.
+///   Flick RIGHT = open highlighted visit → Level 2 (replay).
+///   Flick LEFT  = back to Level 0.
 ///
-/// Level 2 — REPLAY:
-///   Shows gaze trail + emotion bars for the selected visit.
-///   Rotate = scrub timeline through segments. Flick UP = toggle auto-replay. Flick DOWN = back to Level 1.
+/// Level 2 — REPLAY (full-screen slide + gaze dot + emotion overlay):
+///   Rotate = scrub timeline / select segment.
+///   Flick UP   = toggle auto-replay.
+///   Flick LEFT = back to Level 1.
 /// </summary>
 public class AdminAnalyticsPanel
 {
@@ -29,19 +31,17 @@ public class AdminAnalyticsPanel
     private readonly Func<string> analyticsDirFactory;
 
     // ─── navigation state ────────────────────────────────────────────────────
-    private int level = 0;   // 0 = user list, 1 = slideshow list, 2 = replay
+    private int level = 0;   // 0 = user list, 1 = visit list, 2 = replay
 
     // Level 0 – user list
-    private const int UsersPerPage = 6;
+    private const int RowsPerPage = 8;
     private List<UserSummary> allUsers = new List<UserSummary>();
-    private int userPage = 0;
-    private int userIndexOnPage = 0;   // 0..UsersPerPage-1
+    private int userSelectedIndex = 0;   // absolute index into allUsers
 
-    // Level 1 – slideshow list
-    private const int VisitsPerPage = 5;
+    // Level 1 – visit list
+    private const int VisitsPerPage = 8;
     private List<string> userVisitPaths = new List<string>();
-    private int visitPage = 0;
-    private int visitIndexOnPage = 0;  // 0..VisitsPerPage-1
+    private int visitSelectedIndex = 0;  // absolute index into userVisitPaths
 
     // Level 2 – replay
     private VisitAnalyticsDocument loadedVisit;
@@ -51,14 +51,19 @@ public class AdminAnalyticsPanel
     private bool autoReplay = false;
 
     // ─── TUIO gesture state ──────────────────────────────────────────────────
-    private bool menuGestureArmed = true;
-    private bool hasLastY = false;
-    private float lastY = 0f;
+    private bool gestureArmed = true;
+    private bool hasLastPos = false;
+    private float lastX = 0.5f;
+    private float lastY = 0.5f;
+    private float accumX = 0f;
     private float accumY = 0f;
-    private const float TriggerDy   = 0.035f;
+    private const float TriggerD    = 0.035f;
     private const float NeutralBand = 0.015f;
-    // yNorm increases downward on screen; a flick UP means yNorm decreases → delta is negative
-    private const bool MenuUpIsPositiveY = true;   // kept for parity with original
+
+    // Rotation → row scrolling
+    private float lastAngleRad = 0f;
+    private bool  hasLastAngle = false;
+    private const float AngleScrollStep = 0.20f; // radians per row step
 
     private float lastTuioAngleDeg = 0f;
     private bool  lastTuioAngleValid = false;
@@ -76,9 +81,10 @@ public class AdminAnalyticsPanel
     {
         IsActive = true;
         lastTuioAngleValid = false;
-        hasLastY = false;
-        accumY = 0f;
-        menuGestureArmed = true;
+        hasLastPos = false;
+        hasLastAngle = false;
+        accumX = accumY = 0f;
+        gestureArmed = true;
         GoToLevel0();
     }
 
@@ -94,12 +100,28 @@ public class AdminAnalyticsPanel
         if (!IsActive || level != 2 || !autoReplay || loadedVisit == null) return;
         var seg = GetSelectedSegment();
         if (seg == null || seg.Samples == null || seg.Samples.Count == 0) return;
-        long dur = seg.Samples[seg.Samples.Count - 1].TRelMs + 1;
+        long dur = seg.Samples[seg.Samples.Count - 1].TRelMs;
         replayCursorMs += deltaMs * 2;
-        if (replayCursorMs > dur) replayCursorMs = 0;
+        if (replayCursorMs > dur)
+        {
+            // Advance to next segment automatically
+            int nextSeg = selectedSegmentIndex + 1;
+            if (loadedVisit.Segments != null && nextSeg < loadedVisit.Segments.Count)
+            {
+                selectedSegmentIndex = nextSeg;
+                replayCursorMs = 0;
+            }
+            else
+            {
+                // Reached end of all segments — stop playback
+                replayCursorMs = dur;
+                autoReplay = false;
+            }
+        }
     }
 
-    public void OnMarker(bool hasMarker, float angleRad, float yNorm, out bool requestCloseAppPanel)
+    // ─── OnMarker (primary entry point from TuioDemo) ────────────────────────
+    public void OnMarker(bool hasMarker, float angleRad, float xNorm, float yNorm, out bool requestCloseAppPanel)
     {
         requestCloseAppPanel = false;
         if (!IsActive) return;
@@ -107,53 +129,94 @@ public class AdminAnalyticsPanel
         if (!hasMarker)
         {
             lastTuioAngleValid = false;
-            menuGestureArmed = true;
-            accumY = 0f;
-            hasLastY = false;
+            gestureArmed = true;
+            accumX = accumY = 0f;
+            hasLastPos = false;
+            hasLastAngle = false;
             return;
         }
 
         lastTuioAngleValid = true;
         lastTuioAngleDeg = angleRad / (float)Math.PI * 180f;
 
-        // ── rotation → item selection ────────────────────────────────────────
-        HandleRotation(angleRad);
-
-        // ── vertical flick detection ─────────────────────────────────────────
-        if (!hasLastY)
+        // ── Rotation → scroll rows (levels 0 and 1) or scrub replay (level 2) ─
+        if (level < 2)
         {
-            hasLastY = true;
+            if (hasLastAngle)
+            {
+                float delta = NormalizeAngle(angleRad - lastAngleRad);
+                if (delta > AngleScrollStep)
+                {
+                    ScrollDown();
+                    lastAngleRad = angleRad;
+                }
+                else if (delta < -AngleScrollStep)
+                {
+                    ScrollUp();
+                    lastAngleRad = angleRad;
+                }
+            }
+            else
+            {
+                hasLastAngle = true;
+                lastAngleRad = angleRad;
+            }
+        }
+        else
+        {
+            HandleRotationReplay(angleRad);
+        }
+
+        // ── XY flick detection ────────────────────────────────────────────────
+        if (!hasLastPos)
+        {
+            hasLastPos = true;
+            lastX = xNorm;
             lastY = yNorm;
-            accumY = 0f;
+            accumX = accumY = 0f;
             return;
         }
 
+        accumX += xNorm - lastX;
         accumY += yNorm - lastY;
 
-        if (Math.Abs(yNorm - 0.5f) <= NeutralBand)
+        if (Math.Abs(xNorm - 0.5f) <= NeutralBand && Math.Abs(yNorm - 0.5f) <= NeutralBand)
         {
-            menuGestureArmed = true;
-            accumY = 0f;
+            gestureArmed = true;
+            accumX = accumY = 0f;
         }
 
-        // upDelta > 0 means the marker moved upward (yNorm decreased)
-        float upDelta   = MenuUpIsPositiveY ? (-accumY) : accumY;
-        float downDelta = -upDelta;
-
-        if (menuGestureArmed && upDelta >= TriggerDy)
+        if (gestureArmed)
         {
-            menuGestureArmed = false;
-            accumY = 0f;
-            HandleFlickUp(out requestCloseAppPanel);
-        }
-        else if (menuGestureArmed && downDelta >= TriggerDy)
-        {
-            menuGestureArmed = false;
-            accumY = 0f;
-            HandleFlickDown(out requestCloseAppPanel);
+            float absX = Math.Abs(accumX);
+            float absY = Math.Abs(accumY);
+
+            if (absX >= TriggerD && absX > absY)
+            {
+                gestureArmed = false;
+                bool right = accumX > 0;
+                accumX = accumY = 0f;
+                if (right) HandleFlickRight(out requestCloseAppPanel);
+                else       HandleFlickLeft(out requestCloseAppPanel);
+            }
+            else if (absY >= TriggerD && absY > absX)
+            {
+                gestureArmed = false;
+                bool up = accumY < 0;
+                accumX = accumY = 0f;
+                if (up) HandleFlickUp(out requestCloseAppPanel);
+                else    HandleFlickDown(out requestCloseAppPanel);
+            }
         }
 
+        lastX = xNorm;
         lastY = yNorm;
+    }
+
+    // Backward-compat overload for callers that don't pass xNorm
+    public void OnMarker(bool hasMarker, float angleRad, float yNorm, out bool requestCloseAppPanel)
+    {
+        OnMarker(hasMarker, angleRad, 0.5f, yNorm, out requestCloseAppPanel);
     }
 
     // ─── Draw ────────────────────────────────────────────────────────────────
@@ -162,44 +225,35 @@ public class AdminAnalyticsPanel
     {
         if (!IsActive) return;
 
-        // dark background
         using (var bg = new SolidBrush(Color.FromArgb(245, 14, 16, 22)))
             g.FillRectangle(bg, 0, 0, w, h);
 
-        // title bar
-        string levelLabel = level == 0 ? "USER LIST" : level == 1 ? "VISIT LIST" : "REPLAY";
-        DrawCentered(g,
-            "ADMIN ANALYTICS  [" + levelLabel + "]  — marker symbol " + TuioControlMarker.MenuAuthSymbolId,
-            fontTitle, accent, new RectangleF(20, 10, w - 40, 44));
-
-        // level-specific content
         switch (level)
         {
-            case 0: DrawUserList(g, w, h, fontBody, fontSmall, accent, papyrus); break;
-            case 1: DrawVisitList(g, w, h, fontBody, fontSmall, accent, papyrus); break;
+            case 0: DrawUserList(g, w, h, fontTitle, fontBody, fontSmall, accent, papyrus); break;
+            case 1: DrawVisitList(g, w, h, fontTitle, fontBody, fontSmall, accent, papyrus); break;
             case 2: DrawReplay(g, w, h, fontTitle, fontBody, fontSmall, accent, papyrus, live); break;
         }
 
-        // border
+        // Border
         using (var p = new Pen(Color.FromArgb(120, accent), 2))
             g.DrawRectangle(p, 10, 10, w - 20, h - 20);
 
-        // angle readout
+        // Marker hint at very bottom
         string rotLine = lastTuioAngleValid
-            ? string.Format("TUIO marker angle: {0:0}°", lastTuioAngleDeg)
-            : "TUIO marker angle: — (place symbol " + TuioControlMarker.MenuAuthSymbolId + " on the table)";
-        DrawCentered(g, rotLine, fontSmall, Color.FromArgb(200, 200, 200, 210),
-            new RectangleF(20, h - 28, w - 40, 22));
+            ? string.Format("Marker {0}  angle {1:0}°  |  rotate=scroll  flick right=select  flick left=back",
+                TuioControlMarker.MenuAuthSymbolId, lastTuioAngleDeg)
+            : string.Format("Place marker {0} on the table to navigate", TuioControlMarker.MenuAuthSymbolId);
+        DrawCentered(g, rotLine, fontSmall, Color.FromArgb(140, 200, 200, 210),
+            new RectangleF(20, h - 22, w - 40, 18));
     }
-
 
     // ─── Navigation helpers ───────────────────────────────────────────────────
 
     private void GoToLevel0()
     {
         level = 0;
-        userPage = 0;
-        userIndexOnPage = 0;
+        userSelectedIndex = 0;
         loadedVisit = null;
         autoReplay = false;
         RefreshUserList();
@@ -208,12 +262,11 @@ public class AdminAnalyticsPanel
     private void GoToLevel1(UserSummary user)
     {
         level = 1;
-        visitPage = 0;
-        visitIndexOnPage = 0;
+        visitSelectedIndex = 0;
         string dir = analyticsDirFactory != null ? analyticsDirFactory() : "";
         userVisitPaths = SessionAnalyticsRecorder.ListSessionFiles(dir)
-            .Where(p => Path.GetFileName(p).StartsWith("visit_" + user.FaceUserId + "_",
-                StringComparison.OrdinalIgnoreCase))
+            .Where(p => Path.GetFileName(p).StartsWith(
+                "visit_" + user.FaceUserId + "_", StringComparison.OrdinalIgnoreCase))
             .ToList();
     }
 
@@ -235,18 +288,15 @@ public class AdminAnalyticsPanel
     {
         string dir = analyticsDirFactory != null ? analyticsDirFactory() : "";
         var files = SessionAnalyticsRecorder.ListSessionFiles(dir);
-        // Group by faceUserId, keep latest visit per user
         var dict = new Dictionary<string, UserSummary>(StringComparer.OrdinalIgnoreCase);
         foreach (var f in files)
         {
-            string fn = Path.GetFileNameWithoutExtension(f); // visit_userX_hash_date
+            string fn = Path.GetFileNameWithoutExtension(f);
             string[] parts = fn.Split('_');
             if (parts.Length < 2) continue;
-            // faceUserId is parts[1] (e.g. "user0")
             string uid = parts[1];
             if (!dict.ContainsKey(uid))
             {
-                // Try to read display name from file
                 string displayName = uid;
                 try
                 {
@@ -260,70 +310,95 @@ public class AdminAnalyticsPanel
             dict[uid].VisitCount++;
         }
         allUsers = dict.Values.OrderBy(u => u.FaceUserId).ToList();
+        userSelectedIndex = 0;
     }
 
-    private void HandleRotation(float angleRad)
+    private void ScrollUp()
     {
+        if (level == 0)
+        {
+            if (allUsers.Count == 0) return;
+            userSelectedIndex = (userSelectedIndex - 1 + allUsers.Count) % allUsers.Count;
+        }
+        else if (level == 1)
+        {
+            if (userVisitPaths.Count == 0) return;
+            visitSelectedIndex = (visitSelectedIndex - 1 + userVisitPaths.Count) % userVisitPaths.Count;
+        }
+    }
+
+    private void ScrollDown()
+    {
+        if (level == 0)
+        {
+            if (allUsers.Count == 0) return;
+            userSelectedIndex = (userSelectedIndex + 1) % allUsers.Count;
+        }
+        else if (level == 1)
+        {
+            if (userVisitPaths.Count == 0) return;
+            visitSelectedIndex = (visitSelectedIndex + 1) % userVisitPaths.Count;
+        }
+    }
+
+    private void HandleRotationReplay(float angleRad)
+    {
+        if (loadedVisit == null || loadedVisit.Segments == null || loadedVisit.Segments.Count == 0) return;
+        if (!hasLastAngle) { hasLastAngle = true; lastAngleRad = angleRad; return; }
+        float delta = NormalizeAngle(angleRad - lastAngleRad);
+        if (delta > AngleScrollStep)
+        {
+            selectedSegmentIndex = Math.Min(selectedSegmentIndex + 1, loadedVisit.Segments.Count - 1);
+            replayCursorMs = 0;
+            lastAngleRad = angleRad;
+        }
+        else if (delta < -AngleScrollStep)
+        {
+            selectedSegmentIndex = Math.Max(selectedSegmentIndex - 1, 0);
+            replayCursorMs = 0;
+            lastAngleRad = angleRad;
+        }
+    }
+
+    private void HandleFlickRight(out bool requestClose)
+    {
+        requestClose = false;
         switch (level)
         {
             case 0:
-            {
-                int pageCount = allUsers.Count > 0 ? (int)Math.Ceiling(allUsers.Count / (double)UsersPerPage) : 1;
-                int onPage = Math.Min(UsersPerPage, allUsers.Count - userPage * UsersPerPage);
-                if (onPage <= 0) break;
-                float fromTop = NormalizeAngle(angleRad + (float)Math.PI / 2f);
-                float step = (float)(Math.PI * 2.0 / onPage);
-                int idx = (int)(fromTop / step);
-                userIndexOnPage = Math.Max(0, Math.Min(onPage - 1, idx));
+                if (userSelectedIndex < allUsers.Count)
+                    GoToLevel1(allUsers[userSelectedIndex]);
                 break;
-            }
             case 1:
-            {
-                int onPage = Math.Min(VisitsPerPage, userVisitPaths.Count - visitPage * VisitsPerPage);
-                if (onPage <= 0) break;
-                float fromTop = NormalizeAngle(angleRad + (float)Math.PI / 2f);
-                float step = (float)(Math.PI * 2.0 / onPage);
-                int idx = (int)(fromTop / step);
-                visitIndexOnPage = Math.Max(0, Math.Min(onPage - 1, idx));
+                if (visitSelectedIndex < userVisitPaths.Count)
+                    GoToLevel2(userVisitPaths[visitSelectedIndex]);
                 break;
-            }
+        }
+    }
+
+    private void HandleFlickLeft(out bool requestClose)
+    {
+        requestClose = false;
+        switch (level)
+        {
+            case 0:
+                requestClose = true;
+                break;
+            case 1:
+                GoToLevel0();
+                break;
             case 2:
-            {
-                if (loadedVisit == null || loadedVisit.Segments == null || loadedVisit.Segments.Count == 0) break;
-                int n = loadedVisit.Segments.Count;
-                float fromTop = NormalizeAngle(angleRad + (float)Math.PI / 2f);
-                float step = (float)(Math.PI * 2.0 / n);
-                int idx = (int)(fromTop / step);
-                selectedSegmentIndex = Math.Max(0, Math.Min(n - 1, idx));
-                replayCursorMs = 0;
+                level = 1;
+                loadedVisit = null;
+                autoReplay = false;
                 break;
-            }
         }
     }
 
     private void HandleFlickUp(out bool requestClose)
     {
         requestClose = false;
-        switch (level)
-        {
-            case 0:
-            {
-                int globalIdx = userPage * UsersPerPage + userIndexOnPage;
-                if (globalIdx < allUsers.Count)
-                    GoToLevel1(allUsers[globalIdx]);
-                break;
-            }
-            case 1:
-            {
-                int globalIdx = visitPage * VisitsPerPage + visitIndexOnPage;
-                if (globalIdx < userVisitPaths.Count)
-                    GoToLevel2(userVisitPaths[globalIdx]);
-                break;
-            }
-            case 2:
-                autoReplay = !autoReplay;
-                break;
-        }
+        if (level == 2) autoReplay = !autoReplay;
     }
 
     private void HandleFlickDown(out bool requestClose)
@@ -352,83 +427,121 @@ public class AdminAnalyticsPanel
         return loadedVisit.Segments[Math.Min(selectedSegmentIndex, loadedVisit.Segments.Count - 1)];
     }
 
-    // ─── Draw: Level 0 — User List ────────────────────────────────────────────
-
-    private void DrawUserList(Graphics g, int w, int h, Font fontBody, Font fontSmall, Color accent, Color papyrus)
+    private static float NormalizeAngle(float a)
     {
-        DrawCentered(g, "Rotate = select user   Flick UP = view visits   Flick DOWN = close",
-            fontSmall, Color.FromArgb(200, papyrus), new RectangleF(20, 52, w - 40, 22));
+        while (a >  (float)Math.PI) a -= 2f * (float)Math.PI;
+        while (a < -(float)Math.PI) a += 2f * (float)Math.PI;
+        return a;
+    }
+
+    // ─── Draw: Level 0 — User List (vertical web-style rows) ─────────────────
+
+    private void DrawUserList(Graphics g, int w, int h, Font fontTitle, Font fontBody, Font fontSmall,
+        Color accent, Color papyrus)
+    {
+        // Header
+        DrawCentered(g, "ADMIN ANALYTICS  —  USER LIST",
+            fontTitle, accent, new RectangleF(20, 14, w - 40, 48));
+        DrawCentered(g,
+            "Rotate = scroll   Flick RIGHT = view visits   Flick DOWN = close",
+            fontSmall, Color.FromArgb(200, papyrus), new RectangleF(20, 62, w - 40, 20));
 
         if (allUsers.Count == 0)
         {
             DrawCentered(g, "No analytics sessions found. Run a slideshow first.",
-                fontBody, Color.Gray, new RectangleF(40, h / 2f - 30, w - 80, 60));
+                fontBody, Color.Gray, new RectangleF(40, h / 2f - 20, w - 80, 40));
             return;
         }
 
-        int pageCount = (int)Math.Ceiling(allUsers.Count / (double)UsersPerPage);
-        int startIdx  = userPage * UsersPerPage;
-        int endIdx    = Math.Min(startIdx + UsersPerPage, allUsers.Count);
-        var pageUsers = allUsers.Skip(startIdx).Take(endIdx - startIdx).ToList();
+        // Pagination
+        int pageCount = (int)Math.Ceiling(allUsers.Count / (double)RowsPerPage);
+        int page      = userSelectedIndex / RowsPerPage;
+        int startIdx  = page * RowsPerPage;
+        int endIdx    = Math.Min(startIdx + RowsPerPage, allUsers.Count);
 
-        // Pagination indicator
         if (pageCount > 1)
-            DrawCentered(g, string.Format("Page {0}/{1}  (use next/prev page via flick)", userPage + 1, pageCount),
-                fontSmall, Color.FromArgb(180, papyrus), new RectangleF(20, 74, w - 40, 20));
+            DrawCentered(g, string.Format("Page {0} / {1}", page + 1, pageCount),
+                fontSmall, Color.FromArgb(160, papyrus), new RectangleF(20, 82, w - 40, 18));
 
-        // Draw user cards in a grid
-        int cols = 3, rows = 2;
-        int cardW = (w - 80) / cols;
-        int cardH = 120;
-        int startY = 110;
+        // Row list
+        int rowH   = 54;
+        int startY = 108;
+        int padX   = 40;
 
-        for (int i = 0; i < pageUsers.Count; i++)
+        for (int i = startIdx; i < endIdx; i++)
         {
-            int col = i % cols;
-            int row = i / cols;
-            int cx = 40 + col * cardW + cardW / 2;
-            int cy = startY + row * (cardH + 20) + cardH / 2;
-            bool sel = i == userIndexOnPage;
+            bool sel = i == userSelectedIndex;
+            var u    = allUsers[i];
+            int  ry  = startY + (i - startIdx) * (rowH + 6);
+            var  row = new Rectangle(padX, ry, w - padX * 2, rowH);
 
-            var cardRect = new Rectangle(40 + col * cardW, startY + row * (cardH + 20), cardW - 10, cardH);
-            using (var br = new SolidBrush(sel ? Color.FromArgb(220, accent) : Color.FromArgb(160, 35, 38, 48)))
-                g.FillRectangle(br, cardRect);
-            using (var pen = new Pen(sel ? Color.White : Color.FromArgb(80, accent), sel ? 2f : 1f))
-                g.DrawRectangle(pen, cardRect);
+            // Row background
+            using (var br = new SolidBrush(sel
+                ? Color.FromArgb(230, accent)
+                : Color.FromArgb(130, 30, 34, 44)))
+                g.FillRectangle(br, row);
 
-            var u = pageUsers[i];
-            using (var tbr = new SolidBrush(sel ? Color.Black : Color.White))
+            // Row border
+            using (var pen = new Pen(sel
+                ? Color.FromArgb(255, 255, 255, 255)
+                : Color.FromArgb(60, accent), sel ? 2f : 1f))
+                g.DrawRectangle(pen, row);
+
+            // Selection arrow
+            if (sel)
             {
-                var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
-                g.DrawString(u.DisplayName, fontBody, tbr,
-                    new RectangleF(cardRect.X + 4, cardRect.Y + 10, cardRect.Width - 8, 40), sf);
-                g.DrawString(u.FaceUserId, fontSmall, tbr,
-                    new RectangleF(cardRect.X + 4, cardRect.Y + 52, cardRect.Width - 8, 24), sf);
-                g.DrawString(u.VisitCount + " visit" + (u.VisitCount != 1 ? "s" : ""), fontSmall, tbr,
-                    new RectangleF(cardRect.X + 4, cardRect.Y + 76, cardRect.Width - 8, 24), sf);
+                using (var arrowBr = new SolidBrush(Color.Black))
+                {
+                    var pts = new PointF[]
+                    {
+                        new PointF(row.X + 10, ry + rowH / 2f - 7),
+                        new PointF(row.X + 10, ry + rowH / 2f + 7),
+                        new PointF(row.X + 22, ry + rowH / 2f)
+                    };
+                    g.FillPolygon(arrowBr, pts);
+                }
+            }
+
+            // Text
+            var textColor = sel ? Color.Black : Color.White;
+            using (var tbr = new SolidBrush(textColor))
+            {
+                var sfL = new StringFormat { Alignment = StringAlignment.Near, LineAlignment = StringAlignment.Center };
+                var sfR = new StringFormat { Alignment = StringAlignment.Far,  LineAlignment = StringAlignment.Center };
+                var nameRect  = new RectangleF(row.X + 30, row.Y, row.Width * 0.55f, row.Height);
+                var idRect    = new RectangleF(row.X + 30, row.Y + row.Height * 0.5f, row.Width * 0.55f, row.Height * 0.5f);
+                var countRect = new RectangleF(row.X, row.Y, row.Width - 12, row.Height);
+
+                g.DrawString(u.DisplayName, fontBody, tbr, nameRect, sfL);
+                using (var dimBr = new SolidBrush(sel ? Color.FromArgb(160, 0, 0, 0) : Color.FromArgb(160, papyrus)))
+                    g.DrawString(u.FaceUserId, fontSmall, dimBr, idRect, sfL);
+                g.DrawString(u.VisitCount + (u.VisitCount == 1 ? " visit" : " visits"), fontSmall, tbr, countRect, sfR);
             }
         }
 
-        // Page navigation hint
-        if (pageCount > 1)
-        {
-            DrawCentered(g, "◄ prev page: rotate past first item   next page: rotate past last item ►",
-                fontSmall, Color.FromArgb(150, papyrus), new RectangleF(20, h - 60, w - 40, 22));
-        }
+        // Scroll arrows
+        if (page > 0)
+            DrawCentered(g, "▲ more above", fontSmall, Color.FromArgb(160, papyrus),
+                new RectangleF(20, startY - 18, w - 40, 16));
+        if (endIdx < allUsers.Count)
+            DrawCentered(g, "▼ more below", fontSmall, Color.FromArgb(160, papyrus),
+                new RectangleF(20, startY + (endIdx - startIdx) * (rowH + 6) + 2, w - 40, 16));
     }
 
-    // ─── Draw: Level 1 — Visit List ───────────────────────────────────────────
+    // ─── Draw: Level 1 — Visit List (vertical rows) ───────────────────────────
 
-    private void DrawVisitList(Graphics g, int w, int h, Font fontBody, Font fontSmall, Color accent, Color papyrus)
+    private void DrawVisitList(Graphics g, int w, int h, Font fontTitle, Font fontBody, Font fontSmall,
+        Color accent, Color papyrus)
     {
-        string userName = (userPage * UsersPerPage + userIndexOnPage < allUsers.Count)
-            ? allUsers[userPage * UsersPerPage + userIndexOnPage].DisplayName
+        string userName = (userSelectedIndex < allUsers.Count)
+            ? allUsers[userSelectedIndex].DisplayName
             : "Unknown";
 
-        DrawCentered(g, "Visits for: " + userName,
-            fontBody, accent, new RectangleF(20, 52, w - 40, 28));
-        DrawCentered(g, "Rotate = select   Flick UP = open   Flick DOWN = back to users",
-            fontSmall, Color.FromArgb(200, papyrus), new RectangleF(20, 78, w - 40, 20));
+        DrawCentered(g, "VISITS  —  " + userName.ToUpper(),
+            fontTitle, accent, new RectangleF(20, 14, w - 40, 48));
+        DrawCentered(g,
+            "Rotate = scroll   Flick RIGHT = open replay   Flick LEFT = back to users",
+            fontSmall, Color.FromArgb(200, papyrus), new RectangleF(20, 62, w - 40, 20));
 
         if (userVisitPaths.Count == 0)
         {
@@ -438,45 +551,85 @@ public class AdminAnalyticsPanel
         }
 
         int pageCount = (int)Math.Ceiling(userVisitPaths.Count / (double)VisitsPerPage);
-        int startIdx  = visitPage * VisitsPerPage;
-        var pageVisits = userVisitPaths.Skip(startIdx).Take(VisitsPerPage).ToList();
+        int page      = visitSelectedIndex / VisitsPerPage;
+        int startIdx  = page * VisitsPerPage;
+        int endIdx    = Math.Min(startIdx + VisitsPerPage, userVisitPaths.Count);
 
         if (pageCount > 1)
-            DrawCentered(g, string.Format("Page {0}/{1}", visitPage + 1, pageCount),
-                fontSmall, Color.FromArgb(180, papyrus), new RectangleF(20, 98, w - 40, 18));
+            DrawCentered(g, string.Format("Page {0} / {1}", page + 1, pageCount),
+                fontSmall, Color.FromArgb(160, papyrus), new RectangleF(20, 82, w - 40, 18));
 
-        int itemH = 70;
-        int startY = 125;
+        int rowH   = 60;
+        int startY = 108;
+        int padX   = 40;
 
-        for (int i = 0; i < pageVisits.Count; i++)
+        for (int i = startIdx; i < endIdx; i++)
         {
-            bool sel = i == visitIndexOnPage;
-            var row = new Rectangle(40, startY + i * (itemH + 8), w - 80, itemH);
+            bool sel = i == visitSelectedIndex;
+            int  ry  = startY + (i - startIdx) * (rowH + 6);
+            var  row = new Rectangle(padX, ry, w - padX * 2, rowH);
 
-            using (var br = new SolidBrush(sel ? Color.FromArgb(220, accent) : Color.FromArgb(140, 35, 38, 48)))
+            using (var br = new SolidBrush(sel
+                ? Color.FromArgb(230, accent)
+                : Color.FromArgb(130, 30, 34, 44)))
                 g.FillRectangle(br, row);
-            using (var pen = new Pen(sel ? Color.White : Color.FromArgb(60, accent), sel ? 2f : 1f))
+            using (var pen = new Pen(sel
+                ? Color.FromArgb(255, 255, 255, 255)
+                : Color.FromArgb(60, accent), sel ? 2f : 1f))
                 g.DrawRectangle(pen, row);
 
-            string fn = Path.GetFileNameWithoutExtension(pageVisits[i]);
-            // Parse date from filename: visit_userX_hash_YYYYMMDD_HHmmss
-            string dateStr = "";
-            string[] parts = fn.Split('_');
-            if (parts.Length >= 5)
-                dateStr = parts[3] + " " + parts[4].Insert(2, ":").Insert(5, ":");
-
-            // Try to get segment count
-            int segCount = 0;
-            try { segCount = SessionAnalyticsRecorder.Load(pageVisits[i])?.Segments?.Count ?? 0; } catch { }
-
-            using (var tbr = new SolidBrush(sel ? Color.Black : Color.White))
+            if (sel)
             {
-                var sf = new StringFormat { Alignment = StringAlignment.Near, LineAlignment = StringAlignment.Center };
-                g.DrawString(dateStr, fontBody, tbr, new RectangleF(row.X + 12, row.Y + 4, row.Width - 24, 32), sf);
-                g.DrawString(segCount + " slide segment" + (segCount != 1 ? "s" : ""), fontSmall, tbr,
-                    new RectangleF(row.X + 12, row.Y + 36, row.Width - 24, 24), sf);
+                using (var arrowBr = new SolidBrush(Color.Black))
+                {
+                    var pts = new PointF[]
+                    {
+                        new PointF(row.X + 10, ry + rowH / 2f - 7),
+                        new PointF(row.X + 10, ry + rowH / 2f + 7),
+                        new PointF(row.X + 22, ry + rowH / 2f)
+                    };
+                    g.FillPolygon(arrowBr, pts);
+                }
+            }
+
+            // Parse filename: visit_userX_hash_YYYYMMDD_HHmmss
+            string fn    = Path.GetFileNameWithoutExtension(userVisitPaths[i]);
+            string[] pts2 = fn.Split('_');
+            string dateStr = "";
+            if (pts2.Length >= 5)
+            {
+                string d = pts2[3]; // YYYYMMDD
+                string t = pts2[4]; // HHmmss
+                if (d.Length == 8 && t.Length == 6)
+                    dateStr = d.Substring(0, 4) + "-" + d.Substring(4, 2) + "-" + d.Substring(6, 2)
+                            + "  " + t.Substring(0, 2) + ":" + t.Substring(2, 2) + ":" + t.Substring(4, 2);
+            }
+
+            int segCount = 0;
+            try { segCount = SessionAnalyticsRecorder.Load(userVisitPaths[i])?.Segments?.Count ?? 0; } catch { }
+
+            var textColor = sel ? Color.Black : Color.White;
+            using (var tbr = new SolidBrush(textColor))
+            {
+                var sfL = new StringFormat { Alignment = StringAlignment.Near, LineAlignment = StringAlignment.Center };
+                var sfR = new StringFormat { Alignment = StringAlignment.Far,  LineAlignment = StringAlignment.Center };
+                g.DrawString(dateStr, fontBody, tbr,
+                    new RectangleF(row.X + 30, row.Y, row.Width * 0.7f, row.Height * 0.55f), sfL);
+                using (var dimBr = new SolidBrush(sel ? Color.FromArgb(160, 0, 0, 0) : Color.FromArgb(160, papyrus)))
+                    g.DrawString(segCount + (segCount == 1 ? " slide segment" : " slide segments"),
+                        fontSmall, dimBr,
+                        new RectangleF(row.X + 30, row.Y + row.Height * 0.5f, row.Width * 0.7f, row.Height * 0.5f), sfL);
+                g.DrawString("#" + (i + 1), fontSmall, tbr,
+                    new RectangleF(row.X, row.Y, row.Width - 12, row.Height), sfR);
             }
         }
+
+        if (page > 0)
+            DrawCentered(g, "▲ more above", fontSmall, Color.FromArgb(160, papyrus),
+                new RectangleF(20, startY - 18, w - 40, 16));
+        if (endIdx < userVisitPaths.Count)
+            DrawCentered(g, "▼ more below", fontSmall, Color.FromArgb(160, papyrus),
+                new RectangleF(20, startY + (endIdx - startIdx) * (rowH + 6) + 2, w - 40, 16));
     }
 
     // ─── Draw: Level 2 — Replay ───────────────────────────────────────────────
@@ -484,192 +637,401 @@ public class AdminAnalyticsPanel
     private void DrawReplay(Graphics g, int w, int h, Font fontTitle, Font fontBody, Font fontSmall,
         Color accent, Color papyrus, LiveSessionSnapshot live)
     {
-        string title = loadedVisit != null
-            ? loadedVisit.DisplayName + "  ·  " + Path.GetFileNameWithoutExtension(loadedPath ?? "")
-            : "LIVE";
-        DrawCentered(g, title, fontTitle, accent, new RectangleF(20, 52, w - 40, 36));
-
-        string hint = autoReplay ? "▶ AUTO-REPLAY  (flick UP = pause)" : "⏸ PAUSED  (flick UP = play)";
-        hint += "   Rotate = select segment   Flick DOWN = back";
-        DrawCentered(g, hint, fontSmall, Color.FromArgb(200, papyrus), new RectangleF(20, 88, w - 40, 20));
-
-        // Gaze area
-        int emoW = 210;
-        var gazeRect = new Rectangle(40, 116, w - 100 - emoW, h - 220);
-        using (var br = new SolidBrush(Color.FromArgb(200, 8, 9, 14)))
-            g.FillRectangle(br, gazeRect);
-        using (var pen = new Pen(Color.FromArgb(150, accent), 1))
-            g.DrawRectangle(pen, gazeRect);
-
-        // Emotion bars on the right
-        var emoRect = new Rectangle(gazeRect.Right + 10, gazeRect.Top, emoW, gazeRect.Height);
-
         var seg = GetSelectedSegment();
-        if (seg != null && seg.Samples != null && seg.Samples.Count > 0)
-        {
-            string segLabel = seg.StoryTitle + "  ·  slide " + seg.SlideIndex;
-            DrawCentered(g, segLabel, fontBody, papyrus,
-                new RectangleF(gazeRect.X, gazeRect.Top - 26, gazeRect.Width, 22));
+        int totalSegs = loadedVisit?.Segments?.Count ?? 0;
 
+        // ── Header bar ────────────────────────────────────────────────────────
+        string userName = loadedVisit?.DisplayName ?? "Unknown";
+        string segLabel = totalSegs > 0
+            ? string.Format("Slide {0}/{1}", selectedSegmentIndex + 1, totalSegs)
+            : "";
+        string storyLabel = seg != null ? seg.StoryTitle : "";
+        string headerLine = userName + "   ·   " + segLabel
+            + (string.IsNullOrEmpty(storyLabel) ? "" : "   ·   " + storyLabel);
+        DrawCentered(g, headerLine, fontBody, accent, new RectangleF(20, 10, w - 40, 36));
+
+        // ── Controls hint ─────────────────────────────────────────────────────
+        string playState = autoReplay ? "▶ PLAYING" : "⏸ PAUSED";
+        string hint = playState + "   |   Flick UP = play/pause   Rotate = jump segment   Flick LEFT = back";
+        DrawCentered(g, hint, fontSmall, Color.FromArgb(190, papyrus), new RectangleF(20, 46, w - 40, 20));
+
+        var slideArea = new Rectangle(0, 68, w, h - 100);
+
+        if (seg == null)
+        {
+            using (var bg = new SolidBrush(Color.FromArgb(255, 10, 8, 25)))
+                g.FillRectangle(bg, slideArea);
+            DrawCentered(g, "No segments in this visit.", fontBody, Color.Gray,
+                new RectangleF(0, h / 2f - 20, w, 40));
+            return;
+        }
+
+        // 1. Slide background (text or image — exactly as user saw it)
+        DrawSegmentSlide(g, seg, slideArea, accent);
+
+        if (seg.Samples != null && seg.Samples.Count > 0)
+        {
             if (!autoReplay)
             {
                 long maxT = seg.Samples[seg.Samples.Count - 1].TRelMs;
                 replayCursorMs = Math.Min(replayCursorMs, maxT);
             }
 
-            DrawGazeTrail(g, gazeRect, seg.Samples, replayCursorMs);
-
             var atSample = seg.Samples.LastOrDefault(s => s.TRelMs <= replayCursorMs) ?? seg.Samples[0];
+
+            // 2. Gaze trail
+            DrawGazeTrail(g, slideArea, seg.Samples, replayCursorMs);
+
+            // 3. Gaze dot (identical to live overlay)
+            double nx = Math.Max(0.0, Math.Min(1.0, atSample.Gx));
+            double ny = Math.Max(0.0, Math.Min(1.0, atSample.Gy));
+            int px = slideArea.X + (int)(nx * slideArea.Width);
+            int py = slideArea.Y + (int)(ny * slideArea.Height);
+            const int outerR = 14;
+            using (var ring = new Pen(Color.FromArgb(240, 255, 255, 255), 3f))
+                g.DrawEllipse(ring, px - outerR, py - outerR, outerR * 2, outerR * 2);
+            using (var fill = new SolidBrush(Color.FromArgb(230, 255, 60, 60)))
+                g.FillEllipse(fill, px - 5, py - 5, 10, 10);
+            using (var cross = new Pen(Color.FromArgb(200, 255, 255, 255), 1.5f))
+            {
+                g.DrawLine(cross, px - 22, py, px + 22, py);
+                g.DrawLine(cross, px, py - 22, px, py + 22);
+            }
+
+            // 4. Dominant emotion label — top-left of slide, pill style
+            string emotionLine = "😐 Dominant: " + FormatEmotion(atSample.Dominant);
+            using (var labelFont = new Font("Georgia", 16f, FontStyle.Bold, GraphicsUnit.Pixel))
+            {
+                SizeF textSz = g.MeasureString(emotionLine, labelFont);
+                var pill = new RectangleF(slideArea.X + 10, slideArea.Y + 10,
+                    textSz.Width + 24, textSz.Height + 10);
+                using (var pillBg = new SolidBrush(Color.FromArgb(210, 12, 14, 20)))
+                    g.FillRectangle(pillBg, pill);
+                using (var pillPen = new Pen(Color.FromArgb(120, accent), 1.5f))
+                    g.DrawRectangle(pillPen, pill.X, pill.Y, pill.Width, pill.Height);
+                using (var textBr = new SolidBrush(Color.FromArgb(255, 255, 248, 200)))
+                    g.DrawString(emotionLine, labelFont, textBr,
+                        new PointF(pill.X + 12, pill.Y + 5));
+            }
+
+            // 5. Emotion probability bars — right side, tall panel
+            int barPanelW = 220;
+            int barPanelH = Math.Min(280, slideArea.Height - 60);
+            var emoRect = new Rectangle(slideArea.Right - barPanelW - 8,
+                slideArea.Top + 8, barPanelW, barPanelH);
             DrawEmotionBars(g, emoRect, atSample.Dominant, atSample.Emotions, fontSmall, accent);
 
-            // Timeline progress bar
+            // 6. Timeline progress bar + time label
             long totalMs = seg.Samples[seg.Samples.Count - 1].TRelMs;
+            int barY = h - 36;
+            var barRect = new Rectangle(60, barY, w - 120, 10);
+            using (var bgBr = new SolidBrush(Color.FromArgb(120, 40, 40, 50)))
+                g.FillRectangle(bgBr, barRect);
             if (totalMs > 0)
             {
-                var barRect = new Rectangle(gazeRect.X, gazeRect.Bottom + 8, gazeRect.Width, 12);
-                using (var bgBr = new SolidBrush(Color.FromArgb(80, 40, 40, 50)))
-                    g.FillRectangle(bgBr, barRect);
                 int progW = (int)(barRect.Width * Math.Min(1.0, replayCursorMs / (double)totalMs));
-                using (var progBr = new SolidBrush(Color.FromArgb(200, accent)))
+                using (var progBr = new SolidBrush(Color.FromArgb(220, accent)))
                     g.FillRectangle(progBr, barRect.X, barRect.Y, progW, barRect.Height);
-                DrawCentered(g,
-                    string.Format("{0:0.0}s / {1:0.0}s", replayCursorMs / 1000.0, totalMs / 1000.0),
-                    fontSmall, papyrus, new RectangleF(barRect.X, barRect.Bottom + 2, barRect.Width, 18));
+            }
+            // Time labels
+            using (var timeBr = new SolidBrush(Color.FromArgb(200, papyrus)))
+            {
+                var sfL = new StringFormat { Alignment = StringAlignment.Far,  LineAlignment = StringAlignment.Center };
+                var sfR = new StringFormat { Alignment = StringAlignment.Near, LineAlignment = StringAlignment.Center };
+                g.DrawString(string.Format("{0:0.0}s", replayCursorMs / 1000.0),
+                    fontSmall, timeBr, new RectangleF(0, barY - 2, 56, 14), sfL);
+                g.DrawString(string.Format("{0:0.0}s", totalMs / 1000.0),
+                    fontSmall, timeBr, new RectangleF(barRect.Right + 4, barY - 2, 56, 14), sfR);
             }
         }
         else
         {
-            DrawCentered(g, "No samples in this segment.", fontBody, Color.Gray,
-                new RectangleF(gazeRect.X, gazeRect.Y + gazeRect.Height / 2 - 20, gazeRect.Width, 40));
+            DrawCentered(g, "No gaze samples recorded for this segment.",
+                fontBody, Color.FromArgb(180, papyrus),
+                new RectangleF(slideArea.X, slideArea.Y + slideArea.Height / 2f - 20, slideArea.Width, 40));
         }
 
-        // Segment selector wheel at bottom
-        if (loadedVisit != null && loadedVisit.Segments != null && loadedVisit.Segments.Count > 1)
+        // 7. Segment selector strip at bottom
+        DrawSegmentStrip(g, w, h, accent, papyrus, fontSmall);
+    }
+
+    // ─── Segment strip (bottom of replay) ────────────────────────────────────
+
+    private void DrawSegmentStrip(Graphics g, int w, int h, Color accent, Color papyrus, Font fontSmall)
+    {
+        if (loadedVisit == null || loadedVisit.Segments == null || loadedVisit.Segments.Count <= 1) return;
+
+        int n       = loadedVisit.Segments.Count;
+        int stripH  = 22;
+        int stripY  = h - stripH - 2;
+        int slotW   = Math.Min(120, (w - 20) / n);
+        int totalW  = slotW * n;
+        int startX  = (w - totalW) / 2;
+
+        for (int i = 0; i < n; i++)
         {
-            int cx = w / 2;
-            int cy = h - 70;
-            int r  = 50;
-            int n  = loadedVisit.Segments.Count;
-            for (int i = 0; i < n; i++)
+            bool sel = i == selectedSegmentIndex;
+            var slot = new Rectangle(startX + i * slotW, stripY, slotW - 2, stripH);
+
+            using (var br = new SolidBrush(sel
+                ? Color.FromArgb(200, accent)
+                : Color.FromArgb(80, 40, 44, 54)))
+                g.FillRectangle(br, slot);
+
+            string label = (i + 1).ToString();
+            using (var tb = new SolidBrush(sel ? Color.Black : Color.FromArgb(160, papyrus)))
             {
-                float a0 = (float)(-Math.PI / 2 + Math.PI * 2.0 * i / n);
-                float a1 = (float)(-Math.PI / 2 + Math.PI * 2.0 * (i + 1) / n);
-                bool sel = i == selectedSegmentIndex;
-                using (var b = new SolidBrush(sel
-                    ? Color.FromArgb(220, accent)
-                    : Color.FromArgb(120, 35, 36, 42)))
-                using (var gp = new GraphicsPath())
-                {
-                    gp.AddPie(cx - r, cy - r, r * 2, r * 2,
-                        (float)(a0 * 180.0 / Math.PI),
-                        (float)((a1 - a0) * 180.0 / Math.PI));
-                    g.FillPath(b, gp);
-                }
+                var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
+                g.DrawString(label, fontSmall, tb, new RectangleF(slot.X, slot.Y, slot.Width, slot.Height), sf);
             }
-            DrawCentered(g, "Rotate marker to select segment",
-                fontSmall, papyrus, new RectangleF(20, h - 110, w - 40, 18));
         }
     }
 
-    // ─── Gaze trail rendering ─────────────────────────────────────────────────
+    // ─── Slide content renderer ───────────────────────────────────────────────
 
-    private static void DrawGazeTrail(Graphics g, Rectangle zone, List<AnalyticsSampleDoc> samples, long cursorMs)
+    private void DrawSegmentSlide(Graphics g, AnalyticsSegmentDoc seg, Rectangle area, Color accent)
     {
-        if (samples == null || samples.Count < 2) return;
-        using (var pen = new Pen(Color.FromArgb(180, 100, 200, 255), 2) { LineJoin = LineJoin.Round })
+        using (var bg = new SolidBrush(Color.FromArgb(255, 10, 8, 25)))
+            g.FillRectangle(bg, area);
+
+        if (string.IsNullOrEmpty(seg.ContentSummary))
         {
-            for (int i = 1; i < samples.Count; i++)
+            DrawCentered(g, seg.StoryTitle + "  ·  slide " + seg.SlideIndex,
+                new Font("Georgia", 22f, FontStyle.Regular, GraphicsUnit.Pixel),
+                Color.FromArgb(200, 240, 220, 165),
+                new RectangleF(area.X, area.Y + area.Height / 2f - 20, area.Width, 40));
+            return;
+        }
+
+        int colon = seg.ContentSummary.IndexOf(':');
+        string typeStr = colon > 0 ? seg.ContentSummary.Substring(0, colon) : seg.ContentSummary;
+        string content = colon > 0 ? seg.ContentSummary.Substring(colon + 1) : "";
+
+        if (typeStr == "Image" && !string.IsNullOrEmpty(content))
+            DrawReplayImageSlide(g, content, area);
+        else if (typeStr == "Text" && !string.IsNullOrEmpty(content))
+            DrawReplayTextSlide(g, content, area, accent);
+        else
+            DrawCentered(g, seg.StoryTitle + "  ·  slide " + seg.SlideIndex,
+                new Font("Georgia", 22f, FontStyle.Regular, GraphicsUnit.Pixel),
+                Color.FromArgb(200, 240, 220, 165),
+                new RectangleF(area.X, area.Y + area.Height / 2f - 20, area.Width, 40));
+    }
+
+    private static readonly Dictionary<string, Image> _imgCache =
+        new Dictionary<string, Image>(StringComparer.OrdinalIgnoreCase);
+
+    private static Image TryLoadImage(string path)
+    {
+        if (_imgCache.TryGetValue(path, out var cached)) return cached;
+        try
+        {
+            string full = path;
+            if (!Path.IsPathRooted(full))
             {
-                var a = samples[i - 1];
-                var b = samples[i];
-                int x1 = zone.Left + (int)(a.Gx * zone.Width);
-                int y1 = zone.Top  + (int)(a.Gy * zone.Height);
-                int x2 = zone.Left + (int)(b.Gx * zone.Width);
-                int y2 = zone.Top  + (int)(b.Gy * zone.Height);
-                float t = b.TRelMs <= cursorMs ? 1f : 0.25f;
-                pen.Color = Color.FromArgb((int)(50 + 205 * t), 100, 200, 255);
-                g.DrawLine(pen, x1, y1, x2, y2);
+                string dir = AppDomain.CurrentDomain.BaseDirectory;
+                for (int i = 0; i < 6; i++)
+                {
+                    string candidate = Path.Combine(dir, path.Replace('/', Path.DirectorySeparatorChar));
+                    if (File.Exists(candidate)) { full = candidate; break; }
+                    dir = Path.GetDirectoryName(dir) ?? dir;
+                }
+            }
+            if (File.Exists(full))
+            {
+                var img = Image.FromFile(full);
+                _imgCache[path] = img;
+                return img;
             }
         }
-        var cur = samples.LastOrDefault(s => s.TRelMs <= cursorMs);
-        if (cur != null)
+        catch { }
+        return null;
+    }
+
+    private static Rectangle FitRect(int imgW, int imgH, Rectangle area)
+    {
+        float scale = Math.Min((float)area.Width / imgW, (float)area.Height / imgH);
+        int dw = (int)(imgW * scale);
+        int dh = (int)(imgH * scale);
+        return new Rectangle(area.X + (area.Width - dw) / 2, area.Y + (area.Height - dh) / 2, dw, dh);
+    }
+
+    private static void DrawReplayImageSlide(Graphics g, string path, Rectangle area)
+    {
+        Image img = TryLoadImage(path);
+        if (img != null)
         {
-            int cx = zone.Left + (int)(cur.Gx * zone.Width);
-            int cy = zone.Top  + (int)(cur.Gy * zone.Height);
-            using (var br = new SolidBrush(Color.FromArgb(240, 255, 220, 60)))
-                g.FillEllipse(br, cx - 9, cy - 9, 18, 18);
-            using (var pen = new Pen(Color.White, 1.5f))
-                g.DrawEllipse(pen, cx - 9, cy - 9, 18, 18);
+            Rectangle dest = FitRect(img.Width, img.Height, area);
+            g.DrawImage(img, dest);
+        }
+        else
+        {
+            using (var pen = new Pen(Color.FromArgb(90, 70, 20), 2))
+                g.DrawRectangle(pen, area);
+            DrawCentered(g, "[ Image: " + Path.GetFileName(path) + " ]",
+                new Font("Georgia", 18f, FontStyle.Italic, GraphicsUnit.Pixel),
+                Color.FromArgb(160, 240, 220, 165),
+                new RectangleF(area.X, area.Y + area.Height / 2f - 18, area.Width, 36));
+        }
+    }
+
+    private static void DrawReplayTextSlide(Graphics g, string text, Rectangle area, Color accent)
+    {
+        int padX  = Math.Min(60, area.Width / 8);
+        var panel = new Rectangle(
+            area.X + padX, area.Y + area.Height / 8,
+            area.Width - padX * 2, area.Height * 6 / 8);
+
+        using (var panelBr = new SolidBrush(Color.FromArgb(200, 20, 16, 35)))
+            g.FillRectangle(panelBr, panel);
+        using (var panelPen = new Pen(Color.FromArgb(100, accent), 1.5f))
+            g.DrawRectangle(panelPen, panel);
+
+        using (var textBr = new SolidBrush(Color.FromArgb(240, 240, 220, 165)))
+        using (var tf = new Font("Georgia", 20f, FontStyle.Regular, GraphicsUnit.Pixel))
+        {
+            var sf = new StringFormat
+            {
+                Alignment     = StringAlignment.Center,
+                LineAlignment = StringAlignment.Center,
+                Trimming      = StringTrimming.Word
+            };
+            g.DrawString(text, tf, textBr,
+                new RectangleF(panel.X + 20, panel.Y + 20, panel.Width - 40, panel.Height - 40), sf);
+        }
+    }
+
+    // ─── Gaze trail ───────────────────────────────────────────────────────────
+
+    private static void DrawGazeTrail(Graphics g, Rectangle area,
+        List<AnalyticsSampleDoc> samples, long cursorMs)
+    {
+        const int TrailMs   = 2000;
+        const int MaxRadius = 6;
+
+        long trailStart = cursorMs - TrailMs;
+        var  inWindow   = samples.Where(s => s.TRelMs >= trailStart && s.TRelMs <= cursorMs).ToList();
+        if (inWindow.Count < 2) return;
+
+        for (int i = 1; i < inWindow.Count; i++)
+        {
+            var prev = inWindow[i - 1];
+            var curr = inWindow[i];
+            float age  = 1f - (float)(cursorMs - curr.TRelMs) / TrailMs;
+            int   alpha = (int)(age * 180);
+            if (alpha <= 0) continue;
+
+            int x1 = area.X + (int)(Math.Max(0, Math.Min(1, prev.Gx)) * area.Width);
+            int y1 = area.Y + (int)(Math.Max(0, Math.Min(1, prev.Gy)) * area.Height);
+            int x2 = area.X + (int)(Math.Max(0, Math.Min(1, curr.Gx)) * area.Width);
+            int y2 = area.Y + (int)(Math.Max(0, Math.Min(1, curr.Gy)) * area.Height);
+
+            using (var pen = new Pen(Color.FromArgb(alpha, 255, 200, 60), 2f))
+                g.DrawLine(pen, x1, y1, x2, y2);
+
+            int r = (int)(age * MaxRadius);
+            if (r > 0)
+                using (var dotBr = new SolidBrush(Color.FromArgb(alpha / 2, 255, 200, 60)))
+                    g.FillEllipse(dotBr, x2 - r, y2 - r, r * 2, r * 2);
         }
     }
 
     // ─── Emotion bars ─────────────────────────────────────────────────────────
 
-    private static void DrawEmotionBars(Graphics g, Rectangle zone, string dominant,
-        Dictionary<string, double> emotions, Font fontSmall, Color accent)
+    private static void DrawEmotionBars(Graphics g, Rectangle area,
+        string dominant, Dictionary<string, double> emotions, Font fontSmall, Color accent)
     {
         if (emotions == null || emotions.Count == 0) return;
-        string[] order = { "angry", "disgust", "fear", "happy", "sad", "surprise", "neutral" };
-        int n    = order.Length;
-        int rowH = zone.Height / n;
 
-        for (int i = 0; i < n; i++)
+        // Semi-transparent panel background
+        using (var bgBr = new SolidBrush(Color.FromArgb(200, 10, 12, 20)))
+            g.FillRectangle(bgBr, area);
+        using (var borderPen = new Pen(Color.FromArgb(80, accent), 1f))
+            g.DrawRectangle(borderPen, area);
+
+        var sorted = emotions.OrderByDescending(kv => kv.Value).ToList();
+
+        // Layout: label col (70px) | bar | pct (38px)
+        const int labelW = 70;
+        const int pctW   = 38;
+        const int padX   = 8;
+        const int padY   = 8;
+        int barAreaW = area.Width - labelW - pctW - padX * 2;
+        int barH     = Math.Max(10, (area.Height - padY * 2 - 4) / Math.Max(1, sorted.Count) - 5);
+
+        int y = area.Y + padY;
+
+        using (var labelFont = new Font("Georgia", 13f, FontStyle.Regular, GraphicsUnit.Pixel))
+        using (var pctFont   = new Font("Georgia", 12f, FontStyle.Regular, GraphicsUnit.Pixel))
         {
-            string key = order[i];
-            double v = 0;
-            emotions.TryGetValue(key, out v);
-            v = Math.Max(0, Math.Min(1, v));
+            foreach (var kv in sorted)
+            {
+                if (y + barH > area.Bottom - padY) break;
 
-            var row = new Rectangle(zone.X, zone.Y + i * rowH, zone.Width, rowH - 3);
-            using (var bg = new SolidBrush(Color.FromArgb(100, 28, 28, 36)))
-                g.FillRectangle(bg, row);
+                bool isDom = string.Equals(kv.Key, dominant, StringComparison.OrdinalIgnoreCase);
+                int  barW  = Math.Max(2, (int)(kv.Value * barAreaW));
 
-            bool isDom = string.Equals(dominant, key, StringComparison.OrdinalIgnoreCase);
-            int bw = (int)(row.Width * v);
-            using (var fill = new SolidBrush(isDom
-                ? Color.FromArgb(230, accent)
-                : Color.FromArgb(150, 70, 110, 150)))
-                g.FillRectangle(fill, row.X, row.Y + 3, bw, row.Height - 6);
+                // Label (right-aligned in label column)
+                using (var labelBr = new SolidBrush(isDom ? Color.White : Color.FromArgb(200, 200, 200, 200)))
+                {
+                    var sf = new StringFormat { Alignment = StringAlignment.Far, LineAlignment = StringAlignment.Center };
+                    g.DrawString(FormatEmotion(kv.Key), labelFont, labelBr,
+                        new RectangleF(area.X + padX, y, labelW - 4, barH), sf);
+                }
 
-            using (var tbr = new SolidBrush(isDom ? Color.Black : Color.White))
-                g.DrawString(key + "  " + (v * 100).ToString("0") + "%",
-                    fontSmall, tbr, row.X + 4, row.Y + 4);
+                // Bar
+                int barX = area.X + padX + labelW;
+                using (var barBr = new SolidBrush(isDom
+                    ? Color.FromArgb(230, accent)
+                    : Color.FromArgb(110, 100, 140, 180)))
+                    g.FillRectangle(barBr, barX, y + 2, barW, barH - 4);
+
+                // Dominant glow outline
+                if (isDom)
+                    using (var glowPen = new Pen(Color.FromArgb(180, accent), 1.5f))
+                        g.DrawRectangle(glowPen, barX, y + 2, barAreaW, barH - 4);
+
+                // Percentage
+                using (var pctBr = new SolidBrush(isDom ? Color.White : Color.FromArgb(180, 200, 200, 200)))
+                {
+                    var sf = new StringFormat { Alignment = StringAlignment.Near, LineAlignment = StringAlignment.Center };
+                    g.DrawString(string.Format("{0:0}%", kv.Value * 100), pctFont, pctBr,
+                        new RectangleF(barX + barAreaW + 4, y, pctW, barH), sf);
+                }
+
+                y += barH + 5;
+            }
         }
-
-        // Dominant label
-        DrawCentered(g, "▲ " + (dominant ?? "—"),
-            fontSmall, accent,
-            new RectangleF(zone.X, zone.Bottom + 4, zone.Width, 20));
     }
 
-    // ─── Utilities ────────────────────────────────────────────────────────────
+    // ─── Utility ─────────────────────────────────────────────────────────────
 
-    private static void DrawCentered(Graphics g, string text, Font font, Color color, RectangleF bounds)
+    private static void DrawCentered(Graphics g, string text, Font font, Color color, RectangleF rect)
     {
-        if (string.IsNullOrEmpty(text)) return;
-        var sf = new StringFormat
-        {
-            Alignment     = StringAlignment.Center,
-            LineAlignment = StringAlignment.Center,
-            Trimming      = StringTrimming.EllipsisCharacter
-        };
         using (var br = new SolidBrush(color))
-            g.DrawString(text, font, br, bounds, sf);
+        {
+            var sf = new StringFormat
+            {
+                Alignment     = StringAlignment.Center,
+                LineAlignment = StringAlignment.Center,
+                Trimming      = StringTrimming.EllipsisCharacter
+            };
+            g.DrawString(text, font, br, rect, sf);
+        }
     }
 
-    private static float NormalizeAngle(float angle)
+    private static string FormatEmotion(string raw)
     {
-        while (angle < 0f)                       angle += (float)(Math.PI * 2.0);
-        while (angle >= (float)(Math.PI * 2.0))  angle -= (float)(Math.PI * 2.0);
-        return angle;
+        if (string.IsNullOrEmpty(raw)) return "—";
+        return char.ToUpper(raw[0]) + raw.Substring(1).ToLower();
     }
 }
 
-// ─── Helper types ─────────────────────────────────────────────────────────────
+// ─── Supporting types ─────────────────────────────────────────────────────────
 
 public class UserSummary
 {
-    public string FaceUserId  { get; set; }
-    public string DisplayName { get; set; }
-    public int    VisitCount  { get; set; }
+    public string FaceUserId;
+    public string DisplayName;
+    public int    VisitCount;
 }
