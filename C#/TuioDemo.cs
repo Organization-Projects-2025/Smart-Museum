@@ -2259,7 +2259,7 @@ public class TuioDemo : Form, TuioListener
     private void StopAndUnlockSlides()
     {
         if (analyticsRecorder != null)
-            analyticsRecorder.NotifySlideShowEnded();
+            analyticsRecorder.SaveAndRestartVisit();
         slideShow.Stop();
         slideshowLocked = false;
         waitForClearAfterLockedShow = false;
@@ -2627,7 +2627,7 @@ public class TuioDemo : Form, TuioListener
     private void OnSlideShowCompleted()
     {
         if (analyticsRecorder != null)
-            analyticsRecorder.NotifySlideShowEnded();
+            analyticsRecorder.SaveAndRestartVisit();
 
         slideshowLocked = false;
         slideElapsedMs = 0;
