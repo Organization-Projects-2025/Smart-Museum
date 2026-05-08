@@ -139,7 +139,7 @@ public class VisitorProfile
             FirstName = "Guest",
             LastName = "Visitor",
             Age = 28,
-            Gender = "other",
+            Gender = "male",
             Race = "other",
             Language = "English",
             BluetoothMacAddress = "0",
@@ -284,18 +284,13 @@ public class VisitorProfile
             TitleSizePx = 54f;
         }
 
-        // --- Gender rubric → gold / accent (distinct paths for female / male / other) ---
+        // --- Gender rubric → gold / accent (distinct paths for female / male) ---
         string g = (Gender ?? string.Empty).Trim().ToLowerInvariant();
         PrimaryColor = Color.FromArgb(10, 10, 14);
         if (g == "female")
         {
             SecondaryColor = Color.FromArgb(232, 185, 55);
             TertiaryColor = Color.FromArgb(72, 118, 178);
-        }
-        else if (g == "other" || g == "nonbinary" || g == "nb")
-        {
-            SecondaryColor = Color.FromArgb(205, 165, 225);
-            TertiaryColor = Color.FromArgb(130, 95, 200);
         }
         else
         {

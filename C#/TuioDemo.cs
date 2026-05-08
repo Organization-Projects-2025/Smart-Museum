@@ -1155,30 +1155,28 @@ public class TuioDemo : Form, TuioListener
 
     private static List<string> BuildGenderRing()
     {
-        return new List<string> { "Male", "Female", "Other" };
+        return new List<string> { "Male", "Female" };
     }
 
     private static string GenderFromRingIndex(int index)
     {
-        if (index == 0) return "male";
         if (index == 1) return "female";
-        return "other";
+        return "male";
     }
 
     private static int GenderRingIndexFromValue(string genderCsv)
     {
         string g = (genderCsv ?? "").Trim().ToLowerInvariant();
-        if (g == "male") return 0;
         if (g == "female") return 1;
-        return 2;
+        return 0;
     }
 
     private static string NormalizeRegGender(string g)
     {
-        if (string.IsNullOrWhiteSpace(g)) return "other";
+        if (string.IsNullOrWhiteSpace(g)) return "male";
         g = g.Trim().ToLowerInvariant();
-        if (g == "male" || g == "female" || g == "other") return g;
-        return "other";
+        if (g == "female") return g;
+        return "male";
     }
 
     private void ProcessRegistrationTextPick(string pick)
