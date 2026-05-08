@@ -50,12 +50,12 @@ dist/
 htmlcov/
 .pytest_cache/
 
-# Model Files (large files)
-*.task
-*.tflite
-*.pb
-*.h5
-*.onnx
+# # Model Files (large files)
+# *.task
+# *.tflite
+# *.pb
+# *.h5
+# *.onnx
 
 # Compiled Files
 *.exe
