@@ -83,6 +83,7 @@ def _drain(conn, buf):
     return buf,last
 
 def _handle(conn, addr):
+    global _mock
     print(f"[YOLO] Client: {addr}")
     streaming,buf,mock_i = False,b"",0
     try:

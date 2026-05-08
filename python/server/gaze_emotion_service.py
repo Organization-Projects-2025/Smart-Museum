@@ -16,7 +16,16 @@ import json, os, select, socket, sys, threading, time, urllib.request
 import cv2
 import numpy as np
 
-# ── MediaPipe (gaze) ──────────────────────────────────────────────────────────
+# ── EyeTrax (gaze) ───────────────────────────────────────────────────────────
+try:
+    from eyetrax import GazeEstimator, run_9_point_calibration
+    _EYETRAX_OK = True
+    print("[GazeEmotion] EyeTrax ready")
+except Exception as e:
+    _EYETRAX_OK = False
+    print(f"[GazeEmotion] EyeTrax unavailable: {e}")
+
+# ── MediaPipe (face detection for emotion bbox + fallback gaze) ───────────────
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _MODEL_PATH = os.path.join(_SCRIPT_DIR, "face_landmarker.task")
 _MODEL_URL  = ("https://storage.googleapis.com/mediapipe-models/face_landmarker/"
@@ -88,7 +97,81 @@ def _pt(lms, i, w, h):
     p = lms.landmark[i]
     return np.array([p.x*w, p.y*h], dtype=np.float64)
 
-def _gaze(lms, w, h):
+# EyeTrax estimator — loads saved calibration model if available
+_gaze_estimator  = None
+_gaze_calibrated = False
+_EYETRAX_MODEL   = os.path.join(_SCRIPT_DIR, "eyetrax_model.pkl")
+
+def _ensure_gaze_estimator():
+    global _gaze_estimator, _gaze_calibrated
+    if _gaze_estimator is None and _EYETRAX_OK:
+        _gaze_estimator = GazeEstimator(face_landmarker_model=_ensure_model())
+        # Load saved calibration if it exists
+        if os.path.isfile(_EYETRAX_MODEL):
+            try:
+                _gaze_estimator.load_model(_EYETRAX_MODEL)
+                _gaze_calibrated = True
+                print(f"[GazeEmotion] EyeTrax model loaded from {_EYETRAX_MODEL}")
+            except Exception as e:
+                print(f"[GazeEmotion] Could not load EyeTrax model: {e}")
+        else:
+            print(f"[GazeEmotion] No calibration found at {_EYETRAX_MODEL}")
+            print(f"[GazeEmotion] Run: .venv\\Scripts\\python.exe Development\\calibrate_gaze.py")
+    return _gaze_estimator
+
+# Load at module startup so it's ready when the first frame arrives
+if _EYETRAX_OK:
+    _ensure_gaze_estimator()
+    if _gaze_calibrated:
+        print("[GazeEmotion] EyeTrax gaze ACTIVE (calibrated)")
+    else:
+        print("[GazeEmotion] EyeTrax gaze INACTIVE — run: .venv\\Scripts\\python.exe Development\\calibrate_gaze.py")
+
+def _run_calibration():
+    """Run 9-point calibration in-process. Must be called from main thread."""
+    global _gaze_calibrated
+    _gaze_calibrated = False
+    est = _ensure_gaze_estimator()
+    if est is None:
+        return
+    cam = int(os.environ.get("MUSEUM_CAMERA", "0"))
+    print("[GazeEmotion] Starting 9-point calibration...")
+    try:
+        run_9_point_calibration(est, camera_index=cam)
+        est.save_model(_EYETRAX_MODEL)
+        _gaze_calibrated = True
+        print("[GazeEmotion] Calibration complete and saved")
+    except Exception as e:
+        _gaze_calibrated = False
+        print(f"[GazeEmotion] Calibration failed: {e}")
+
+def _gaze_eyetrax(frame_bgr):
+    """Use EyeTrax to predict gaze. Returns (gx, gy) normalised 0-1 or None."""
+    if not _gaze_calibrated or _gaze_estimator is None:
+        return None
+    try:
+        result = _gaze_estimator.extract_features(frame_bgr)
+        if result is None:
+            return None
+        features, is_blink = result
+        if is_blink or features is None:
+            return None
+        pred = _gaze_estimator.predict(features.reshape(1, -1))
+        gx = float(np.clip(1.0 - pred[0][0] / 1920.0, 0, 1))
+        gy = float(np.clip(pred[0][1] / 1080.0, 0, 1))
+        return gx, gy
+    except Exception as e:
+        print(f"[GazeEmotion] EyeTrax error: {e}")
+        return None
+
+# Fallback: manual iris geometry (used before calibration)
+_LE_OUT,_LE_IN   = 33, 133
+_RE_IN, _RE_OUT  = 362, 263
+_NOSE,_FORE,_CHIN= 1,  10, 152
+_L_IRIS,_R_IRIS  = 468, 473
+
+def _gaze_manual(lms, w, h):
+    """Fallback iris-based gaze before EyeTrax is calibrated."""
     le_o,le_i = _pt(lms,_LE_OUT,w,h), _pt(lms,_LE_IN,w,h)
     re_i,re_o = _pt(lms,_RE_IN, w,h), _pt(lms,_RE_OUT,w,h)
     li,  ri   = _pt(lms,_L_IRIS,w,h), _pt(lms,_R_IRIS,w,h)
@@ -100,8 +183,9 @@ def _gaze(lms, w, h):
     fh    = max(1e-6, np.linalg.norm(fore-chin))
     pitch = (nose[1]-(fore[1]+chin[1])*.5)/fh
     yaw   = (nose[0]-(le_o[0]+re_o[0])*.5)/max(1e-6,abs(re_o[0]-le_o[0]))
-    gx = float(np.clip(0.5+0.55*ox+0.35*yaw,  0,1))
-    gy = float(np.clip(0.5+0.55*oy+0.25*pitch, 0,1))
+    gx = float(np.clip(0.5 - 5.0*ox - 2.0*yaw, 0, 1))
+    pitch_scale = 20.0 if pitch > 0 else 25.0
+    gy = float(np.clip(0.5 + 15.0*oy + pitch_scale*pitch, 0, 1))
     return gx, gy
 
 def _emotion(frame_bgr, face_bbox):
@@ -218,7 +302,9 @@ class _Loop:
                 continue
 
             lms = _LM(list(res.face_landmarks[0]))
-            gx, gy = _gaze(lms, w, h)
+
+            # Gaze: manual iris geometry (EyeTrax disabled — recalibrate for better accuracy)
+            gx, gy = _gaze_manual(lms, w, h)
 
             # Face bbox from landmarks
             xs = [lm.x*w for lm in lms.landmark]
@@ -237,7 +323,8 @@ class _Loop:
                 self._last_emo = {"dominant": "neutral", "emotions": neutral}
 
             if self._fi <= 4 or self._fi % 300 == 0:
-                print(f"[GazeEmotion] frame={self._fi} dominant={self._last_emo['dominant']} gx={gx:.2f} gy={gy:.2f}")
+                mode = "EyeTrax" if _gaze_calibrated else "manual"
+                print(f"[GazeEmotion] frame={self._fi} dominant={self._last_emo['dominant']} gx={gx:.2f} gy={gy:.2f} gaze={mode}")
 
             with self.lock:
                 self.latest = {
@@ -286,6 +373,10 @@ def _handle(conn, addr):
                     if not cmd: continue
                     if cmd == "PING":
                         conn.sendall((json.dumps({"status":"ok"})+"\n").encode())
+                    elif cmd == "CALIBRATE":
+                        # Run EyeTrax calibration in a background thread (opens a window)
+                        threading.Thread(target=_run_calibration, daemon=True).start()
+                        conn.sendall((json.dumps({"status":"ok","msg":"calibration started"})+"\n").encode())
                     elif cmd == "STREAM":
                         streaming = True
                         _loop.start()

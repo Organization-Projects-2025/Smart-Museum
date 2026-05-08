@@ -250,9 +250,7 @@ class _ClientState:
                 if pts is not None:
                     name, score = _recognize_points(self.templates, pts)
                     self.last_recog_time = now
-                    print(f"[GESTURE] attempt: {name}  score={score:.3f}  buf={len(buf_snapshot)}")
-
-                    if name and score >= SCORE_THRESHOLD:
+                    if name and score >= SCORE_THRESHOLD:  # only log successful recognitions
                         print(f"[GESTURE:{self.client_id}] ✓ DETECTED: {name}  score={score:.3f}")
                         self.last_gesture      = name
                         self.last_score        = score
@@ -452,7 +450,8 @@ class GestureRecognitionService:
                     cmd = line.decode("utf-8").strip().upper()
                     if not cmd:
                         continue
-                    print(f"[GESTURE:{addr}] CMD: {cmd}")
+                    if cmd not in ("STATUS",):  # suppress high-frequency polling spam
+                        print(f"[GESTURE:{addr}] CMD: {cmd}")
                     if   cmd == "START_TRACKING":    send(state.cmd_start_tracking())
                     elif cmd == "STOP_TRACKING":     send(state.cmd_stop_tracking())
                     elif cmd == "RECOGNIZE":          send(state.cmd_recognize())
