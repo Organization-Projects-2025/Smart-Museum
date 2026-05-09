@@ -54,11 +54,9 @@ from datetime import datetime
 # ── Path setup ────────────────────────────────────────────────────────────────
 THIS_DIR     = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(os.path.dirname(THIS_DIR))
-DOLLARPY_DIR = os.path.join(PROJECT_ROOT, "dollarpy-service")
 
-for p in (THIS_DIR, DOLLARPY_DIR):
-    if p not in sys.path:
-        sys.path.insert(0, p)
+if THIS_DIR not in sys.path:
+    sys.path.insert(0, THIS_DIR)
 
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 

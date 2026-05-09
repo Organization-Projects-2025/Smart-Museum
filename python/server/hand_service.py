@@ -21,14 +21,10 @@ import time
 import cv2
 
 # ── MediaPipe ─────────────────────────────────────────────────────────────────
-_SERVER_DIR = os.path.dirname(os.path.abspath(__file__))
-_DOLLARPY   = os.path.normpath(os.path.join(os.path.dirname(os.path.dirname(_SERVER_DIR)), "dollarpy-service"))
-if os.path.isdir(_DOLLARPY) and _DOLLARPY not in sys.path:
-    sys.path.insert(0, _DOLLARPY)
-
 try:
-    import mediapipe_compat as mp
-    _HANDS = mp.solutions.hands
+    # Use the inline wrapper from gesture_service
+    from gesture_service import mp
+    _HANDS = mp.hands
     _MP_OK = True
 except Exception as e:
     _HANDS = None
