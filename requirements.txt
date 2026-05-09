@@ -30,8 +30,11 @@ pybluez2>=0.40
 mediapipe>=0.10.30
 
 # ── HSEmotion — facial expression recognition (port 5002) ────────────────────
-# Replaces DeepFace. Uses EfficientNet-B0 trained on AffectNet via ONNX.
+# Uses EfficientNet-B0 trained on AffectNet via ONNX.
 hsemotion-onnx>=0.3.0
+
+# ── DeepFace — demographic analysis (age, gender, race) during sign-up ────────
+deepface>=0.0.89
 
 # ── Gesture recognition (port 5001) ──────────────────────────────────────────
 dollarpy>=0.1.0
@@ -41,7 +44,8 @@ dollarpy>=0.1.0
 ultralytics>=8.0.0
 
 # ── Notes ─────────────────────────────────────────────────────────────────────
-# DeepFace is no longer used — replaced by hsemotion-onnx.
+# DeepFace is used for demographic analysis (age, gender, race) at sign-up.
+# HSEmotion handles real-time emotion detection (separate concern).
 # test_unified_server.py and unified_museum_server.py have been removed;
 #   the entry point is now:  python python/server/main.py  (or start.bat)
 #

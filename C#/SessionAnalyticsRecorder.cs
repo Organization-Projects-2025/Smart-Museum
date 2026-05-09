@@ -56,6 +56,46 @@ public class SessionAnalyticsRecorder
         }
     }
 
+    /// <summary>
+    /// Saves the current visit to disk (one file per slideshow run) and immediately
+    /// starts a fresh visit for the same user, ready for the next slideshow.
+    /// Call this whenever a slideshow completes or is manually stopped.
+    /// </summary>
+    public void SaveAndRestartVisit()
+    {
+        // Capture identity before FlushAndSave clears it
+        string savedRoot, savedUser, savedName;
+        lock (sync)
+        {
+            savedRoot = analyticsRoot;
+            savedUser = faceUserId;
+            savedName = displayName;
+        }
+
+        NotifySlideShowEnded();
+
+        // Only save if there were actual segments with samples
+        bool hasContent;
+        lock (sync) { hasContent = segments.Count > 0 && segments.Any(s => s.Samples != null && s.Samples.Count > 0); }
+
+        if (hasContent)
+            FlushAndSave();
+        else
+        {
+            // No real content — just reset without writing an empty file
+            lock (sync)
+            {
+                visitId = null;
+                segments.Clear();
+                current = null;
+            }
+        }
+
+        // Restart immediately so the next slideshow has a clean visit
+        if (!string.IsNullOrEmpty(savedRoot) && !string.IsNullOrEmpty(savedUser))
+            BeginVisit(savedRoot, savedUser, savedName);
+    }
+
     public void NotifySlideChanged(string storyKey, string storyTitle, int slideIndex, ContentSlide slide)
     {
         lock (sync)
@@ -142,18 +182,6 @@ public class SessionAnalyticsRecorder
                     ["segments"] = new JArray(segments.Select(SegmentToJson))
                 };
                 File.WriteAllText(path, doc.ToString(Formatting.Indented));
-
-                // Mirror save to python/data/analytics/ for Python-side access
-                try
-                {
-                    string pyRoot = Path.Combine(
-                        Path.GetDirectoryName(Path.GetDirectoryName(analyticsRoot)), // workspace root
-                        "python", "data", "analytics");
-                    Directory.CreateDirectory(pyRoot);
-                    string pyPath = Path.Combine(pyRoot, Path.GetFileName(path));
-                    File.WriteAllText(pyPath, doc.ToString(Formatting.Indented));
-                }
-                catch { /* best effort */ }
             }
             catch
             {
