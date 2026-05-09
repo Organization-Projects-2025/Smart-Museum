@@ -113,18 +113,15 @@ def main():
     _run("HAND",       hand_service.start)
 
     # Gesture service (dollarpy) — optional, failures are isolated
-    if os.environ.get("DISABLE_GESTURE", "").strip() not in ("1","true","yes"):
+    if os.environ.get("DISABLE_GESTURE", "").strip() not in ("1", "true", "yes"):
         try:
-            from gesture_service_refactored import GestureRecognitionService
+            from gesture_service import GestureRecognitionService
             svc = GestureRecognitionService(host="127.0.0.1", port=5001, camera_hub=hub)
             _run("GESTURE", svc.start_server)
-        except Exception:
-            try:
-                from gesture_service import GestureRecognitionService
-                svc = GestureRecognitionService(host="127.0.0.1", port=5001, camera_hub=hub)
-                _run("GESTURE", svc.start_server)
-            except Exception as e:
-                _log("GESTURE", f"Unavailable: {e}")
+            _log("GESTURE", "Gesture service started on port 5001")
+        except Exception as e:
+            _log("GESTURE", f"ERROR: Failed to start gesture service: {type(e).__name__}: {e}")
+            _log("GESTURE", "WARNING: Gesture service unavailable — port 5001 will not be bound")
 
     _log("SERVER", "All services started.")
     _log("SERVER", "  Face Auth:    127.0.0.1:5000")

@@ -8,7 +8,7 @@ __pycache__/
 .Python
 *.pyc
 *.pyo
-
+.env
 # Virtual Environments
 .venv/
 .venv311/

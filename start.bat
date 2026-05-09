@@ -12,15 +12,22 @@ REM ── Change to project root ───────────────�
 cd /d "%~dp0"
 
 REM ── Find Python (prefer venv) ─────────────────────────────────────────────
-if exist ".venv\Scripts\python.exe" (
-    set PYTHON=.venv\Scripts\python.exe
-) else (
-    set PYTHON=python
+set "VENV_NAME=.venv"
+if exist .env (
+    for /f "usebackq tokens=1* delims==" %%a in (".env") do (
+        set "item=%%a"
+        if /i "%%a"=="venv_name" set "VENV_NAME=%%~b"
+    )
+)
+
+set "PYTHON=%~dp0%VENV_NAME%\Scripts\python.exe"
+if not exist "%PYTHON%" (
+    set "PYTHON=python"
 )
 
 %PYTHON% --version >nul 2>&1
 if errorlevel 1 (
-    echo ERROR: Python not found. Install Python or create a .venv first.
+    echo ERROR: Python not found. Install Python or ensure your virtual environment is set correctly.
     pause
     exit /b 1
 )
@@ -41,7 +48,8 @@ REM ── Start ─────────────────────
 echo Using Python: %PYTHON%
 echo Starting all services...
 echo.
-%PYTHON% python\server\main.py
+set PYTHONUNBUFFERED=1
+%PYTHON% -u python\server\main.py
 
 REM ── If server exits with an error, keep the window open ───────────────────
 if errorlevel 1 (

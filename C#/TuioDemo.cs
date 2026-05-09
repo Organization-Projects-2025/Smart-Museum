@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.ComponentModel;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -199,6 +200,8 @@ public class TuioDemo : Form, TuioListener
     private GestureClient gestureClient;
     private System.Windows.Forms.Timer gestureCheckTimer;
     private bool isGestureActive = false;
+    private bool _gestureNeedsRearm = false;  // re-sends START_TRACKING after auth releases webcam
+    private bool _menuNavigatedSinceOpen = false; // true once user swipes after opening menu
 
     // Input prioritization: blocks gestures when TUIOs present or during cooldown
     private InputPrioritizer inputPrioritizer = new InputPrioritizer();
@@ -337,6 +340,8 @@ public class TuioDemo : Form, TuioListener
 
         InitializeStoryLibrary();
         InitializeCircularMenu();
+        // NOTE: Server must be started manually now (python/server/main.py)
+        // Removed: StartMuseumPythonServer();
         InitializeGestureClient();
         InitializeHandTracker();
         StartLoginFlow();
@@ -1781,35 +1786,47 @@ public class TuioDemo : Form, TuioListener
         try
         {
             gestureClient = new GestureClient("127.0.0.1", 5001);
-            
-            // Subscribe to gesture events
             gestureClient.GestureRecognized += OnGestureRecognized;
-            gestureClient.StatusChanged += (s, status) => 
+            gestureClient.StatusChanged += (s, status) =>
             {
-                Console.WriteLine($"Gesture Status: {status}");
+                // Only log connection state changes, not every poll status
+                if (status.Contains("Connected") || status.Contains("failed") || status.Contains("closed"))
+                    Console.WriteLine($"[Gesture] {status}");
             };
 
-            // Try to connect to gesture service
             bool connected = await gestureClient.ConnectAsync();
-            
             if (connected)
             {
-                Console.WriteLine("Connected to gesture recognition service");
+                Console.WriteLine("[Gesture] Connected to gesture service on :5001");
                 await gestureClient.StartTrackingAsync();
-                
-                // Start continuous gesture detection (check every 300ms instead of 100ms)
                 gestureCheckTimer = new System.Windows.Forms.Timer { Interval = 300 };
                 gestureCheckTimer.Tick += async (s, e) => await CheckForGesture();
                 gestureCheckTimer.Start();
             }
             else
             {
-                Console.WriteLine("Gesture service not available - continuing without gesture control");
+                Console.WriteLine("[Gesture] Service not reachable on :5001 — retrying in 15s");
+                var retryTimer = new System.Windows.Forms.Timer { Interval = 15000 };
+                retryTimer.Tick += async (s, e) =>
+                {
+                    retryTimer.Stop();
+                    bool ok = await gestureClient.ConnectAsync();
+                    if (ok)
+                    {
+                        Console.WriteLine("[Gesture] Reconnected to gesture service");
+                        await gestureClient.StartTrackingAsync();
+                        gestureCheckTimer = new System.Windows.Forms.Timer { Interval = 300 };
+                        gestureCheckTimer.Tick += async (s2, e2) => await CheckForGesture();
+                        gestureCheckTimer.Start();
+                    }
+                    else Console.WriteLine("[Gesture] Retry failed — gesture control unavailable");
+                };
+                retryTimer.Start();
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Gesture client initialization failed: {ex.Message}");
+            Console.WriteLine($"[Gesture] Init failed: {ex.Message}");
         }
     }
 
@@ -1842,8 +1859,18 @@ public class TuioDemo : Form, TuioListener
         try
         {
             if (gestureClient == null || !gestureClient.IsConnected) return;
-            gestureClient.StopTrackingSilentlyAsync().ConfigureAwait(false).GetAwaiter().GetResult();
-            gestureClient.ResetAsync().ConfigureAwait(false).GetAwaiter().GetResult();
+            // Run async calls on a background thread with no SynchronizationContext
+            // to avoid deadlocking the WinForms message pump.
+            Task.Run(async () =>
+            {
+                try
+                {
+                    await gestureClient.StopTrackingSilentlyAsync().ConfigureAwait(false);
+                    await gestureClient.ResetAsync().ConfigureAwait(false);
+                }
+                catch { /* ignore — face scan should still proceed */ }
+            }).Wait(2000); // max 2s wait so the face thread isn't held up
+            _gestureNeedsRearm = true;  // re-arm tracking once auth completes
         }
         catch
         {
@@ -1853,261 +1880,113 @@ public class TuioDemo : Form, TuioListener
 
     private async System.Threading.Tasks.Task CheckForGesture()
     {
-        if (isGestureActive || gestureClient == null || !gestureClient.IsConnected) return;
-
-        // Check input prioritization: pause gestures if TUIOs present or in cooldown
-        if (!inputPrioritizer.CanAcceptGestures)
-        {
-            // Pause detection to prevent background recognition
-            var status = await gestureClient.GetStatusAsync();
-            if (status != null && status.IsTracking)
-            {
-                await gestureClient.PauseDetectionAsync();
-            }
-            
-            int cooldownRemaining = inputPrioritizer.GetCooldownRemainingMs();
-            if (cooldownRemaining > 0)
-                Console.WriteLine($"[Gesture] Blocked by input prioritizer: {cooldownRemaining}ms cooldown remaining");
-            return;
-        }
-        else
-        {
-            // Resume detection if it was paused
-            var status = await gestureClient.GetStatusAsync();
-            if (status != null && !status.IsTracking)
-            {
-                await gestureClient.ResumeDetectionAsync();
-            }
-        }
-
-        if (!isLoggedIn)
-        {
-            if (authInProgress) return;
-            if (LoginFlowBlocksGestureWebcam()) return;
-            try
-            {
-                // NEW SLIDING WINDOW API: Check status for last_gesture
-                var status = await gestureClient.GetStatusAsync();
-                if (status != null && !string.IsNullOrEmpty(status.LastGesture))
-                {
-                    // Gesture detected! Get it (this also clears it)
-                    var result = await gestureClient.StopAndRecognizeAsync();
-                    if (!string.IsNullOrEmpty(result.Gesture))
-                    {
-                        Console.WriteLine($"✓ Gesture detected: {result.Gesture}");
-                        HandleGesture(result.Gesture);
-                    }
-                }
-                else if (status != null && !status.IsTracking)
-                {
-                    await gestureClient.StartTrackingAsync();
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[Gesture] Error: {ex.Message}");
-                isGestureActive = false;
-            }
-            return;
-        }
-
-        if (authInProgress || adminAnalyticsVisible) return;
+        if (isGestureActive) return;
+        if (gestureClient == null || !gestureClient.IsConnected) return;
+        if (adminAnalyticsVisible) return;
+        if (LoginFlowBlocksGestureWebcam()) return;
+        if (authInProgress) return;
+        if (!inputPrioritizer.CanAcceptGestures) return;
 
         try
         {
-            // NEW SLIDING WINDOW API: Check status for last_gesture
-            var status = await gestureClient.GetStatusAsync();
+            isGestureActive = true;
 
-            if (status != null && !string.IsNullOrEmpty(status.LastGesture))
+            if (_gestureNeedsRearm)
             {
-                isGestureActive = true;
-
-                // Get gesture (this also clears it from service)
-                var result = await gestureClient.StopAndRecognizeAsync();
-                if (!string.IsNullOrEmpty(result.Gesture))
-                {
-                    Console.WriteLine($"✓ Gesture detected: {result.Gesture}");
-                    HandleGesture(result.Gesture);
-                }
-
-                isGestureActive = false;
+                _gestureNeedsRearm = false;
+                Console.WriteLine("[Gesture] Re-arming after auth");
+                await gestureClient.StartTrackingAsync().ConfigureAwait(false);
             }
-            else if (status != null && !status.IsTracking)
-            {
-                // Start tracking if not already tracking
-                await gestureClient.StartTrackingAsync();
-            }
+
+            var result = await gestureClient.RecognizeOnlyAsync();
+            if (result != null && !string.IsNullOrEmpty(result.Gesture))
+                HandleGesture(result.Gesture);
         }
         catch (Exception ex)
         {
             Console.WriteLine($"[Gesture] Error: {ex.Message}");
+        }
+        finally
+        {
             isGestureActive = false;
         }
     }
 
-    private void OnGestureRecognized(object sender, GestureRecognizedEventArgs e)
-    {
-        Console.WriteLine($"Gesture Event: {e.Result.Gesture} - Confidence: {e.Result.Confidence}");
-    }
+    private void OnGestureRecognized(object sender, GestureRecognizedEventArgs e) { }
 
     private void HandleGesture(string gesture)
     {
-        Console.WriteLine($"=== HandleGesture called ===");
-        Console.WriteLine($"Gesture: {gesture}");
-        Console.WriteLine($"Menu visible: {circularMenu.IsVisible}");
-        Console.WriteLine($"Logged in: {isLoggedIn}");
-        
-        // Update gesture overlay display
+        if (InvokeRequired) { BeginInvoke(new Action(() => HandleGesture(gesture))); return; }
+
         lastDetectedGesture = gesture;
         gestureDisplayTime = DateTime.Now;
-        Invalidate(); // Trigger redraw to show overlay
-
-        // Ensure UI updates happen on the UI thread
-        if (InvokeRequired)
-        {
-            Console.WriteLine("→ Invoking on UI thread...");
-            BeginInvoke(new Action(() => HandleGesture(gesture)));
-            return;
-        }
 
         if (!isLoggedIn)
         {
-            string ng = gesture.ToLower().Replace("_", "");
-            HandleAuthScreenGesture(ng);
+            HandleAuthScreenGesture(gesture.ToLower().Replace("_", ""));
+            Invalidate();
             return;
         }
 
         if (adminAnalyticsVisible)
         {
-            string ng = gesture.ToLower().Replace("_", "");
-            if (ng == "close")
-            {
-                adminAnalyticsVisible = false;
-                if (adminAnalyticsPanel != null) adminAnalyticsPanel.Exit();
-                Invalidate();
-            }
+            if (gesture == "close") { adminAnalyticsVisible = false; adminAnalyticsPanel?.Exit(); Invalidate(); }
             return;
         }
 
-        // Normalize gesture name (remove underscores, lowercase)
-        string normalizedGesture = gesture.ToLower().Replace("_", "");
-
-        switch (normalizedGesture)
+        switch (gesture.ToLowerInvariant())
         {
-            case "thumbsup":
-            case "thumbup":
-            case "thumbs":
-                // Thumbs up opens the circular menu OR selects item if menu is already open
-                Console.WriteLine("→ Matched thumbsup case");
+            case "close":
                 if (!circularMenu.IsVisible)
                 {
-                    Console.WriteLine("→ Opening menu...");
                     circularMenu.Show();
-                    menuOpenedByGesture = true; // Mark as gesture-opened
+                    menuOpenedByGesture = true;
                     menuFlickNeedsResync = true;
-                    Invalidate(); // Force redraw
-                    Console.WriteLine("✓ Gesture: Menu opened with thumbs up");
+                    _menuNavigatedSinceOpen = false; // reset nav flag
+                    Console.WriteLine("[Gesture] Menu opened");
                 }
                 else
                 {
-                    Console.WriteLine("→ Menu already visible, selecting current item...");
-                    circularMenu.MoveUpAction(); // Select the current menu item
-                    Invalidate(); // Force redraw
-                    Console.WriteLine("✓ Gesture: Thumbs up -> Selected menu item");
-                }
-                break;
-
-            case "close":
-                // Close gesture closes the circular menu
-                Console.WriteLine("→ Matched close case");
-                if (circularMenu.IsVisible)
-                {
-                    circularMenu.Hide();
-                    menuOpenedByGesture = false; // Clear the flag
-                    Invalidate(); // Force redraw
-                    Console.WriteLine("✓ Gesture: Menu closed");
-                }
-                else
-                {
-                    Console.WriteLine("→ Menu already closed, skipping");
-                }
-                break;
-
-            case "swipeleft":
-            case "swipel":
-            case "swipe_left":
-                // Swipe left = Navigate to NEXT option in circular menu
-                Console.WriteLine("→ Matched swipe left case");
-                if (circularMenu.IsVisible)
-                {
-                    // Rotate menu selection counter-clockwise (next item)
-                    int currentIndex = circularMenu.TopIndex;
-                    int itemCount = circularMenu.IsInSecondLevel 
-                        ? (circularMenu.SelectedTop == "Favorites" ? circularMenu.Favorites.Count : circularMenu.Watched.Count)
-                        : circularMenu.TopItems.Count;
-                    
-                    if (itemCount > 0)
+                    if (_menuNavigatedSinceOpen)
                     {
-                        int newIndex = (currentIndex + 1) % itemCount;
-                        float angleStep = (float)(Math.PI * 2.0 / itemCount);
-                        float newAngle = newIndex * angleStep - (float)Math.PI / 2f;
-                        circularMenu.UpdateRotation(newAngle);
-                        Invalidate(); // Force redraw
-                        Console.WriteLine($"✓ Gesture: Swipe left -> Next option (index {currentIndex} → {newIndex})");
+                        // User swiped to a choice — confirm it
+                        circularMenu.MoveUpAction();
+                        _menuNavigatedSinceOpen = false;
+                        Console.WriteLine($"[Gesture] Confirmed: {circularMenu.SelectedTop}");
+                    }
+                    else
+                    {
+                        // No swipe yet — dismiss without acting
+                        circularMenu.Hide();
+                        menuOpenedByGesture = false;
+                        Console.WriteLine("[Gesture] Menu dismissed (no selection)");
                     }
                 }
-                else
-                {
-                    Console.WriteLine("→ Menu not visible, ignoring swipe");
-                }
+                Invalidate();
                 break;
 
-            case "swiperight":
-            case "swiper":
             case "swipe_right":
-                // Swipe right = Navigate to PREVIOUS option in circular menu
-                Console.WriteLine("→ Matched swipe right case");
                 if (circularMenu.IsVisible)
                 {
-                    // Rotate menu selection clockwise (previous item)
-                    int currentIndex = circularMenu.TopIndex;
-                    int itemCount = circularMenu.IsInSecondLevel 
-                        ? (circularMenu.SelectedTop == "Favorites" ? circularMenu.Favorites.Count : circularMenu.Watched.Count)
-                        : circularMenu.TopItems.Count;
-                    
-                    if (itemCount > 0)
-                    {
-                        int newIndex = (currentIndex - 1 + itemCount) % itemCount;
-                        float angleStep = (float)(Math.PI * 2.0 / itemCount);
-                        float newAngle = newIndex * angleStep - (float)Math.PI / 2f;
-                        circularMenu.UpdateRotation(newAngle);
-                        Invalidate(); // Force redraw
-                        Console.WriteLine($"✓ Gesture: Swipe right -> Previous option (index {currentIndex} → {newIndex})");
-                    }
-                }
-                else
-                {
-                    Console.WriteLine("→ Menu not visible, ignoring swipe");
+                    circularMenu.NavigatePrevious(); // physical right swipe = go left in menu
+                    _menuNavigatedSinceOpen = true;
+                    Console.WriteLine($"[Gesture] → {circularMenu.SelectedTop ?? circularMenu.SelectedSecond}");
+                    Invalidate();
                 }
                 break;
 
-            case "open":
-                // Open gesture selects/enters current menu item (only when menu is visible)
-                Console.WriteLine("→ Matched open case");
+            case "swipe_left":
                 if (circularMenu.IsVisible)
                 {
-                    circularMenu.MoveUpAction();
-                    Invalidate(); // Force redraw
-                    Console.WriteLine("✓ Gesture: Open -> Select item");
-                }
-                else
-                {
-                    Console.WriteLine("→ Menu not visible, ignoring open gesture");
+                    circularMenu.NavigateNext();     // physical left swipe = go right in menu
+                    _menuNavigatedSinceOpen = true;
+                    Console.WriteLine($"[Gesture] ← {circularMenu.SelectedTop ?? circularMenu.SelectedSecond}");
+                    Invalidate();
                 }
                 break;
 
             default:
-                Console.WriteLine($"✗ Unknown gesture: {gesture}");
+                Console.WriteLine($"[Gesture] Unknown gesture ignored: {gesture}");
                 break;
         }
     }

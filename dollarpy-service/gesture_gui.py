@@ -19,14 +19,14 @@ import mediapipe_compat as mp
 TEMPLATES_FILE   = os.path.join(SCRIPT_DIR, "gesture_templates.pkl")
 VIDEOS_DIR       = os.path.join(SCRIPT_DIR, "gesture_videos")   # legacy subfolder dir
 MOVES_DIR        = os.path.join(SCRIPT_DIR, "moves")            # flat .mp4 files
-MAX_FRAMES       = 60      # sliding window size (frames)
+MAX_FRAMES       = 30      # sliding window size (frames)
 MIN_POINTS       = 10      # min points to attempt recognition
 MIN_MOTION       = 0.03    # min cumulative index-tip travel (0–1 scale)
 SCORE_THRESHOLD  = 0.30    # min score to show a green "detected" label
 FRAME_DELAY_MS   = 30      # ~33 FPS tkinter loop (was 16)
 INDEX_TIP        = 8       # MediaPipe landmark id
 RECO_EVERY_N     = 7       # run dollarpy every N new hand frames
-TRACK_TIPS       = (4, 8, 12)   # thumb, index, middle fingertip IDs — centroid = pen
+TRACK_TIPS       = (8, 12, 20)   # index, middle, pinky fingertip IDs — centroid = pen
 CLEAR_THRESHOLD  = 0.40   # clear buffer on any detection at/above this score
 MP_W, MP_H       = 320, 240  # resolution fed to MediaPipe (smaller = faster)
 DISP_W, DISP_H   = 480, 360  # resolution shown in the GUI label

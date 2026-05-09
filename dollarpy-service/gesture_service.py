@@ -3,9 +3,10 @@ Gesture Recognition Service — Smart Museum
 TCP socket server (port 5001) for C# integration.
 
 Uses the SAME recognition pipeline as gesture_gui.py:
-  - centroid of thumb+index+middle fingertips (landmarks 4, 8, 12)
+  - centroid of index+middle+pinky fingertips (landmarks 8, 12, 20)
   - 3-frame moving-average smoothing on centroid
-  - 60-frame sliding window
+  - 30-frame sliding window (buffer)
+  - Recognition every 7 frames (RECO_EVERY_N)
   - dollarpy $N recogniser with deepcopy (non-mutating)
   - buffer cleared on any detection ≥ CLEAR_THRESHOLD (0.40)
   - CameraHub (camera_hub.py) when running inside main.py
@@ -60,21 +61,25 @@ except ImportError:
 
 # ── Constants — MUST match gesture_gui.py ─────────────────────────────────────
 TEMPLATES_FILE   = os.path.join(SCRIPT_DIR, "gesture_templates.pkl")
-MAX_FRAMES       = 60      # sliding window (frames)
+MAX_FRAMES       = 30      # sliding window size (frames)
 MIN_POINTS       = 10      # min pts before recognition attempt
-MIN_MOTION       = 0.02    # min cumulative centroid travel (lenient)
-SCORE_THRESHOLD  = 0.20    # min score to confirm a gesture (lenient)
-GESTURE_COOLDOWN = 1.5     # seconds before next gesture accepted
-TRACK_TIPS       = (4, 8, 12)  # thumb, index, middle tip landmark IDs — centroid = pen
-CLEAR_THRESHOLD  = 0.40   # clear buffer on any detection at/above this score
+MIN_MOTION       = 0.02    # min cumulative centroid travel
+SCORE_THRESHOLD  = 0.20    # min score to confirm a gesture
+GESTURE_COOLDOWN = 1.0     # seconds before next gesture accepted
+TRACK_TIPS       = (8, 12, 20)  # index, middle, pinky tip landmark IDs
+CLEAR_THRESHOLD  = 0.40   # clear buffer on detection at/above this score
 SMOOTH_WIN       = 3       # frames to average for centroid smoothing
+RECO_EVERY_N     = 7       # run recognition every N frames (7 ≈ every ~230 ms at 30 fps)
+
+# ── Circular menu gestures (C# integration) ────────────────────────────────────
+CIRCULAR_MENU_GESTURES = {"swipe_left", "swipe_right", "close"}  # Match template names exactly
 
 
 # ── Shared helpers (identical to gesture_gui.py) ───────────────────────────────
 
 def _extract_points(buf):
     """
-    Centroid of thumb+index+middle fingertips → list[Point].
+    Centroid of index+middle+pinky fingertips → list[Point].
     Accepts two frame formats:
       {"x": float, "y": float}  — pre-smoothed live capture (preferred)
       {"lm": hand_landmarks}    — raw MediaPipe object (legacy / template build)
@@ -88,7 +93,7 @@ def _extract_points(buf):
             lm = fd.get("lm")
             if lm is None:
                 continue
-            # Centroid of thumb, index, middle tips
+            # Centroid of index, middle, pinky tips
             tips = [lm.landmark[i] for i in TRACK_TIPS]
             tx = sum(t.x for t in tips) / len(tips)
             ty = sum(t.y for t in tips) / len(tips)
@@ -129,7 +134,11 @@ def _load_templates():
     try:
         with open(TEMPLATES_FILE, "rb") as f:
             t = pickle.load(f)
-        print(f"[GESTURE] Loaded {len(t)} templates from {TEMPLATES_FILE}")
+        gesture_names = {}
+        for tmpl in t:
+            gesture_names[tmpl.name] = gesture_names.get(tmpl.name, 0) + 1
+        names_str = ", ".join(f"{n}({c})" for n, c in sorted(gesture_names.items()))
+        print(f"[GESTURE] {len(t)} templates: {names_str}")
         return t
     except Exception as e:
         print(f"[GESTURE] ERROR loading templates: {e}")
@@ -178,6 +187,7 @@ class _ClientState:
         # Continuous recognition timing
         self.last_recog_time  = 0.0
         self.recog_interval   = 0.23   # ~230 ms → every ~7 frames at 30 fps
+        self._new_frames      = 0      # frame counter for throttled logging
 
     # ── Camera pipeline ──────────────────────────────────────────────────────
 
@@ -228,7 +238,9 @@ class _ClientState:
             self.cap = None
 
     def _camera_loop(self):
-        """Read frames → MediaPipe → sliding window → continuous recognition."""
+        """Read frames → MediaPipe → sliding window → recognition every RECO_EVERY_N frames."""
+        frame_count = 0
+        
         while self.camera_running:
             # ── Get frame ────────────────────────────────────────────────────
             if self.camera_hub is not None:
@@ -244,6 +256,8 @@ class _ClientState:
                     time.sleep(0.016)
                     continue
 
+            frame_count += 1
+
             frame = cv2.resize(frame, (640, 480))
             rgb   = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             res   = self.hands.process(rgb)
@@ -254,8 +268,9 @@ class _ClientState:
 
             # ── Sliding window — 3-finger centroid + smoothing ────────────────
             if res.multi_hand_landmarks:
+                self._new_frames += 1
                 lm = res.multi_hand_landmarks[0]
-                # Centroid of thumb, index, middle tips
+                # Centroid of index, middle, pinky tips
                 tips3  = [lm.landmark[i] for i in TRACK_TIPS]
                 raw_x  = sum(t.x for t in tips3) / len(tips3)
                 raw_y  = sum(t.y for t in tips3) / len(tips3)
@@ -270,32 +285,41 @@ class _ClientState:
             else:
                 # Hand lost — slowly drain, reset smoothing
                 self._raw_tip_buf.clear()
+                self._new_frames = 0  # Reset frame counter when hand is lost
                 with self.lock:
                     if self.buf:
                         self.buf.pop(0)
 
-            # ── Continuous recognition ────────────────────────────────────────
+            # ── Recognition — every RECO_EVERY_N new hand frames ──────────────
             now = time.time()
             in_cooldown = (now - self.last_gesture_time) < GESTURE_COOLDOWN
 
             if (not in_cooldown
                     and len(self.buf) >= MIN_POINTS
-                    and (now - self.last_recog_time) >= self.recog_interval):
+                    and self._new_frames >= RECO_EVERY_N):
 
+                self._new_frames = 0
                 with self.lock:
                     buf_snapshot = list(self.buf)
 
                 pts = _extract_points(buf_snapshot)
                 if pts is not None:
                     name, score = _recognize_points(self.templates, pts)
-                    self.last_recog_time = now
-                    print(f"[GESTURE] attempt: {name}  score={score:.3f}  buf={len(buf_snapshot)}")
+
+                    # Log every attempt that exceeds the confidence threshold
+                    if score >= SCORE_THRESHOLD:
+                        print(f"[GESTURE] {name}  score={score:.2f}  buf={len(buf_snapshot)}")
 
                     if name and score >= SCORE_THRESHOLD:
-                        print(f"[GESTURE:{self.client_id}] ✓ DETECTED: {name}  score={score:.3f}")
-                        self.last_gesture      = name
-                        self.last_score        = score
-                        self.last_gesture_time = now
+                        if name in CIRCULAR_MENU_GESTURES:
+                            self.last_gesture      = name
+                            self.last_score        = score
+                            self.last_gesture_time = now
+                            if score >= CLEAR_THRESHOLD:
+                                with self.lock:
+                                    self.buf.clear()
+                                self._raw_tip_buf.clear()
+                            print(f"[GESTURE] ✓ {name}  score={score:.2f}  → queued for C#")
 
             time.sleep(0.016)  # ~60 FPS
 
@@ -309,17 +333,12 @@ class _ClientState:
         self.is_paused   = False
         with self.lock:
             self.buf.clear()
-        print(f"[GESTURE:{self.client_id}] START_TRACKING ok")
         return {"status": "ok", "message": "Tracking started"}
 
     def cmd_stop_tracking(self):
-        """
-        NON-BLOCKING. Just pauses frame collection — camera thread keeps running.
-        This is the fix for the C# timeout: stop_camera() used to block 2.5s.
-        """
+        """NON-BLOCKING — pauses frame collection; camera thread keeps running."""
         self.is_tracking = False
         self.is_paused   = False
-        print(f"[GESTURE:{self.client_id}] STOP_TRACKING ok (camera still running)")
         return {"status": "ok", "message": "Tracking stopped"}
 
     def cmd_pause_detection(self):
@@ -340,39 +359,25 @@ class _ClientState:
     def cmd_recognize(self):
         """Return last confirmed gesture and clear it so C# knows it was consumed."""
         now = time.time()
-        in_cooldown = (now - self.last_gesture_time) < GESTURE_COOLDOWN
-        if in_cooldown:
-            remaining = round(GESTURE_COOLDOWN - (now - self.last_gesture_time), 1)
-            return {
-                "status": "cooldown",
-                "gesture": None,
-                "score": 0.0,
-                "cooldown_remaining": remaining,
-                "message": f"Cooldown active ({remaining}s remaining)"
-            }
+        if (now - self.last_gesture_time) < GESTURE_COOLDOWN:
+            return {"status": "cooldown", "gesture": None, "score": 0.0}
         if self.last_gesture is None:
-            return {"status": "ok", "gesture": None, "score": 0.0,
-                    "message": "No gesture detected yet"}
+            return {"status": "ok", "gesture": None, "score": 0.0}
         if (now - self.last_gesture_time) > 4.0:
-            # Stale — clear and return null
             self.last_gesture = None
-            return {"status": "ok", "gesture": None, "score": 0.0,
-                    "message": "Last gesture is stale (>4s)"}
-        # Return and clear so next call won't double-fire
+            return {"status": "ok", "gesture": None, "score": 0.0}
         name  = self.last_gesture
         score = self.last_score
         self.last_gesture = None
         self.last_score   = 0.0
+        action = {"close": "open_menu", "swipe_right": "navigate_right",
+                  "swipe_left": "navigate_left"}.get(name, name)
         return {
             "status": "ok",
             "gesture": name,
+            "action": action,
             "score": round(score, 4),
-            "confidence": (
-                "high" if score >= 0.65
-                else "medium" if score >= 0.45
-                else "low"
-            ),
-            "message": f"Gesture: {name}"
+            "confidence": "high" if score >= 0.65 else "medium" if score >= 0.45 else "low"
         }
 
     def cmd_status(self):
@@ -389,6 +394,7 @@ class _ClientState:
             "frames_collected":    buf_len,   # alias C# reads
             "buffer_max":          MAX_FRAMES,
             "templates":           len(self.templates),
+            "recognized_gestures": list(CIRCULAR_MENU_GESTURES),
             "last_gesture":        self.last_gesture,
             "last_score":          round(self.last_score, 4),
             "in_cooldown":         in_cooldown,
@@ -404,10 +410,11 @@ class _ClientState:
         self.is_paused   = False
         with self.lock:
             self.buf.clear()
+        self._raw_tip_buf.clear()
         self.last_gesture      = None
         self.last_score        = 0.0
         self.last_gesture_time = 0.0
-        # Restart tracking immediately so C# doesn't need to send START_TRACKING
+        # Restart tracking immediately so C# doesn't need to re-send START_TRACKING
         self.is_tracking = True
         if not self.camera_running:
             self.start_camera()
@@ -461,21 +468,26 @@ class GestureRecognitionService:
     def start_server(self):
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.server_socket.bind((self.host, self.port))
+        try:
+            self.server_socket.bind((self.host, self.port))
+        except Exception as e:
+            print(f"[GESTURE] ERROR: Failed to bind {self.host}:{self.port} — {e}")
+            return
+
         self.server_socket.listen(5)
         self.is_running = True
-
-        print(f"[GESTURE] Listening on {self.host}:{self.port}")
-        print(f"[GESTURE] Templates: {len(self.templates)}")
-        print(f"[GESTURE] Camera hub: {'shared' if self.camera_hub else 'local'}")
+        hub_mode = 'shared' if self.camera_hub else 'local'
+        print(f"[GESTURE] Listening on {self.host}:{self.port}  ({len(self.templates)} templates, camera={hub_mode})")
+        print(f"[GESTURE] cooldown={GESTURE_COOLDOWN}s  reco_every={RECO_EVERY_N}fr  window={MAX_FRAMES}fr")
 
         try:
             while self.is_running:
                 try:
                     client_sock, addr = self.server_socket.accept()
-                except OSError:
+                    print(f"[GESTURE] C# connected from {addr}")
+                except OSError as e:
+                    print(f"[GESTURE] Socket error: {e}")
                     break
-                print(f"[GESTURE] Client connected: {addr}")
                 t = threading.Thread(
                     target=self._handle_client,
                     args=(client_sock, addr),
@@ -492,9 +504,8 @@ class GestureRecognitionService:
             try:
                 client_sock.sendall((json.dumps(obj) + "\n").encode("utf-8"))
             except Exception as e:
-                print(f"[GESTURE:{addr}] send error: {e}")
+                print(f"[GESTURE] send error: {e}")
 
-        # Receive full lines (C# sends one command per line)
         buf = b""
         try:
             while self.is_running:
@@ -507,29 +518,23 @@ class GestureRecognitionService:
                     cmd = line.decode("utf-8").strip().upper()
                     if not cmd:
                         continue
-                    if cmd not in ("STATUS",):  # suppress high-frequency polling spam
-                        print(f"[GESTURE:{addr}] CMD: {cmd}")
-                    if   cmd == "START_TRACKING":    send(state.cmd_start_tracking())
-                    elif cmd == "STOP_TRACKING":     send(state.cmd_stop_tracking())
-                    elif cmd == "RECOGNIZE":          send(state.cmd_recognize())
-                    elif cmd == "STATUS":             send(state.cmd_status())
-                    elif cmd == "RESET":              send(state.cmd_reset())
-                    elif cmd == "PAUSE_DETECTION":   send(state.cmd_pause_detection())
-                    elif cmd == "RESUME_DETECTION":  send(state.cmd_resume_detection())
-                    elif cmd == "PING":               send({"status": "ok", "message": "pong"})
+                    if   cmd == "START_TRACKING":   send(state.cmd_start_tracking())
+                    elif cmd == "STOP_TRACKING":    send(state.cmd_stop_tracking())
+                    elif cmd == "RECOGNIZE":         send(state.cmd_recognize())
+                    elif cmd == "STATUS":            send(state.cmd_status())
+                    elif cmd == "RESET":             send(state.cmd_reset())
+                    elif cmd == "PAUSE_DETECTION":  send(state.cmd_pause_detection())
+                    elif cmd == "RESUME_DETECTION": send(state.cmd_resume_detection())
+                    elif cmd == "PING":              send({"status": "ok", "message": "pong"})
                     else:
-                        # Return ok for unknown commands so C# doesn't disconnect
-                        print(f"[GESTURE:{addr}] unknown cmd: {cmd}")
-                        send({"status": "ok", "message": f"Unknown command ignored: {cmd}"})
+                        send({"status": "ok", "message": f"Unknown command: {cmd}"})
         except Exception as e:
-            print(f"[GESTURE:{addr}] connection error: {e}")
+            print(f"[GESTURE] client error: {e}")
         finally:
             state.cleanup()
-            try:
-                client_sock.close()
-            except Exception:
-                pass
-            print(f"[GESTURE:{addr}] disconnected")
+            try: client_sock.close()
+            except Exception: pass
+            print(f"[GESTURE] C# disconnected")
 
     def cleanup(self):
         self.is_running = False

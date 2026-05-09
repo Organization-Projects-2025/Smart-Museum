@@ -89,6 +89,59 @@ public class CircularMenuController
         SyncSelectionTexts();
     }
 
+    /// <summary>
+    /// Step the highlighted item forward by one (wraps around).
+    /// Mirrors what TUIO rotation does, but as a discrete gesture step.
+    /// </summary>
+    public void NavigateNext()
+    {
+        if (!IsVisible) return;
+
+        if (IsInThirdLevel)
+        {
+            int count = FavoriteActions.Count;
+            if (count > 0) ThirdIndex = (ThirdIndex + 1) % count;
+        }
+        else if (IsInSecondLevel)
+        {
+            var items = GetSecondLevelItems();
+            if (items.Count > 0) SecondIndex = (SecondIndex + 1) % items.Count;
+        }
+        else
+        {
+            var items = GetTopLevelItems();
+            if (items.Count > 0) TopIndex = (TopIndex + 1) % items.Count;
+        }
+
+        SyncSelectionTexts();
+    }
+
+    /// <summary>
+    /// Step the highlighted item backward by one (wraps around).
+    /// </summary>
+    public void NavigatePrevious()
+    {
+        if (!IsVisible) return;
+
+        if (IsInThirdLevel)
+        {
+            int count = FavoriteActions.Count;
+            if (count > 0) ThirdIndex = (ThirdIndex - 1 + count) % count;
+        }
+        else if (IsInSecondLevel)
+        {
+            var items = GetSecondLevelItems();
+            if (items.Count > 0) SecondIndex = (SecondIndex - 1 + items.Count) % items.Count;
+        }
+        else
+        {
+            var items = GetTopLevelItems();
+            if (items.Count > 0) TopIndex = (TopIndex - 1 + items.Count) % items.Count;
+        }
+
+        SyncSelectionTexts();
+    }
+
     public void MoveUpAction()
     {
         if (!IsVisible) return;

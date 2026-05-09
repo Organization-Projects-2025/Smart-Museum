@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading.Tasks;
@@ -13,6 +14,7 @@ public class GestureClient : IDisposable
 {
     private TcpClient client;
     private NetworkStream stream;
+    private StreamReader reader;       // line-buffered reader — guarantees complete JSON lines
     private bool isConnected = false;
     private string host;
     private int port;
@@ -45,32 +47,42 @@ public class GestureClient : IDisposable
                 {
                     try
                     {
+                        // Dispose previous connection cleanly
+                        reader?.Dispose();
+                        stream?.Dispose();
                         client?.Close();
+
                         client = new TcpClient();
-                        client.NoDelay = true;
+                        client.NoDelay      = true;
+                        client.SendTimeout    = 5000;
+                        client.ReceiveTimeout = 5000;
 
                         StatusChanged?.Invoke(this, $"Connecting to {connectHost}:{port}...");
                         await client.ConnectAsync(connectHost, port);
 
-                        stream = client.GetStream();
+                        stream     = client.GetStream();
+                        reader     = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: 4096, leaveOpen: true);
                         isConnected = true;
 
                         if (!await PingAsync())
                         {
-                            throw new Exception("Connected, but PING failed");
+                            throw new Exception("Connected but PING failed — check gesture_service.py is running");
                         }
 
                         StatusChanged?.Invoke(this, $"Connected to gesture service at {connectHost}:{port}");
+                        Console.WriteLine($"[GestureClient] ✓✓✓ Connected to {connectHost}:{port}");
                         return true;
                     }
                     catch (Exception ex)
                     {
                         lastError = ex;
                         StatusChanged?.Invoke(this, $"Connection attempt failed for {connectHost}:{port}: {ex.Message}");
+                        Console.WriteLine($"[GestureClient] Connection to {connectHost}:{port} failed: {ex.Message}");
                     }
                 }
 
                 isConnected = false;
+                Console.WriteLine($"[GestureClient] All connection attempts failed. Last error: {lastError?.Message}");
                 StatusChanged?.Invoke(this, $"Connection failed: {lastError?.Message}");
                 return false;
             }
@@ -91,14 +103,22 @@ public class GestureClient : IDisposable
         }
 
         /// <summary>
-        /// Stop tracking and recognize the gesture
+        /// Stop tracking and recognize the gesture.
+        /// Use only when you explicitly want to halt the tracker (e.g., before face scan).
+        /// For continuous polling, use RecognizeOnlyAsync instead.
         /// </summary>
         public async Task<GestureResult> StopAndRecognizeAsync()
         {
-            // Stop tracking
             await SendCommandAsync("STOP_TRACKING");
+            return await RecognizeOnlyAsync();
+        }
 
-            // Recognize gesture
+        /// <summary>
+        /// Fetch the last detected gesture WITHOUT stopping the tracker.
+        /// Use this in the continuous polling loop — keeps the camera running.
+        /// </summary>
+        public async Task<GestureResult> RecognizeOnlyAsync()
+        {
             var response = await SendCommandAsync("RECOGNIZE");
 
             if (response != null && response["status"]?.ToString() == "ok")
@@ -106,13 +126,13 @@ public class GestureClient : IDisposable
                 var result = new GestureResult
                 {
                     Gesture = response["gesture"]?.ToString(),
-                    Score = response["score"]?.ToObject<double>() ?? 0.0,
+                    Score   = response["score"]?.ToObject<double>() ?? 0.0,
                     Confidence = response["confidence"]?.ToString() ?? "low"
                 };
 
-                // Fire event if gesture detected
                 if (!string.IsNullOrEmpty(result.Gesture))
                 {
+                    Console.WriteLine($"[GestureClient] \u2713 Gesture received: {result.Gesture} (score={result.Score:F3})");
                     GestureRecognized?.Invoke(this, new GestureRecognizedEventArgs(result));
                 }
 
@@ -189,11 +209,12 @@ public class GestureClient : IDisposable
         }
 
         /// <summary>
-        /// Send a command to the Python service
+        /// Send a command to the Python service and read a single newline-terminated JSON response.
+        /// Uses StreamReader so partial TCP packets are never incorrectly parsed.
         /// </summary>
         private async Task<JObject> SendCommandAsync(string command)
         {
-            if (!isConnected || stream == null)
+            if (!isConnected || stream == null || reader == null)
             {
                 StatusChanged?.Invoke(this, "Not connected to service");
                 return null;
@@ -201,21 +222,27 @@ public class GestureClient : IDisposable
 
             try
             {
-                // Send command
+                // Send command (newline is the Python server's delimiter)
                 byte[] data = Encoding.UTF8.GetBytes(command + "\n");
                 await stream.WriteAsync(data, 0, data.Length);
 
-                // Read response
-                byte[] buffer = new byte[4096];
-                int bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
-                string response = Encoding.UTF8.GetString(buffer, 0, bytesRead).Trim();
+                // ReadLineAsync reads exactly one \n-terminated line — safe across packet splits
+                string line = await reader.ReadLineAsync();
+                if (line == null)
+                {
+                    // Server closed the connection
+                    isConnected = false;
+                    Console.WriteLine("[GestureClient] Server closed connection.");
+                    StatusChanged?.Invoke(this, "Server closed connection");
+                    return null;
+                }
 
-                // Parse JSON
-                return JObject.Parse(response);
+                return JObject.Parse(line.Trim());
             }
             catch (Exception ex)
             {
                 StatusChanged?.Invoke(this, $"Communication error: {ex.Message}");
+                Console.WriteLine($"[GestureClient] SendCommandAsync error ({command}): {ex.GetType().Name}: {ex.Message}");
                 isConnected = false;
                 return null;
             }
@@ -223,9 +250,10 @@ public class GestureClient : IDisposable
 
         public void Dispose()
         {
-            stream?.Close();
-            client?.Close();
             isConnected = false;
+            try { reader?.Dispose(); } catch { }
+            try { stream?.Dispose(); } catch { }
+            try { client?.Close();  } catch { }
         }
     }
 
