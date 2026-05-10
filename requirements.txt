@@ -1,37 +1,53 @@
-# Smart Grand Egyptian Museum — full Python stack
+# ============================================================================
+# Smart Museum — Python Dependencies
+# ============================================================================
 #
-# Recommended (installs everything into .venv — dollarpy, pybluez2, mediapipe, etc.):
-#   powershell -ExecutionPolicy Bypass -File .\install_python_deps.ps1
+# Install (from repo root):
+#   python -m venv .venv
+#   .venv\Scripts\activate          (Windows)
+#   pip install -U pip
+#   pip install -r requirements.txt
+#   pip install "face_recognition>=1.3.0" --no-deps
 #
-# Manual (same packages; use the SAME interpreter you will run servers with):
-#   .\.venv\Scripts\python.exe -m pip install -U pip
-#   .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-#   .\.venv\Scripts\python.exe -m pip install "face_recognition>=1.3.0" --no-deps
-#
-# The face_recognition line is required on Windows: it declares dlib (source build);
-# dlib-bin from this file already satisfies runtime when installed with --no-deps.
+# Then run:
+#   start.bat
+# ============================================================================
 
-# --- Core (python_server: face + Bluetooth) ---
+# ── Core ──────────────────────────────────────────────────────────────────────
 numpy>=1.24,<3
 opencv-python>=4.8,<5
-pybluez2>=0.40
-Click>=6.0
-face-recognition-models>=0.3.0
-dlib-bin>=20.0.0; platform_system == "Windows"
-
-# --- MediaPipe (gaze_emotion_service, dollarpy-service, hand_tracking) ---
-mediapipe>=0.10.30
-
-# --- DollarPy gesture service + GUI ---
-dollarpy>=0.1.0
 Pillow>=9.0.0
 
-# --- YOLO context service (real camera mode) ---
+# ── Face recognition (port 5000 — auth) ──────────────────────────────────────
+face-recognition-models>=0.3.0
+dlib-bin>=20.0.0; platform_system == "Windows"
+# face_recognition itself must be installed with --no-deps (see header above)
+
+# ── Bluetooth (port 5000 — optional) ─────────────────────────────────────────
+pybluez2>=0.40
+
+# ── MediaPipe — gaze, hand tracking, gesture ─────────────────────────────────
+mediapipe>=0.10.30
+
+# ── HSEmotion — facial expression recognition (port 5002) ────────────────────
+# Replaces DeepFace. Uses EfficientNet-B0 trained on AffectNet via ONNX.
+hsemotion-onnx>=0.3.0
+
+# ── Gesture recognition (port 5001) ──────────────────────────────────────────
+dollarpy>=0.1.0
+
+# ── YOLO object detection (port 5003) ────────────────────────────────────────
+# Set YOLO_CONTEXT_MOCK=1 in start.bat to skip YOLO and use fake tracks instead.
 ultralytics>=8.0.0
 
-# face_recognition: install with --no-deps AFTER this file (see header).
-
-# --- Optional: DeepFace emotion backend (large download) ---
-# deepface>=0.0.90
-# tf-keras>=2.15.0
-
+# ── Notes ─────────────────────────────────────────────────────────────────────
+# DeepFace is no longer used — replaced by hsemotion-onnx.
+# test_unified_server.py and unified_museum_server.py have been removed;
+#   the entry point is now:  python python/server/main.py  (or start.bat)
+#
+# Service → port mapping:
+#   auth_service.py          5000   face ID + bluetooth
+#   gesture_service.py       5001   dollarpy gesture recognition
+#   gaze_emotion_service.py  5002   mediapipe gaze + hsemotion emotions
+#   yolo_service.py          5003   yolov8 object context
+#   hand_service.py          5004   mediapipe hand pose

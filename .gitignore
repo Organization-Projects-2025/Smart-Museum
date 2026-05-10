@@ -16,7 +16,7 @@ venv/
 ENV/
 env/
 .virtualenv/
-
+.museumVenv/
 # IDE & Editors
 .vscode/
 .idea/
@@ -90,3 +90,6 @@ obj/
 *.tar.gz
 *.rar
 *.7z
+
+
+puml-diagrams/

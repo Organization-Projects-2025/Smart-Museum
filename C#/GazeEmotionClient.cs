@@ -3,12 +3,18 @@ using System.Collections.Generic;
 using System.IO;
 using System.Net.Sockets;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using Newtonsoft.Json.Linq;
 
 /// <summary>
-/// Streams gaze + 7-emotion estimates from python/server/gaze_emotion_service.py (default port 5002).
+/// Streams gaze + 7-emotion estimates from python/server/gaze_emotion_service.py (port 5002).
+/// Frames are read on a background thread and marshalled to the UI thread via BeginInvoke.
+/// 
+/// The old poll-timer + DataAvailable approach was broken: StreamReader buffers data internally
+/// so DataAvailable returns false even when frames are waiting. This version uses a blocking
+/// ReadLine() loop on a background thread instead.
 /// </summary>
 public class GazeEmotionClient : IDisposable
 {
@@ -18,17 +24,19 @@ public class GazeEmotionClient : IDisposable
     private NetworkStream netStream;
     private StreamReader reader;
     private StreamWriter writer;
-    private System.Windows.Forms.Timer pollTimer;
+    private Thread readThread;
     private volatile bool streaming;
+    private volatile bool disposed;
+    private Control invokeTarget;
 
     public bool IsConnected { get; private set; }
-
     public event Action<GazeEmotionFrame> FrameReceived;
 
-    public GazeEmotionClient(string host = "localhost", int port = 5002)
+    public GazeEmotionClient(string host = "127.0.0.1", int port = 5002, Control invokeTarget = null)
     {
         this.host = host;
         this.port = port;
+        this.invokeTarget = invokeTarget;
     }
 
     public async Task<bool> ConnectAsync()
@@ -41,8 +49,6 @@ public class GazeEmotionClient : IDisposable
             netStream = client.GetStream();
             reader = new StreamReader(netStream, Encoding.UTF8, false, 4096, leaveOpen: true);
             writer = new StreamWriter(netStream, new UTF8Encoding(false)) { AutoFlush = true };
-            pollTimer = new System.Windows.Forms.Timer { Interval = 40 };
-            pollTimer.Tick += OnPollTick;
             IsConnected = true;
             return true;
         }
@@ -61,13 +67,9 @@ public class GazeEmotionClient : IDisposable
             await writer.WriteLineAsync("PING").ConfigureAwait(false);
             string line = await reader.ReadLineAsync().ConfigureAwait(false);
             if (string.IsNullOrEmpty(line)) return false;
-            var o = JObject.Parse(line);
-            return o["status"]?.ToString() == "ok";
+            return JObject.Parse(line)["status"]?.ToString() == "ok";
         }
-        catch
-        {
-            return false;
-        }
+        catch { return false; }
     }
 
     public async Task<bool> StartStreamingAsync()
@@ -78,37 +80,58 @@ public class GazeEmotionClient : IDisposable
             await writer.WriteLineAsync("STREAM").ConfigureAwait(false);
             string ack = await reader.ReadLineAsync().ConfigureAwait(false);
             if (string.IsNullOrEmpty(ack)) return false;
-            var ackObj = JObject.Parse(ack);
-            if (ackObj["status"]?.ToString() != "ok") return false;
+            if (JObject.Parse(ack)["status"]?.ToString() != "ok") return false;
+
             streaming = true;
-            pollTimer.Start();
+
+            // Resolve invoke target from open forms if not provided
+            if (invokeTarget == null || !invokeTarget.IsHandleCreated)
+            {
+                var forms = Application.OpenForms;
+                if (forms.Count > 0) invokeTarget = forms[0];
+            }
+
+            readThread = new Thread(ReadLoop) { IsBackground = true, Name = "GazeEmotionReader" };
+            readThread.Start();
             return true;
         }
-        catch
-        {
-            return false;
-        }
+        catch { return false; }
     }
 
-    private void OnPollTick(object sender, EventArgs e)
+    private void ReadLoop()
     {
-        if (!streaming || netStream == null || !netStream.DataAvailable) return;
         try
         {
-            GazeEmotionFrame last = null;
-            while (netStream.DataAvailable)
+            while (streaming && !disposed)
             {
-                string line = reader.ReadLine();
+                string line = reader.ReadLine(); // blocks until a line arrives
                 if (line == null) break;
-                last = ParseFrame(line);
+
+                GazeEmotionFrame frame = ParseFrame(line);
+                if (frame == null) continue;
+
+                var handler = FrameReceived;
+                if (handler == null) continue;
+
+                if (invokeTarget != null && invokeTarget.IsHandleCreated && !invokeTarget.IsDisposed)
+                {
+                    try { invokeTarget.BeginInvoke(handler, frame); }
+                    catch { /* form closing */ }
+                }
+                else
+                {
+                    handler(frame);
+                }
             }
-            if (last != null && FrameReceived != null)
-                FrameReceived(last);
         }
-        catch
+        catch (Exception ex)
+        {
+            if (!disposed)
+                Console.WriteLine("[GazeClient] Read error: " + ex.Message);
+        }
+        finally
         {
             streaming = false;
-            pollTimer.Stop();
         }
     }
 
@@ -123,72 +146,54 @@ public class GazeEmotionClient : IDisposable
 
             var f = new GazeEmotionFrame
             {
-                Ok = o["ok"]?.ToObject<bool>() ?? false,
-                Tms = o["t_ms"]?.ToObject<long>() ?? 0L,
-                Gx = o["gx"]?.ToObject<double>() ?? 0.5,
-                Gy = o["gy"]?.ToObject<double>() ?? 0.5,
-                Dominant = o["dominant"]?.ToString() ?? "neutral",
-                Reason = reason
+                Ok       = o["ok"]?.ToObject<bool>()   ?? false,
+                Tms      = o["t_ms"]?.ToObject<long>()  ?? 0L,
+                Gx       = o["gx"]?.ToObject<double>()  ?? 0.5,
+                Gy       = o["gy"]?.ToObject<double>()  ?? 0.5,
+                Dominant = o["dominant"]?.ToString()    ?? "neutral",
+                Reason   = reason
             };
             var em = o["emotions"] as JObject;
             if (em != null)
-            {
                 foreach (var p in em.Properties())
                     f.Emotions[p.Name] = p.Value.ToObject<double>();
-            }
             return f;
         }
-        catch
-        {
-            return null;
-        }
+        catch { return null; }
     }
 
     public async Task StopStreamingAsync()
     {
-        pollTimer?.Stop();
-        if (!IsConnected || !streaming)
-        {
-            streaming = false;
-            return;
-        }
         streaming = false;
+        if (!IsConnected) return;
         try
         {
-            while (netStream != null && netStream.DataAvailable)
-                reader.ReadLine();
             await writer.WriteLineAsync("PAUSE").ConfigureAwait(false);
-            string line = await reader.ReadLineAsync().ConfigureAwait(false);
+            await reader.ReadLineAsync().ConfigureAwait(false);
         }
         catch { }
     }
 
     public void Dispose()
     {
+        disposed  = true;
         streaming = false;
-        if (pollTimer != null)
-        {
-            pollTimer.Stop();
-            pollTimer.Tick -= OnPollTick;
-            pollTimer.Dispose();
-            pollTimer = null;
-        }
-        reader?.Dispose();
-        writer?.Dispose();
-        netStream?.Dispose();
-        client?.Close();
+        try { reader?.Dispose(); }    catch { }
+        try { writer?.Dispose(); }    catch { }
+        try { netStream?.Dispose(); } catch { }
+        try { client?.Close(); }      catch { }
         IsConnected = false;
     }
 }
 
 public class GazeEmotionFrame
 {
-    public bool Ok;
-    public long Tms;
+    public bool   Ok;
+    public long   Tms;
     public double Gx;
     public double Gy;
     public string Dominant;
-    /// <summary>Optional server hint when Ok is false (e.g. no_face, warmup, mediapipe_missing).</summary>
     public string Reason;
-    public Dictionary<string, double> Emotions = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, double> Emotions =
+        new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
 }

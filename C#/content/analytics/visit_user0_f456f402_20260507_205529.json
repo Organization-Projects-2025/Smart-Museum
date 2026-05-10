@@ -1,0 +1,117 @@
+{
+  "visitId": "f456f40226284f569313b0fdb35342e3",
+  "faceUserId": "user0",
+  "displayName": "Ahmed ElSherif",
+  "startedUtc": "2026-05-07T20:55:29.3568732Z",
+  "endedUtc": "2026-05-07T21:03:12.7244371Z",
+  "segments": [
+    {
+      "storyKey": "figure:4",
+      "storyTitle": "Figure: Ramesses II",
+      "slideIndex": 0,
+      "contentSummary": "Image:content/figures/3_ramesses/marker_ramesses_ii.png",
+      "startedOffsetMs": 104797,
+      "endedOffsetMs": 110797,
+      "samples": []
+    },
+    {
+      "storyKey": "figure:4",
+      "storyTitle": "Figure: Ramesses II",
+      "slideIndex": 1,
+      "contentSummary": "Text:Ramses II, 'the Great,' ruled 1279–1213 BC, Egypt's longest reign at 66 years.",
+      "startedOffsetMs": 110797,
+      "endedOffsetMs": 115796,
+      "samples": []
+    },
+    {
+      "storyKey": "figure:4",
+      "storyTitle": "Figure: Ramesses II",
+      "slideIndex": 2,
+      "contentSummary": "Text:Rise to Power: Seti I's son, early coregent trained for war; built Per-Ramesses Delta capital. Resumed Abydos temple and visited Thebes for Opet festival.",
+      "startedOffsetMs": 115796,
+      "endedOffsetMs": 122797,
+      "samples": []
+    },
+    {
+      "storyKey": "figure:4",
+      "storyTitle": "Figure: Ramesses II",
+      "slideIndex": 3,
+      "contentSummary": "Text:Fathered 100+ children; Nefertari featured at Abu Simbel.",
+      "startedOffsetMs": 122797,
+      "endedOffsetMs": 127798,
+      "samples": []
+    },
+    {
+      "storyKey": "figure:4",
+      "storyTitle": "Figure: Ramesses II",
+      "slideIndex": 4,
+      "contentSummary": "Text:Military Campaigns: Year 5 Battle of Kadesh vs. Hittites stalemated but became propaganda triumph carved widely. 1258 BC peace treaty—history's first—with Hittite marriages followed 16 war years.",
+      "startedOffsetMs": 127798,
+      "endedOffsetMs": 136793,
+      "samples": []
+    },
+    {
+      "storyKey": "figure:4",
+      "storyTitle": "Figure: Ramesses II",
+      "slideIndex": 5,
+      "contentSummary": "Text:Fought Libyans/Edomites, securing but not expanding empire.",
+      "startedOffsetMs": 136793,
+      "endedOffsetMs": 141799,
+      "samples": []
+    },
+    {
+      "storyKey": "figure:4",
+      "storyTitle": "Figure: Ramesses II",
+      "slideIndex": 6,
+      "contentSummary": "Text:Building Legacy: Commissioned Ramesseum, Abu Simbel colossi, Karnak expansions; statues glorified him. Era prospered; posthumously worshiped as later kings took his name.",
+      "startedOffsetMs": 141799,
+      "endedOffsetMs": 149793,
+      "samples": []
+    },
+    {
+      "storyKey": "figure:4",
+      "storyTitle": "Figure: Ramesses II",
+      "slideIndex": 7,
+      "contentSummary": "Text:Died near 90, mummified; not biblical Exodus pharaoh.",
+      "startedOffsetMs": 149793,
+      "endedOffsetMs": 154802,
+      "samples": []
+    },
+    {
+      "storyKey": "figure:4",
+      "storyTitle": "Figure: Ramesses II",
+      "slideIndex": 0,
+      "contentSummary": "Image:content/figures/3_ramesses/marker_ramesses_ii.png",
+      "startedOffsetMs": 441697,
+      "endedOffsetMs": 447684,
+      "samples": []
+    },
+    {
+      "storyKey": "figure:4",
+      "storyTitle": "Figure: Ramesses II",
+      "slideIndex": 1,
+      "contentSummary": "Text:Ramses II, 'the Great,' ruled 1279–1213 BC, Egypt's longest reign at 66 years.",
+      "startedOffsetMs": 447684,
+      "endedOffsetMs": 452683,
+      "samples": []
+    },
+    {
+      "storyKey": "figure:4",
+      "storyTitle": "Figure: Ramesses II",
+      "slideIndex": 2,
+      "contentSummary": "Text:Rise to Power: Seti I's son, early coregent trained for war; built Per-Ramesses Delta capital. Resumed Abydos temple and visited Thebes for Opet festival.",
+      "startedOffsetMs": 452683,
+      "endedOffsetMs": 459686,
+      "samples": []
+    },
+    {
+      "storyKey": "figure:4",
+      "storyTitle": "Figure: Ramesses II",
+      "slideIndex": 3,
+      "contentSummary": "Text:Fathered 100+ children; Nefertari featured at Abu Simbel.",
+      "startedOffsetMs": 459686,
+      "endedOffsetMs": 463367,
+      "samples": []
+    }
+  ]
+}
