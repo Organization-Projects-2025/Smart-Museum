@@ -1,29 +1,79 @@
-﻿using System.Collections.Generic;
+/*
+ * FigureData.cs
+ * Smart Grand Egyptian Museum — HCI Interactive Table
+ *
+ * Contains all data definitions for Egyptian figures, their solo content,
+ * and the historical relationships between pairs of figures.
+ *
+ * TUIO Marker Assignments:
+ *   ID 0 → Circular Menu Controller
+ *   ID 1 → Cleopatra VII
+ *   ID 2 → Nefertiti
+ *   ID 3 → Tutankhamun
+ *   ID 4 → Ramesses II
+ *   ID 5 → Hatshepsut
+ *   ID 6 → Akhenaten
+ */
+
+using System.Collections.Generic;
 using System.Drawing;
 
-public enum ContentType { Text, Image, Video, ThreeD }
+// ─────────────────────────────────────────────────────────────────────────────
+//  Content Types
+// ─────────────────────────────────────────────────────────────────────────────
 
+public enum ContentType { Text, Image, Video }
+
+/// <summary>
+/// A single slide in a slideshow — either a text paragraph, an image, or a video.
+/// Content is a file path (relative to executable) for Image/Video, or
+/// a plain string for Text.
+/// </summary>
 public class ContentSlide
 {
-    public ContentType Type { get; set; }
-    public string Content { get; set; }   // text body OR relative file path
-    public int DurationMs { get; set; }
+    public ContentType Type       { get; set; }
+    public string      Content    { get; set; }   // text body OR relative file path
+    public int         DurationMs { get; set; }
 }
 
-public class Figure
+// ─────────────────────────────────────────────────────────────────────────────
+//  Figure Definition
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// <summary>
+/// Defines an Egyptian figure mapped to a specific TUIO marker symbol ID.
+/// </summary>
+public class FigureDef
 {
-    public int SymbolId { get; set; }
-    public string Name { get; set; }
-    public string Period { get; set; }
-    public string ShortDescription { get; set; }
-    public Color AccentColor { get; set; }
-    public string MarkerImagePath { get; set; }
+    public int              SymbolId         { get; set; }
+    public string           Name             { get; set; }
+    public string           Period           { get; set; }
+    public string           ShortDescription { get; set; }
+    public Color            AccentColor      { get; set; }
+    public string           MarkerImagePath  { get; set; }
+
+    /// <summary>
+    /// How much to add to the raw TUIO angle (radians) when computing facing direction.
+    /// Adjust per figure if the physical marker is rotated relative to the figure's face.
+    /// </summary>
     public float FacingAngleOffset { get; set; }
+
+    /// <summary>Slides shown when this figure is alone on the table.</summary>
     public List<ContentSlide> SoloSlides { get; set; }
-    public List<SceneObject> SceneObjects { get; set; }
+
+    /// <summary>
+    /// Optional interactive objects shown in single-figure mode.
+    /// If the user rotates the figure to face one object for enough time,
+    /// that object's StorySlides are started.
+    /// </summary>
+    public List<SceneObjectDef> SceneObjects { get; set; }
 }
 
-public class SceneObject
+/// <summary>
+/// A static object rendered in single-figure mode for directional selection.
+/// X/Y are normalized table coordinates in range 0..1.
+/// </summary>
+public class SceneObjectDef
 {
     public string Name { get; set; }
     public string ImagePath { get; set; }
@@ -32,541 +82,419 @@ public class SceneObject
     public List<ContentSlide> StorySlides { get; set; }
 }
 
-public class Relationship
+// ─────────────────────────────────────────────────────────────────────────────
+//  Relationship Definition
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// <summary>
+/// Defines the content shown when two specific figures face each other.
+/// SymbolIdA / SymbolIdB order does not matter — matching is symmetric.
+/// </summary>
+public class RelationshipDef
 {
-    public int SymbolIdA { get; set; }
-    public int SymbolIdB { get; set; }
-    public string ConnectionTitle { get; set; }
-    public List<ContentSlide> Slides { get; set; }
+    public int              SymbolIdA       { get; set; }
+    public int              SymbolIdB       { get; set; }
+    public string           ConnectionTitle { get; set; }
+    public List<ContentSlide> Slides        { get; set; }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  Museum Data Registry
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// <summary>
+/// Central registry for all figures and relationships.
+/// Images should be placed under  content/figures/[id_name]/  and
+/// content/relationships/[idA]_[idB_name]/  relative to the executable.
+/// </summary>
 public static class MuseumData
 {
-    public static readonly Dictionary<int, Figure> Figures;
-    public static readonly List<Relationship> Relationships;
+    public static readonly Dictionary<int, FigureDef>   Figures;
+    public static readonly List<RelationshipDef>         Relationships;
 
     static MuseumData()
     {
-        // Figure entries
+        // ── FIGURES ──────────────────────────────────────────────────────────
 
-        Figures = new Dictionary<int, Figure>
+        Figures = new Dictionary<int, FigureDef>
         {
-            // Cleopatra VII (ID 1)
-            { 1, new Figure
+            // ── 1: Cleopatra VII ─────────────────────────────────────────────
+            { 1, new FigureDef
             {
-                SymbolId = 1,
-                Name = "Cleopatra VII",
-                Period = "69 BC - 30 BC",
+                SymbolId         = 1,
+                Name             = "Cleopatra VII",
+                Period           = "69 BC – 30 BC",
                 ShortDescription = "Last Pharaoh of Ancient Egypt",
-                AccentColor = Color.FromArgb(212, 175, 55),
-                MarkerImagePath = "content/figures/0_cleopatra/marker_cleopatra.png",
-                SceneObjects = new List<SceneObject>
+                AccentColor      = Color.FromArgb(212, 175, 55),
+                MarkerImagePath  = "content/figures/0_cleopatra/marker_cleopatra.png",
+                SceneObjects     = new List<SceneObjectDef>
                 {
-                    new SceneObject
+                    new SceneObjectDef
                     {
-                        Name = "Royal Cobra Crown",
+                        Name      = "Royal Cobra Crown",
                         ImagePath = "content/objects/0_cleopatra/royal_cobra_crown.png",
-                        X = 0.18f,
-                        Y = 0.30f,
+                        X         = 0.18f,
+                        Y         = 0.30f,
                         StorySlides = new List<ContentSlide>
                         {
                             new ContentSlide { Type = ContentType.Image,
-                                Content = "content/objects/0_cleopatra/royal_cobra_crown.png",
+                                Content    = "content/objects/0_cleopatra/royal_cobra_crown.png",
                                 DurationMs = 6000 },
                             new ContentSlide { Type = ContentType.Text,
-                                Content = "The uraeus cobra on Cleopatra's crown symbolized divine kingship and protection. By presenting herself with this iconography, Cleopatra linked her rule to ancient Egyptian royal legitimacy, not only to her Greek Ptolemaic heritage.",
+                                Content    = "The uraeus cobra on Cleopatra's crown symbolized divine kingship and protection. By presenting herself with this iconography, Cleopatra linked her rule to ancient Egyptian royal legitimacy, not only to her Greek Ptolemaic heritage.",
                                 DurationMs = 8500 },
                         }
                     },
-                    new SceneObject
+                    new SceneObjectDef
                     {
-                        Name = "Alexandrian Coin",
+                        Name      = "Alexandrian Coin",
                         ImagePath = "content/objects/0_cleopatra/alexandrian_coin.png",
-                        X = 0.78f,
-                        Y = 0.33f,
+                        X         = 0.78f,
+                        Y         = 0.33f,
                         StorySlides = new List<ContentSlide>
                         {
                             new ContentSlide { Type = ContentType.Image,
-                                Content = "content/objects/0_cleopatra/alexandrian_coin.png",
+                                Content    = "content/objects/0_cleopatra/alexandrian_coin.png",
                                 DurationMs = 6000 },
                             new ContentSlide { Type = ContentType.Text,
-                                Content = "Coins minted in Alexandria carried Cleopatra's portrait and political messages. Through coinage, she projected authority across the Mediterranean, shaping how allies and rivals in Rome perceived Egypt's final pharaoh.",
+                                Content    = "Coins minted in Alexandria carried Cleopatra's portrait and political messages. Through coinage, she projected authority across the Mediterranean, shaping how allies and rivals in Rome perceived Egypt's final pharaoh.",
                                 DurationMs = 8500 },
                         }
                     },
-                    new SceneObject
+                    new SceneObjectDef
                     {
-                        Name = "Nile Barge",
+                        Name      = "Nile Barge",
                         ImagePath = "content/objects/0_cleopatra/nile_barge.png",
-                        X = 0.52f,
-                        Y = 0.74f,
+                        X         = 0.52f,
+                        Y         = 0.74f,
                         StorySlides = new List<ContentSlide>
                         {
                             new ContentSlide { Type = ContentType.Image,
-                                Content = "content/objects/0_cleopatra/nile_barge.png",
+                                Content    = "content/objects/0_cleopatra/nile_barge.png",
                                 DurationMs = 6000 },
                             new ContentSlide { Type = ContentType.Text,
-                                Content = "Ancient sources describe Cleopatra's ceremonial barge as a floating stage of power. Her theatrical Nile appearances fused diplomacy, religion, and spectacle, reinforcing her image as a sovereign equal to Rome's strongest leaders.",
+                                Content    = "Ancient sources describe Cleopatra's ceremonial barge as a floating stage of power. Her theatrical Nile appearances fused diplomacy, religion, and spectacle, reinforcing her image as a sovereign equal to Rome's strongest leaders.",
                                 DurationMs = 9000 },
                         }
                     }
                 },
-                SoloSlides = new List<ContentSlide>
+                SoloSlides       = new List<ContentSlide>
                 {
                     new ContentSlide { Type = ContentType.Image,
-                        Content = "content/figures/0_cleopatra/marker_cleopatra.png",
+                        Content    = "content/figures/0_cleopatra/marker_cleopatra.png",
                         DurationMs = 6000 },
                     new ContentSlide { Type = ContentType.Text,
-                        Content = "Cleopatra VII ruled as the last pharaoh of Ptolemaic Egypt from 51 to 30 BC.",
-                        DurationMs = 5000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Early Life and Rise: Born around 69 BC to Ptolemy XII Auletes, she ascended after his death, co-ruling with brothers Ptolemy XIII and XIV amid civil strife.",
-                        DurationMs = 7000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Allied with Julius Caesar in 48 BC, she defeated Ptolemy XIII with his aid and bore son Caesarion. Fluent in nine languages, she pursued scholarly interests and used dramatic flair like the carpet entrance.",
+                        Content    = "Cleopatra VII Philopator was the last active ruler of the Ptolemaic Kingdom of Egypt, reigning from 51 BC until her death in 30 BC. She was the first Ptolemaic ruler to learn the Egyptian language.",
                         DurationMs = 8000 },
                     new ContentSlide { Type = ContentType.Text,
-                        Content = "Reign and Conflicts: Partnered with Mark Antony after Caesar, bearing three children while ruling eastern territories granted by him. Their forces lost at the Battle of Actium in 31 BC to Octavian.",
+                        Content    = "This marker image represents Cleopatra as an enduring icon of royal authority. Cleopatra ruled from Alexandria and was renowned for her intellect, multilingualism (she spoke nine languages), and political mastery.",
                         DurationMs = 8000 },
                     new ContentSlide { Type = ContentType.Text,
-                        Content = "She blended charm, strategy, and Egyptian traditions to maintain power amid Roman pressures.",
-                        DurationMs = 6000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Death and Legacy: Facing capture, she died by suicide via asp bite in 30 BC, ending independent Egypt as a Roman province. Roman propaganda portrayed her as a seductress, overshadowing her political savvy.",
-                        DurationMs = 8000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Her Greco-Egyptian rule fused cultures, leaving enduring legends.",
-                        DurationMs = 5000 },
+                        Content    = "She formed powerful alliances with Julius Caesar and later Mark Antony, attempting to restore Ptolemaic power. After the defeat at the Battle of Actium in 31 BC, she took her own life — ending the last independent Pharaonic dynasty.",
+                        DurationMs = 9000 },
                 }
             }},
 
-            // Nefertiti (ID 2)
-            { 2, new Figure
+            // ── 2: Nefertiti ─────────────────────────────────────────────────
+            { 2, new FigureDef
             {
-                SymbolId = 2,
-                Name = "Nefertiti",
-                Period = "c. 1370 BC - 1330 BC",
+                SymbolId         = 2,
+                Name             = "Nefertiti",
+                Period           = "c. 1370 BC – 1330 BC",
                 ShortDescription = "Great Royal Wife of Akhenaten",
-                AccentColor = Color.FromArgb(100, 190, 230),
-                MarkerImagePath = "content/figures/1_nefertiti/marker_nefertiti.png",
-                SoloSlides = new List<ContentSlide>
+                AccentColor      = Color.FromArgb(100, 190, 230),
+                MarkerImagePath  = "content/figures/1_nefertiti/marker_nefertiti.png",
+                SoloSlides       = new List<ContentSlide>
                 {
-                    new ThreeDObjectSlide("nefertiti",
-                        "Move your hand to rotate the Nefertiti bust in 3D",
-                        durationMs: 0),        // stays until next slide trigger
                     new ContentSlide { Type = ContentType.Image,
-                        Content = "content/figures/1_nefertiti/marker_nefertiti.png",
+                        Content    = "content/figures/1_nefertiti/marker_nefertiti.png",
                         DurationMs = 6000 },
                     new ContentSlide { Type = ContentType.Text,
-                        Content = "Nefertiti was Great Royal Wife of Akhenaten (c. 1370–1330 BC), 18th Dynasty.",
-                        DurationMs = 5000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Early Life: Origins obscure, she married Amenhotep IV early in his reign. Bore six daughters including Meritaten and Ankhesenpaaten (later Tutankhamun's wife Ankhesenamun).",
-                        DurationMs = 7000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Played key role promoting Atenism; her 1912 bust ensures iconic beauty legacy.",
-                        DurationMs = 6000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Role in Power: Equaled Akhenaten in early Amarna art, smiting enemies and offering like a pharaoh. Family moved to Akhetaten where she dominated temples and tombs.",
-                        DurationMs = 7000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Visibility declined after mourning daughter Meketaten in year 12.",
-                        DurationMs = 5000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Later Theories and Legacy: Possibly ruled as pharaoh Neferneferuaten after Akhenaten, before Tutankhamun. Disappearance around year 16 fuels debates: death, disgrace, or coregency.",
+                        Content    = "Nefertiti was the Great Royal Wife of Pharaoh Akhenaten. Together they established the monotheistic cult of Aten — the sun disk — as Egypt's sole official religion, a dramatic break from thousands of years of tradition.",
                         DurationMs = 8000 },
                     new ContentSlide { Type = ContentType.Text,
-                        Content = "Her Atenism radically shifted religion, later reversed by successors.",
-                        DurationMs = 6000 },
+                        Content    = "This marker image uses Nefertiti's iconic profile and headdress, inspired by the famous limestone bust discovered in 1912 at Amarna. Her name in Egyptian means \"The Beautiful One Has Come.\"",
+                        DurationMs = 8000 },
+                    new ContentSlide { Type = ContentType.Text,
+                        Content    = "Some Egyptologists argue that after Akhenaten's death, Nefertiti herself ruled as Pharaoh under the name Neferneferuaten, before Tutankhamun ascended to the throne.",
+                        DurationMs = 8000 },
                 }
             }},
 
-            // Tutankhamun — TUIO fiducial ID 7 (IDs 0 and 3 reserved for menu / login UI)
-            { 7, new Figure
+            // ── 3: Tutankhamun ───────────────────────────────────────────────
+            { 3, new FigureDef
             {
-                SymbolId = 7,
-                Name = "Tutankhamun",
-                Period = "c. 1341 BC - 1323 BC",
+                SymbolId         = 3,
+                Name             = "Tutankhamun",
+                Period           = "c. 1341 BC – 1323 BC",
                 ShortDescription = "The Boy King",
-                AccentColor = Color.FromArgb(218, 165, 32),
-                SoloSlides = new List<ContentSlide>
+                AccentColor      = Color.FromArgb(218, 165, 32),
+                MarkerImagePath  = "content/figures/3_tutankhamun/marker_tutankhamun.png",
+                SoloSlides       = new List<ContentSlide>
                 {
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Tutankhamun reigned c. 1333–1324 BC, restoring traditional religion post-Amarna.",
-                        DurationMs = 5000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Early Reign: Born Tutankhaten (possibly Akhenaten's son), ascended young marrying half-sister Ankhesenpaaten. Abandoned Amarna for Memphis/Thebes, adopting Amun-honoring names.",
-                        DurationMs = 8000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Restoration Stela documented revival of damaged temples.",
-                        DurationMs = 5000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Achievements: Rebuilt Karnak sphinx avenue and Luxor colonnade, endowing Amun/Ptah cults. Led successful Nubian/Asian campaigns; Mitanni gifts showed diplomacy.",
-                        DurationMs = 8000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Deified in life with Nubian temples worshiping him as Amun.",
-                        DurationMs = 5000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Death and Discovery: Died around age 18 from malaria, leg fracture, or both; no immediate heir. Intact 1922 tomb held 5,000 artifacts, creating 'King Tut' fame.",
-                        DurationMs = 8000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Successors Ay and Horemheb erased Amarna legacy, usurping his monuments.",
+                    new ContentSlide { Type = ContentType.Image,
+                        Content    = "content/figures/3_tutankhamun/marker_tutankhamun.png",
                         DurationMs = 6000 },
+                    new ContentSlide { Type = ContentType.Text,
+                        Content    = "Tutankhamun became Pharaoh at approximately 8–9 years of age. He reigned for roughly a decade before dying at around 18. His relatively short, unremarkable reign would have been forgotten — had his tomb not survived nearly intact for 3,000 years.",
+                        DurationMs = 9000 },
+                    new ContentSlide { Type = ContentType.Text,
+                        Content    = "In November 1922, British archaeologist Howard Carter discovered Tutankhamun's sealed tomb in the Valley of the Kings. It contained over 5,000 artefacts, including the iconic solid gold death mask now on display at the Grand Egyptian Museum.",
+                        DurationMs = 9000 },
+                    new ContentSlide { Type = ContentType.Text,
+                        Content    = "Tutankhamun reversed his father Akhenaten's revolutionary religion, restoring the traditional Egyptian gods — especially Amun — and moving the capital back to Memphis. He changed his own name from Tutankhaten to Tutankhamun to reflect this.",
+                        DurationMs = 9000 },
                 }
             }},
 
-            // Ramesses II (ID 4)
-            { 4, new Figure
+            // ── 4: Ramesses II ───────────────────────────────────────────────
+            { 4, new FigureDef
             {
-                SymbolId = 4,
-                Name = "Ramesses II",
-                Period = "c. 1303 BC - 1213 BC",
+                SymbolId         = 4,
+                Name             = "Ramesses II",
+                Period           = "c. 1303 BC – 1213 BC",
                 ShortDescription = "Ramesses the Great",
-                AccentColor = Color.FromArgb(210, 80, 50),
-                MarkerImagePath = "content/figures/3_ramesses/marker_ramesses_ii.png",
-                SoloSlides = new List<ContentSlide>
+                AccentColor      = Color.FromArgb(210, 80, 50),
+                MarkerImagePath  = "content/figures/3_ramesses/marker_ramesses_ii.png",
+                SoloSlides       = new List<ContentSlide>
                 {
                     new ContentSlide { Type = ContentType.Image,
-                        Content = "content/figures/3_ramesses/marker_ramesses_ii.png",
+                        Content    = "content/figures/3_ramesses/marker_ramesses_ii.png",
                         DurationMs = 6000 },
                     new ContentSlide { Type = ContentType.Text,
-                        Content = "Ramses II, 'the Great,' ruled 1279–1213 BC, Egypt's longest reign at 66 years.",
-                        DurationMs = 5000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Rise to Power: Seti I's son, early coregent trained for war; built Per-Ramesses Delta capital. Resumed Abydos temple and visited Thebes for Opet festival.",
-                        DurationMs = 7000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Fathered 100+ children; Nefertari featured at Abu Simbel.",
-                        DurationMs = 5000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Military Campaigns: Year 5 Battle of Kadesh vs. Hittites stalemated but became propaganda triumph carved widely. 1258 BC peace treaty—history's first—with Hittite marriages followed 16 war years.",
-                        DurationMs = 9000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Fought Libyans/Edomites, securing but not expanding empire.",
-                        DurationMs = 5000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Building Legacy: Commissioned Ramesseum, Abu Simbel colossi, Karnak expansions; statues glorified him. Era prospered; posthumously worshiped as later kings took his name.",
+                        Content    = "Ramesses II — known as Ramesses the Great — is often regarded as the most powerful pharaoh of the Egyptian Empire. He reigned for 66 years and fathered over 100 children, outliving many of his heirs.",
                         DurationMs = 8000 },
                     new ContentSlide { Type = ContentType.Text,
-                        Content = "Died near 90, mummified; not biblical Exodus pharaoh.",
-                        DurationMs = 5000 },
+                        Content    = "This marker image reflects Ramesses II's monumental legacy. He led the Egyptian army at the Battle of Kadesh against the Hittite Empire — the earliest recorded major battle in detail. Although the battle was inconclusive, Ramesses portrayed it as a great victory in temple reliefs across Egypt.",
+                        DurationMs = 9000 },
+                    new ContentSlide { Type = ContentType.Text,
+                        Content    = "Ramesses II signed the first known international peace treaty in history — the Treaty of Kadesh with the Hittite King Hattusili III around 1259 BC. A copy is displayed at the United Nations headquarters in New York.",
+                        DurationMs = 9000 },
                 }
             }},
 
-            // Hatshepsut (ID 5)
-            { 5, new Figure
+            // ── 5: Hatshepsut ────────────────────────────────────────────────
+            { 5, new FigureDef
             {
-                SymbolId = 5,
-                Name = "Hatshepsut",
-                Period = "c. 1507 BC - 1458 BC",
+                SymbolId         = 5,
+                Name             = "Hatshepsut",
+                Period           = "c. 1507 BC – 1458 BC",
                 ShortDescription = "Egypt's Longest-Reigning Female Pharaoh",
-                AccentColor = Color.FromArgb(175, 130, 70),
-                MarkerImagePath = "content/figures/4_hatshepsut/marker_hatshepsut.png",
-                SoloSlides = new List<ContentSlide>
+                AccentColor      = Color.FromArgb(175, 130, 70),
+                MarkerImagePath  = "content/figures/4_hatshepsut/marker_hatshepsut.png",
+                SoloSlides       = new List<ContentSlide>
                 {
                     new ContentSlide { Type = ContentType.Image,
-                        Content = "content/figures/4_hatshepsut/marker_hatshepsut.png",
+                        Content    = "content/figures/4_hatshepsut/marker_hatshepsut.png",
                         DurationMs = 6000 },
                     new ContentSlide { Type = ContentType.Text,
-                        Content = "Hatshepsut ruled as powerful 18th Dynasty pharaoh 1479–1458 BC, rare female king.",
-                        DurationMs = 5000 },
+                        Content    = "Hatshepsut was the fifth Pharaoh of the 18th Dynasty and one of the most successful rulers of ancient Egypt. She reigned for approximately 22 years — longer than any other female ruler of an indigenous Egyptian dynasty.",
+                        DurationMs = 9000 },
                     new ContentSlide { Type = ContentType.Text,
-                        Content = "Ascension: Widow of Thutmose II and aunt/stepmother-regent to Thutmose III, she claimed full pharaoh title. Assumed male regalia like false beard; proclaimed divine Amun birth.",
-                        DurationMs = 8000 },
+                        Content    = "This marker image highlights Hatshepsut's royal form and authority. She launched a famous trading expedition to the Land of Punt, returning with gold, ivory, myrrh trees, and exotic animals, then commemorated this voyage in reliefs at Deir el-Bahari.",
+                        DurationMs = 9000 },
                     new ContentSlide { Type = ContentType.Text,
-                        Content = "Emphasized prosperous trade over warfare.",
-                        DurationMs = 5000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Key Expeditions: Punt trade voyage yielded myrrh/incense, depicted on Deir el-Bahri mortuary temple. Built extensively: Karnak/Luxor obelisks, Red Chapel.",
-                        DurationMs = 8000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Maintained peace, expanding Egyptian influence economically.",
-                        DurationMs = 5000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Legacy: Thutmose III later erased her cartouches and images after death. Mummy identified 2007; ruled effectively 20+ years.",
-                        DurationMs = 7000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Exemplifies successful female pharaonic rule in patriarchy.",
-                        DurationMs = 5000 },
+                        Content    = "Hatshepsut often had herself depicted as male in statues and inscriptions — wearing a false beard and male regalia — to legitimise her rule in a culture that expected a male pharaoh. After her death, her successor Thutmose III had her images systematically erased.",
+                        DurationMs = 10000 },
                 }
             }},
 
-            // Akhenaten (ID 6)
-            { 6, new Figure
+            // ── 6: Akhenaten ─────────────────────────────────────────────────
+            { 6, new FigureDef
             {
-                SymbolId = 6,
-                Name = "Akhenaten",
-                Period = "c. 1380 BC - 1336 BC",
+                SymbolId         = 6,
+                Name             = "Akhenaten",
+                Period           = "c. 1380 BC – 1336 BC",
                 ShortDescription = "The Heretic Pharaoh",
-                AccentColor = Color.FromArgb(255, 160, 50),
-                SoloSlides = new List<ContentSlide>
+                AccentColor      = Color.FromArgb(255, 160, 50),
+                MarkerImagePath  = "content/figures/6_akhenaten/marker_akhenaten.png",
+                SoloSlides       = new List<ContentSlide>
                 {
+                    new ContentSlide { Type = ContentType.Image,
+                        Content    = "content/figures/6_akhenaten/marker_akhenaten.png",
+                        DurationMs = 6000 },
                     new ContentSlide { Type = ContentType.Text,
-                        Content = "Akhenaten (Amenhotep IV) ruled 1353–1336 BC, Atenism revolution founder.",
-                        DurationMs = 5000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Religious Revolution: Renamed self, founded Akhetaten (Amarna) capital for exclusive Aten sun disk worship, suppressing Amun. Introduced elongated bodies in intimate family art with Nefertiti.",
+                        Content    = "Akhenaten — born Amenhotep IV — overturned thousands of years of Egyptian polytheism. He declared the sun disk Aten to be the sole true god, closed the temples of other gods, and redirected all religious and state resources to Aten worship.",
                         DurationMs = 9000 },
                     new ContentSlide { Type = ContentType.Text,
-                        Content = "Erected open-roof Aten temples at Karnak then Amarna.",
-                        DurationMs = 5000 },
+                        Content    = "He built a brand new capital city, Akhetaten (modern Amarna), in the desert. His reign produced a distinctive artistic style that depicted the royal family with elongated heads, wide hips, and in intimate domestic scenes — a radical departure from traditional Egyptian art.",
+                        DurationMs = 9000 },
                     new ContentSlide { Type = ContentType.Text,
-                        Content = "Family and Rule: Married Nefertiti; six daughters, possible sons like Tutankhamun. Year 16 records show Nefertiti prominent.",
-                        DurationMs = 7000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Religious/economic strains marked 17-year reign; died year 17.",
-                        DurationMs = 5000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Aftermath: Tutankhamun/Ay reversed reforms; Amarna abandoned, names hacked out. Labeled heretic but early monotheism precursor.",
-                        DurationMs = 8000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Boundary stelae outlined his visionary city.",
-                        DurationMs = 5000 },
+                        Content    = "After his death, subsequent pharaohs — including his own son Tutankhamun — dismantled everything Akhenaten had built. His name was struck from official records; he was referred to only as \"the enemy\" or \"the criminal of Amarna.\"",
+                        DurationMs = 9000 },
                 }
             }},
         };
 
-        // Relationship entries
+        // ── RELATIONSHIPS ─────────────────────────────────────────────────────
 
-        Relationships = new List<Relationship>
+        Relationships = new List<RelationshipDef>
         {
-            // Nefertiti and Akhenaten (royal couple)
-            new Relationship
+            // ── Nefertiti + Akhenaten  (Royal Couple) ────────────────────────
+            new RelationshipDef
             {
-                SymbolIdA = 2,
-                SymbolIdB = 6,
+                SymbolIdA       = 2,
+                SymbolIdB       = 6,
                 ConnectionTitle = "Husband & Wife — The Revolutionary Royal Couple",
-                Slides = new List<ContentSlide>
+                Slides          = new List<ContentSlide>
                 {
                     new ContentSlide { Type = ContentType.Image,
-                        Content = "content/figures/1_nefertiti/marker_nefertiti.png",
+                        Content    = "content/figures/1_nefertiti/marker_nefertiti.png",
                         DurationMs = 6000 },
                     new ContentSlide { Type = ContentType.Text,
-                        Content = "Nefertiti and Akhenaten were one of history's most famous royal couples. Together they co-ruled Egypt, dismantled its ancient religion, founded a new capital city at Amarna, and replaced millennia of polytheism with the monotheistic worship of Aten.",
+                        Content    = "Nefertiti and Akhenaten were one of history's most famous royal couples. Together they co-ruled Egypt, dismantled its ancient religion, founded a new capital city at Amarna, and replaced millennia of polytheism with the monotheistic worship of Aten.",
                         DurationMs = 9000 },
                     new ContentSlide { Type = ContentType.Text,
-                        Content = "Nefertiti bore Akhenaten six daughters. Their family was depicted in Amarna art in unusually tender, intimate scenes — a complete break from the formal, rigid conventions of earlier Egyptian art.",
-                        DurationMs = 9000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Egyptologists believe Nefertiti wielded extraordinary political power, possibly equal to Akhenaten's own.",
-                        DurationMs = 7000 },
+                        Content    = "Nefertiti bore Akhenaten six daughters. Their family was depicted in Amarna art in unusually tender, intimate scenes — a complete break from the formal, rigid conventions of earlier Egyptian art. Egyptologists believe Nefertiti wielded extraordinary political power, possibly equal to Akhenaten's own.",
+                        DurationMs = 10000 },
                 }
             },
 
-            // Tutankhamun and Akhenaten (father and son)
-            new Relationship
+            // ── Tutankhamun + Akhenaten  (Father & Son) ──────────────────────
+            new RelationshipDef
             {
-                SymbolIdA = 7,
-                SymbolIdB = 6,
+                SymbolIdA       = 3,
+                SymbolIdB       = 6,
                 ConnectionTitle = "Father & Son — A Legacy Reversed",
-                Slides = new List<ContentSlide>
+                Slides          = new List<ContentSlide>
                 {
                     new ContentSlide { Type = ContentType.Text,
-                        Content = "Tutankhamun was born as 'Tutankhaten' — 'Living Image of Aten' — the son of Akhenaten. He inherited a kingdom in religious turmoil.",
-                        DurationMs = 8000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Under the guidance of his advisors, the young Pharaoh reversed every reform his father had introduced. Tutankhamun changed his name from Tutankhaten to Tutankhamun, restored the old gods, reopened the temples.",
+                        Content    = "Tutankhamun was born as \"Tutankhaten\" — \"Living Image of Aten\" — the son of Akhenaten. He inherited a kingdom in religious turmoil. Under the guidance of his advisors, the young Pharaoh reversed every reform his father had introduced.",
                         DurationMs = 9000 },
                     new ContentSlide { Type = ContentType.Text,
-                        Content = "He moved the capital back to Memphis, and began the systematic erasure of his own father's name and image from Egyptian history.",
-                        DurationMs = 8000 },
+                        Content    = "Tutankhamun changed his name from Tutankhaten to Tutankhamun, restored the old gods, reopened the temples, moved the capital back to Memphis, and began the systematic erasure of his own father's name and image from Egyptian history.",
+                        DurationMs = 9000 },
                 }
             },
 
-            // Nefertiti and Tutankhamun
-            new Relationship
+            // ── Nefertiti + Tutankhamun  (Stepmother & Stepson) ──────────────
+            new RelationshipDef
             {
-                SymbolIdA = 2,
-                SymbolIdB = 7,
-                ConnectionTitle = "Family Ties in Amarna Chaos",
-                Slides = new List<ContentSlide>
+                SymbolIdA       = 2,
+                SymbolIdB       = 3,
+                ConnectionTitle = "Stepmother & Stepson — The Amarna Succession",
+                Slides          = new List<ContentSlide>
                 {
                     new ContentSlide { Type = ContentType.Image,
-                        Content = "content/figures/1_nefertiti/marker_nefertiti.png",
+                        Content    = "content/figures/1_nefertiti/marker_nefertiti.png",
                         DurationMs = 6000 },
                     new ContentSlide { Type = ContentType.Text,
-                        Content = "Nefertiti was likely Tutankhamun's stepmother, or possibly biological mother based on ongoing DNA debates from mummy analyses. Her daughter Ankhesenamun married Tutankhamun, intertwining Amarna family lines tightly.",
+                        Content    = "Nefertiti was the stepmother of Tutankhamun. She was the principal wife of his father Akhenaten, though Tutankhamun was born of another, lesser wife. When Akhenaten died, the succession was turbulent and brief.",
                         DurationMs = 9000 },
                     new ContentSlide { Type = ContentType.Text,
-                        Content = "This royal incest preserved purity but led to health issues like Tutankhamun's deformities.",
-                        DurationMs = 7000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Nefertiti may have ruled briefly as the mysterious pharaoh Neferneferuaten after Akhenaten's death, bridging to Tutankhamun's ascension. Tutankhamun then restored Amun worship, abandoning Atenism and dismantling Amarna's experiments.",
+                        Content    = "Some Egyptologists believe that in the years between Akhenaten's death and Tutankhamun's coronation, Nefertiti herself ruled as co-regent or sole Pharaoh under the name Neferneferuaten. If true, she is one of very few female rulers of ancient Egypt.",
                         DurationMs = 10000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Her potential interim reign underscores power struggles in the family's turbulent end. These ties encapsulate Amarna Period chaos: religious upheaval followed by reversal.",
-                        DurationMs = 9000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Tutankhamun's young death at 18 without viable heirs sealed the era. The story reveals fragile dynastic survival amid innovation's fallout.",
-                        DurationMs = 8000 },
                 }
             },
 
-            // Cleopatra and Nefertiti (queens of Egypt)
-            new Relationship
+            // ── Cleopatra + Nefertiti  (Queens of Egypt) ─────────────────────
+            new RelationshipDef
             {
-                SymbolIdA = 1,
-                SymbolIdB = 2,
-                ConnectionTitle = "Powerful Queens Shaping Egypt",
-                Slides = new List<ContentSlide>
+                SymbolIdA       = 1,
+                SymbolIdB       = 2,
+                ConnectionTitle = "Queens of Egypt — Icons Across the Ages",
+                Slides          = new List<ContentSlide>
                 {
                     new ContentSlide { Type = ContentType.Image,
-                        Content = "content/figures/0_cleopatra/marker_cleopatra.png",
+                        Content    = "content/figures/0_cleopatra/marker_cleopatra.png",
                         DurationMs = 6000 },
                     new ContentSlide { Type = ContentType.Text,
-                        Content = "Cleopatra and Nefertiti both exerted extraordinary influence in ancient Egypt's male-dominated hierarchy. Nefertiti stood equal to Akhenaten in Amarna art, co-promoting the radical Aten sun cult that reshaped religion.",
+                        Content    = "Separated by more than 1,300 years, Cleopatra and Nefertiti are two of the most iconic women in all of human history. Nefertiti wielded religious and political power in 14th-century BC Egypt; Cleopatra commanded an empire in the 1st century BC.",
                         DurationMs = 9000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Cleopatra, centuries later, forged alliances with Julius Caesar and Mark Antony, using intellect and charm to protect Egypt from Roman absorption.",
-                        DurationMs = 8000 },
                     new ContentSlide { Type = ContentType.Image,
-                        Content = "content/figures/1_nefertiti/marker_nefertiti.png",
+                        Content    = "content/figures/1_nefertiti/marker_nefertiti.png",
                         DurationMs = 6000 },
                     new ContentSlide { Type = ContentType.Text,
-                        Content = "Their iconic beauty endures: Nefertiti through her famous Berlin bust discovered in 1912, Cleopatra via legends amplified by Roman foes. Separated by over 1,300 years, they defied societal norms as women in power.",
-                        DurationMs = 9000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Both leveraged symbolism—art for Nefertiti, dramatic diplomacy for Cleopatra—to cement legacies. Nefertiti's religious innovations paralleled Cleopatra's political maneuvers against empire builders.",
-                        DurationMs = 9000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "They highlight timeless female agency in pharaonic history. Stories inspire modern views of strong ancient queens.",
-                        DurationMs = 7000 },
+                        Content    = "Both women broke the conventions of their time. Nefertiti was depicted in art as an equal to her husband — a rarity in ancient Egypt. Cleopatra was the sole sovereign ruler, allied with the two most powerful men in Rome. Both became global symbols of feminine power.",
+                        DurationMs = 10000 },
                 }
             },
 
-            // Cleopatra and Ramesses II (famous rulers from different eras)
-            new Relationship
+            // ── Cleopatra + Ramesses II  (Last and Greatest) ─────────────────
+            new RelationshipDef
             {
-                SymbolIdA = 1,
-                SymbolIdB = 4,
+                SymbolIdA       = 1,
+                SymbolIdB       = 4,
                 ConnectionTitle = "Egypt's Most Celebrated Rulers — 1,200 Years Apart",
-                Slides = new List<ContentSlide>
+                Slides          = new List<ContentSlide>
                 {
                     new ContentSlide { Type = ContentType.Image,
-                        Content = "content/figures/0_cleopatra/marker_cleopatra.png",
+                        Content    = "content/figures/0_cleopatra/marker_cleopatra.png",
                         DurationMs = 6000 },
                     new ContentSlide { Type = ContentType.Text,
-                        Content = "Ramesses II ruled during Egypt's New Kingdom golden age in the 13th century BC. Cleopatra VII ruled more than 1,200 years later, in the 1st century BC. By Cleopatra's time, the Abu Simbel temples that Ramesses had built were already ancient monuments.",
+                        Content    = "Ramesses II ruled during Egypt's New Kingdom golden age in the 13th century BC. Cleopatra VII ruled more than 1,200 years later, in the 1st century BC. By Cleopatra's time, the Abu Simbel temples that Ramesses had built were already ancient monuments.",
                         DurationMs = 9000 },
                     new ContentSlide { Type = ContentType.Image,
-                        Content = "content/figures/3_ramesses/marker_ramesses_ii.png",
+                        Content    = "content/figures/3_ramesses/marker_ramesses_ii.png",
                         DurationMs = 6000 },
                     new ContentSlide { Type = ContentType.Text,
-                        Content = "Both are considered among the greatest rulers in Egypt's 3,000-year history. Ramesses defined Egypt's imperial power at its height; Cleopatra held the kingdom together in its final century with intelligence, diplomacy, and sheer will.",
+                        Content    = "Both are considered among the greatest rulers in Egypt's 3,000-year history. Ramesses defined Egypt's imperial power at its height; Cleopatra held the kingdom together in its final century with intelligence, diplomacy, and sheer will.",
                         DurationMs = 9000 },
                 }
             },
 
-            // Cleopatra and Akhenaten (radical reformers)
-            new Relationship
+            // ── Hatshepsut + Ramesses II  (Great Builder Pharaohs) ───────────
+            new RelationshipDef
             {
-                SymbolIdA = 1,
-                SymbolIdB = 6,
-                ConnectionTitle = "Radical Reformers",
-                Slides = new List<ContentSlide>
+                SymbolIdA       = 5,
+                SymbolIdB       = 4,
+                ConnectionTitle = "Egypt's Greatest Builder Pharaohs",
+                Slides          = new List<ContentSlide>
                 {
                     new ContentSlide { Type = ContentType.Image,
-                        Content = "content/figures/0_cleopatra/marker_cleopatra.png",
+                        Content    = "content/figures/4_hatshepsut/marker_hatshepsut.png",
                         DurationMs = 6000 },
                     new ContentSlide { Type = ContentType.Text,
-                        Content = "Akhenaten radically imposed Atenism, relocating to Amarna and suppressing old gods; Cleopatra navigated Roman integration while upholding pharaonic divinity. Both defied empires—his against priests, hers against Octavian—using bold visions.",
-                        DurationMs = 10000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Separated by dynasties, parallels in innovation abound. Akhenaten's elongated art and family focus echo Cleopatra's theatrical diplomacy like the carpet ruse.",
-                        DurationMs = 8000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Erasures followed: Amarna abandoned, her image vilified by Romans. Survivals include boundary stelae and legends.",
-                        DurationMs = 7000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "They reshaped religion/politics innovatively, leaving controversial yet enduring marks. Heretic and seductress labels hide true impacts. Stories connect ancient reform across millennia.",
-                        DurationMs = 9000 },
-                }
-            },
-
-            // Hatshepsut and Ramesses II (builder pharaohs)
-            new Relationship
-            {
-                SymbolIdA = 5,
-                SymbolIdB = 4,
-                ConnectionTitle = "Architects of Grandeur",
-                Slides = new List<ContentSlide>
-                {
-                    new ContentSlide { Type = ContentType.Image,
-                        Content = "content/figures/4_hatshepsut/marker_hatshepsut.png",
-                        DurationMs = 6000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Ramses II and Hatshepsut prioritized colossal architecture over constant war, leaving iconic legacies. Hatshepsut's Deir el-Bahri temple vividly depicts Punt expeditions; Ramses' Abu Simbel and Ramesseum boast similar spectacle.",
-                        DurationMs = 9000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Both invested in Karnak expansions: her obelisks, his hypostyle halls. Propaganda defined them—Hatshepsut claimed divine Amun birth, Ramses exaggerated Kadesh as victory.",
+                        Content    = "Hatshepsut and Ramesses II — separated by two centuries — share a legacy of extraordinary construction. Hatshepsut built the stunning three-tiered mortuary temple at Deir el-Bahari. Ramesses II carved the colossal Abu Simbel temples directly into a cliff face.",
                         DurationMs = 9000 },
                     new ContentSlide { Type = ContentType.Image,
-                        Content = "content/figures/3_ramesses/marker_ramesses_ii.png",
+                        Content    = "content/figures/3_ramesses/marker_ramesses_ii.png",
                         DurationMs = 6000 },
                     new ContentSlide { Type = ContentType.Text,
-                        Content = "Peaceful prosperity marked Hatshepsut's trade focus and Ramses' treaty era. Structures endured millennia, symbolizing eternal power.",
-                        DurationMs = 8000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Hatshepsut ruled 22 years effectively before erasure by Thutmose III; Ramses' 66-year reign outlasted all. Rediscovered today, their temples highlight Egypt's building zenith. They prove monuments outlive reigns.",
+                        Content    = "Both were also masters of self-promotion. Hatshepsut covered her temple walls with accounts of her divine birth and the Punt expedition. Ramesses II had his image carved on virtually every major monument in Egypt — including some built by his predecessors.",
                         DurationMs = 10000 },
                 }
             },
 
-            // Akhenaten and Hatshepsut (broke tradition)
-            new Relationship
+            // ── Akhenaten + Hatshepsut  (Rebels Against Tradition) ───────────
+            new RelationshipDef
             {
-                SymbolIdA = 6,
-                SymbolIdB = 5,
-                ConnectionTitle = "Revolutionary Rulers",
-                Slides = new List<ContentSlide>
+                SymbolIdA       = 6,
+                SymbolIdB       = 5,
+                ConnectionTitle = "Rebels Against Tradition — Rulers Who Defied Convention",
+                Slides          = new List<ContentSlide>
                 {
                     new ContentSlide { Type = ContentType.Image,
-                        Content = "content/figures/4_hatshepsut/marker_hatshepsut.png",
+                        Content    = "content/figures/4_hatshepsut/marker_hatshepsut.png",
                         DurationMs = 6000 },
                     new ContentSlide { Type = ContentType.Text,
-                        Content = "Hatshepsut and Akhenaten both shattered conventions: she as female pharaoh, he with Aten monotheism. Early Theban builds defined them—her towering obelisks and Red Chapel, his open Aten temples at Karnak.",
+                        Content    = "Hatshepsut and Akhenaten are two of Egypt's most unconventional rulers. Hatshepsut defied gender convention by ruling as a male pharaoh for over 20 years. Akhenaten defied religious convention by abolishing Egypt's entire pantheon in favour of one god.",
                         DurationMs = 9000 },
                     new ContentSlide { Type = ContentType.Text,
-                        Content = "Both innovated amid 18th Dynasty tensions. Successors rejected them: Thutmose III defaced Hatshepsut, Tutankhamun abandoned Akhenaten's Amarna.",
-                        DurationMs = 8000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Yet rediscovery restored their stories—Hatshepsut's mummy in 2007, Akhenaten's art revolution. Erasures aimed to uphold tradition.",
-                        DurationMs = 8000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Their boldness reshaped Egypt temporarily, influencing views of pharaonic daring. Female rule and religious pivot challenged norms profoundly. Legacies persist in modern fascination.",
+                        Content    = "Both faced posthumous erasure: after Hatshepsut's death, Thutmose III had her name chiselled from monuments; after Akhenaten's death, his name was struck from official records. History tried to forget them both — but failed.",
                         DurationMs = 9000 },
                 }
             },
 
-            // Ramesses II and Tutankhamun (New Kingdom pharaohs)
-            new Relationship
+            // ── Ramesses II + Tutankhamun  (Two Kings of the 19th/18th Dynasty)
+            new RelationshipDef
             {
-                SymbolIdA = 4,
-                SymbolIdB = 7,
-                ConnectionTitle = "From Boy King to Empire Builder",
-                Slides = new List<ContentSlide>
+                SymbolIdA       = 4,
+                SymbolIdB       = 3,
+                ConnectionTitle = "New Kingdom Pharaohs — Different Dynasties, One Egypt",
+                Slides          = new List<ContentSlide>
                 {
                     new ContentSlide { Type = ContentType.Image,
-                        Content = "content/figures/3_ramesses/marker_ramesses_ii.png",
+                        Content    = "content/figures/3_ramesses/marker_ramesses_ii.png",
                         DurationMs = 6000 },
                     new ContentSlide { Type = ContentType.Text,
-                        Content = "Tutankhamun's short reign stabilized Egypt post-Amarna religious turmoil, much like Ramses II later consolidated after Seti I. Both led military successes against Nubians and Asiatics.",
+                        Content    = "Tutankhamun of the 18th Dynasty died young around 1323 BC. Ramesses II of the 19th Dynasty was born just 20 years later, in 1303 BC. The two pharaohs are separated by barely a generation, yet their legacies could not be more different.",
                         DurationMs = 9000 },
                     new ContentSlide { Type = ContentType.Text,
-                        Content = "Tutankhamun's campaigns echoed Ramses' famous Kadesh and Libyan battles. They shared diplomatic prowess, with Tutankhamun gaining Mitanni gifts and Ramses sealing history's first peace treaty.",
-                        DurationMs = 9000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Extensive builders, Tutankhamun rebuilt Karnak's sphinxes and Luxor while Ramses expanded it massively alongside Abu Simbel. Deified in life, Tutankhamun had Nubian cults; Ramses enjoyed posthumous worship.",
+                        Content    = "Tutankhamun is remembered for his spectacular tomb and golden treasures — the physical remnants of a brief, troubled reign. Ramesses II is remembered for the sheer scale of his monuments and the 66-year sweep of his rule. One is famous for what survived underground; the other for what towers above the ground.",
                         DurationMs = 10000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Spanning 18th to 19th Dynasties, they exemplify pharaonic recovery and grandeur. Tutankhamun died young, his tomb's 1922 discovery contrasting Ramses' mummified longevity to 90.",
-                        DurationMs = 9000 },
-                    new ContentSlide { Type = ContentType.Text,
-                        Content = "Successors usurped Tutankhamun's works as later kings emulated Ramses. Their arcs from crisis to peak define resilient rule.",
-                        DurationMs = 8000 },
                 }
             },
         };
     }
 }
-

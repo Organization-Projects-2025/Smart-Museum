@@ -42,6 +42,10 @@ public class CircularMenuController
 
     public Action<string, string> OnAction; // action, payload
 
+    // Hysteresis for rotation to prevent jitter
+    private float _lastAngle = 0f;
+    private const float AngleHysteresis = 0.08f; // ~4.6 degrees - reduced for smoother response
+
     public void Show()
     {
         IsVisible = true;
@@ -51,6 +55,7 @@ public class CircularMenuController
         SecondIndex = 0;
         ThirdIndex = 0;
         SelectedFavoriteTitle = null;
+        _lastAngle = 0f;
         SyncSelectionTexts();
     }
 
@@ -60,6 +65,7 @@ public class CircularMenuController
         IsInSecondLevel = false;
         IsInThirdLevel = false;
         SelectedFavoriteTitle = null;
+        _lastAngle = 0f;
     }
 
     public void UpdateRotation(float angleRadians)
@@ -67,6 +73,15 @@ public class CircularMenuController
         if (!IsVisible) return;
 
         LastTuioAngleDegrees = angleRadians / (float)Math.PI * 180f;
+
+        // Apply hysteresis to prevent jitter from small angle changes
+        float angleDiff = Math.Abs(angleRadians - _lastAngle);
+        // Only skip if the change is very small (less than hysteresis)
+        // But always allow updates if we're crossing a segment boundary
+        if (angleDiff < AngleHysteresis && angleDiff > 0.001f)
+            return;
+
+        _lastAngle = angleRadians;
 
         List<string> topItems = GetTopLevelItems();
         int count;
@@ -78,15 +93,24 @@ public class CircularMenuController
         // Top direction is -90 degrees.
         float fromTop = Normalize(angleRadians + (float)Math.PI / 2f);
         float step = (float)(Math.PI * 2.0 / count);
-        int idx = (int)(fromTop / step);
-        if (idx >= count) idx = count - 1;
-        if (idx < 0) idx = 0;
+        int idx = (int)Math.Round(fromTop / step) % count;
+        if (idx < 0) idx += count;
 
-        if (IsInThirdLevel) ThirdIndex = idx;
-        else if (IsInSecondLevel) SecondIndex = idx;
-        else TopIndex = idx;
+        int oldIdx = -1;
+        if (IsInThirdLevel) oldIdx = ThirdIndex;
+        else if (IsInSecondLevel) oldIdx = SecondIndex;
+        else oldIdx = TopIndex;
 
-        SyncSelectionTexts();
+        // Only update if index actually changed
+        if (idx != oldIdx)
+        {
+            if (IsInThirdLevel) ThirdIndex = idx;
+            else if (IsInSecondLevel) SecondIndex = idx;
+            else TopIndex = idx;
+
+            Console.WriteLine($"[CircularMenu] Rotation: angle={angleRadians:F2} idx={idx} (was {oldIdx}) top={( !IsInSecondLevel && !IsInThirdLevel && topItems.Count > idx ? topItems[idx] : "?")}");
+            SyncSelectionTexts();
+        }
     }
 
     /// <summary>
@@ -153,6 +177,8 @@ public class CircularMenuController
         if (TopIndex >= topItems.Count) TopIndex = topItems.Count - 1;
 
         string top = topItems[TopIndex];
+        Console.WriteLine($"[CircularMenu] MoveUpAction: TopIndex={TopIndex} top={top} IsInSecondLevel={IsInSecondLevel}");
+
         if (!IsInSecondLevel)
         {
             if (top == "Favorite")
@@ -163,6 +189,7 @@ public class CircularMenuController
 
             if (HasSecondLevel(top))
             {
+                Console.WriteLine($"[CircularMenu] MoveUpAction: Entering second level for {top}. Items: {(top == "Favorites" ? Favorites.Count : Watched.Count)}");
                 IsInSecondLevel = true;
                 IsInThirdLevel = false;
                 SecondIndex = 0;
@@ -196,8 +223,20 @@ public class CircularMenuController
         if (IsInSecondLevel)
         {
             var second = GetSecondLevelItems();
-            if (second.Count == 0) return;
+            Console.WriteLine($"[CircularMenu] MoveUpAction (SecondLevel): top={top} SecondIndex={SecondIndex} secondCount={second.Count}");
+            if (second.Count == 0) 
+            {
+                Console.WriteLine($"[CircularMenu] MoveUpAction (SecondLevel): No items in second level!");
+                return;
+            }
+            if (SecondIndex < 0 || SecondIndex >= second.Count)
+            {
+                Console.WriteLine($"[CircularMenu] MoveUpAction (SecondLevel): SecondIndex {SecondIndex} out of range [0, {second.Count})");
+                return;
+            }
             string payload = second[SecondIndex];
+            Console.WriteLine($"[CircularMenu] MoveUpAction (SecondLevel): Calling OnAction({top}, '{payload}')");
+            Console.WriteLine($"[CircularMenu] MoveUpAction (SecondLevel): All items in second level: {string.Join(", ", second.Select(s => "'" + s + "'"))}");
 
             if (top == "Favorites")
             {
