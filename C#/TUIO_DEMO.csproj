@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003" ToolsVersion="12.0">
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
@@ -55,13 +55,23 @@
     <Compile Include="OSC.NET\OSCPacket.cs" />
     <Compile Include="OSC.NET\OSCReceiver.cs" />
     <Compile Include="OSC.NET\OSCTransmitter.cs" />
+    <Compile Include="OSC.NET\OSCTimeTag.cs" />
     <Compile Include="TuioDemo.cs" />
     <Compile Include="FigureData.cs" />
     <Compile Include="SlideShowManager.cs" />
+    <Compile Include="Object3DSlide.cs" />
+    <Compile Include="ThreeDObjectRenderer.cs" />
+    <Compile Include="AdminAnalyticsPanel.cs" />
+    <Compile Include="SessionAnalyticsRecorder.cs" />
     <Compile Include="AuthIntegration.cs" />
     <Compile Include="CircularMenuController.cs" />
+    <Compile Include="TuioControlMarker.cs" />
     <Compile Include="UserPreferencesManager.cs" />
-    <Compile Include="CodeSampleSocketClient.cs" />
+    <Compile Include="InputPrioritizer.cs" />
+    <Compile Include="GestureClient.cs" />
+    <Compile Include="GazeEmotionClient.cs" />
+    <Compile Include="HandTrackClient.cs" />
+    <Compile Include="YoloContextClient.cs" />
     <Compile Include="TUIO\TuioClient.cs" />
     <Compile Include="TUIO\TuioContainer.cs" />
     <Compile Include="TUIO\TuioCursor.cs" />
@@ -69,10 +79,7 @@
     <Compile Include="TUIO\TuioObject.cs" />
     <Compile Include="TUIO\TuioPoint.cs" />
     <Compile Include="TUIO\TuioTime.cs" />
-    <Compile Include="OSC.NET\OSCTimeTag.cs" />
     <Compile Include="TUIO\TuioBlob.cs" />
-    <Compile Include="HandTracking\HandTrackingData.cs" />
-    <Compile Include="HandTracking\HandTrackingReceiver.cs" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="System" />
@@ -80,6 +87,10 @@
     <Reference Include="System.Runtime.Serialization" />
     <Reference Include="System.Windows.Forms" />
     <Reference Include="System.Xml" />
+    <Reference Include="Newtonsoft.Json, Version=13.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed, processorArchitecture=MSIL">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>packages\Newtonsoft.Json.13.0.3\lib\net45\Newtonsoft.Json.dll</HintPath>
+    </Reference>
   </ItemGroup>
   <ItemGroup>
     <None Include="app.config" />

@@ -15,6 +15,11 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using TUIO;
 
+// Type aliases — mirrors the aliases declared in FigureData.cs (C# using-aliases are file-scoped)
+using Figure       = FigureDef;
+using Relationship = RelationshipDef;
+using SceneObject  = SceneObjectDef;
+
 public enum AppState
 {
     Idle,           // No markers on the table

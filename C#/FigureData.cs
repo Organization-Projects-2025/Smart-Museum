@@ -18,11 +18,15 @@
 using System.Collections.Generic;
 using System.Drawing;
 
+// Type aliases for convenience
+using Figure = FigureDef;
+using Relationship = RelationshipDef;
+
 // ─────────────────────────────────────────────────────────────────────────────
 //  Content Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-public enum ContentType { Text, Image, Video }
+public enum ContentType { Text, Image, Video, ThreeD }
 
 /// <summary>
 /// A single slide in a slideshow — either a text paragraph, an image, or a video.
