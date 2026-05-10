@@ -1,0 +1,9 @@
+# Use the repository root requirements (includes dollarpy, mediapipe, opencv, etc.):
+#
+#   cd ..
+#   python -m pip install -r requirements.txt
+#   python -m pip install "face_recognition>=1.3.0" --no-deps
+#
+# Or from repo root: python -m pip install -r requirements.txt
+
+-r ../requirements.txt
