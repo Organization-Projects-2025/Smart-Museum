@@ -779,6 +779,7 @@ public class TuioDemo : Form, TuioListener
                         Transition(AppState.Idle, null, null, null, null);
                         InitializeGazeAnalytics();
                         InitializeYoloContext();
+                        RearmGestureTracking();
                         Invalidate();
                     }));
                 }
@@ -838,6 +839,7 @@ public class TuioDemo : Form, TuioListener
         loginBluetoothFailureCount = 0;
         loginBluetoothRecoveryEscalated = false;
         loginBtCooldownUntilUtc = DateTime.MinValue;
+        RearmGestureTracking();
         authStatus = "You are visiting as a guest — enjoy the table experience.";
         Transition(AppState.Idle, null, null, null, null);
         InitializeGazeAnalytics();
@@ -918,6 +920,7 @@ public class TuioDemo : Form, TuioListener
                         Transition(AppState.Idle, null, null, null, null);
                         InitializeGazeAnalytics();
                         InitializeYoloContext();
+                        RearmGestureTracking();
                         Invalidate();
                     }));
                 }
@@ -998,6 +1001,7 @@ public class TuioDemo : Form, TuioListener
                         regPendingFirstName = null;
                         regPendingLastName = null;
                         regPendingAge = 0;
+                        RearmGestureTracking();
                         regPendingGender = null;
                         nameEntryBuffer = "";
                         Transition(AppState.Idle, null, null, null, null);
@@ -1898,6 +1902,22 @@ public class TuioDemo : Form, TuioListener
         catch (Exception ex)
         {
             Console.WriteLine($"[Gesture] Init failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>Called on every login success path to restart gesture tracking after auth blocked it.</summary>
+    private async void RearmGestureTracking()
+    {
+        if (gestureClient == null || !gestureClient.IsConnected) return;
+        try
+        {
+            _gestureNeedsRearm = false;
+            await gestureClient.StartTrackingAsync().ConfigureAwait(false);
+            Console.WriteLine("[Gesture] Tracking re-armed after login");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Gesture] RearmGestureTracking failed: {ex.Message}");
         }
     }
 
