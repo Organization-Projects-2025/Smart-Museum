@@ -1789,16 +1789,31 @@ public class TuioDemo : Form, TuioListener
     private void TeardownGazeAnalytics()
     {
         TeardownYoloContext();
-        if (gazeEmotionClient != null)
+        GazeEmotionClient client = gazeEmotionClient;
+        gazeEmotionClient = null;
+        if (client != null)
         {
-            gazeEmotionClient.FrameReceived -= OnGazeFrame;
             try
             {
-                gazeEmotionClient.StopStreamingAsync().GetAwaiter().GetResult();
+                client.FrameReceived -= OnGazeFrame;
             }
             catch { }
-            gazeEmotionClient.Dispose();
-            gazeEmotionClient = null;
+
+            // Never block the WinForms UI thread on gaze TCP teardown — Logout / StartLoginFlow
+            // used to freeze here when StopStreamingAsync waited indefinitely.
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await client.StopStreamingAsync().ConfigureAwait(false);
+                }
+                catch { }
+                try
+                {
+                    client.Dispose();
+                }
+                catch { }
+            });
         }
         lock (liveGazeLock)
         {
@@ -2082,25 +2097,18 @@ public class TuioDemo : Form, TuioListener
                     circularMenu.Show();
                     menuOpenedByGesture = true;
                     menuFlickNeedsResync = true;
-                    _menuNavigatedSinceOpen = false; // reset nav flag
+                    _menuNavigatedSinceOpen = false; // reset until user navigates or confirms
                     Console.WriteLine("[Gesture] Menu opened");
                 }
                 else
                 {
-                    if (_menuNavigatedSinceOpen)
-                    {
-                        // User swiped to a choice — confirm it
-                        circularMenu.MoveUpAction();
-                        _menuNavigatedSinceOpen = false;
-                        Console.WriteLine($"[Gesture] Confirmed: {circularMenu.SelectedTop}");
-                    }
-                    else
-                    {
-                        // No swipe yet — dismiss without acting
-                        circularMenu.Hide();
-                        menuOpenedByGesture = false;
-                        Console.WriteLine("[Gesture] Menu dismissed (no selection)");
-                    }
+                    // Close = confirm current highlight (outer ring, 2nd tier, or 3rd tier) — same as TUIO flick “up”.
+                    // Enters Favorites/Watched inner rings when applicable; runs Home/Logout/etc. on leaf choices.
+                    circularMenu.MoveUpAction();
+                    _menuNavigatedSinceOpen = true; // unlock TUIO flick + treat as “navigated” for inner-tier use
+                    Console.WriteLine(
+                        $"[Gesture] Close→confirm tier top={circularMenu.SelectedTop ?? "—"} " +
+                        $"second={circularMenu.SelectedSecond ?? "—"} third={circularMenu.SelectedThird ?? "—"}");
                 }
                 Invalidate();
                 break;
@@ -2212,6 +2220,7 @@ public class TuioDemo : Form, TuioListener
             circularMenu.Hide();
             menuOpenedByGesture = false; // Clear flag
             StopAndUnlockSlides();
+            Transition(AppState.Idle, null, null, null, null);
             adminAnalyticsVisible = false;
             if (adminAnalyticsPanel != null) adminAnalyticsPanel.Exit();
             StartLoginFlow(launchFaceLobbyScan: false);
