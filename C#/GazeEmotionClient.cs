@@ -45,7 +45,17 @@ public class GazeEmotionClient : IDisposable
         {
             client = new TcpClient();
             client.NoDelay = true;
-            await client.ConnectAsync(host, port).ConfigureAwait(false);
+            
+            // Add 3-second timeout to prevent UI freeze
+            var connectTask = client.ConnectAsync(host, port);
+            if (await Task.WhenAny(connectTask, Task.Delay(3000)) != connectTask)
+            {
+                client?.Close();
+                IsConnected = false;
+                return false; // Timeout
+            }
+            
+            await connectTask; // Propagate any exception
             netStream = client.GetStream();
             reader = new StreamReader(netStream, Encoding.UTF8, false, 4096, leaveOpen: true);
             writer = new StreamWriter(netStream, new UTF8Encoding(false)) { AutoFlush = true };

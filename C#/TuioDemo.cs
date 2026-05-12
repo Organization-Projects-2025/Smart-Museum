@@ -315,6 +315,8 @@ public class TuioDemo : Form, TuioListener
 
         this.KeyDown += OnKeyDown;
         this.Closing += OnClosing;
+        this.Activated += OnWindowActivated;
+        this.Deactivate += OnWindowDeactivated;
 
         slideShow = new SlideShowManager();
         slideShow.SlideChanged += slide =>
@@ -337,7 +339,7 @@ public class TuioDemo : Form, TuioListener
         recognitionTimer = new System.Windows.Forms.Timer { Interval = 50 };
         recognitionTimer.Tick += OnRecognitionTick;
 
-        animTimer = new System.Windows.Forms.Timer { Interval = 33 };
+        animTimer = new System.Windows.Forms.Timer { Interval = 50 };  // Reduced from 33ms (30fps) to 50ms (20fps)
         animTimer.Tick += OnAnimTick;
         animTimer.Start();
 
@@ -440,7 +442,9 @@ public class TuioDemo : Form, TuioListener
     {
         authInProgress = true;
         loginPhase = LoginAuthPhase.RegisterScanning;
-        authStatus = "Warming up camera...";
+        authStatus = "Connecting to face recognition...";
+        authProgressState = "NO_FACE"; // Reset state for new scan
+        authProgressCountdown = 0f;
         SafeInvalidate();
 
         Thread t = new Thread(() =>
@@ -1586,20 +1590,34 @@ public class TuioDemo : Form, TuioListener
     /// <summary>Top-anchored layout after face match — no TUIO ring; auto-advance timer drives Bluetooth step.</summary>
     private void DrawProfileWelcomeScreen(Graphics g)
     {
-        const float titleY = 40f;
+        // Calculate total content height for vertical centering
+        const float titleH = 50f;
+        const float subtitleH = 32f;
+        const float statusH = 76f;
+        const float panelH = 168f;
+        const float countdownH = 34f;
+        const float spacing = 16f;
+        
+        float totalHeight = titleH + subtitleH + spacing + statusH + spacing + panelH + spacing + countdownH;
+        float startY = (H - totalHeight) / 2f;
+        
+        float titleY = startY;
         DrawCentered(g, "WELCOME BACK", fontTitle, themeSecondary,
-            new RectangleF(0, titleY, W, 50f));
+            new RectangleF(0, titleY, W, titleH));
+            
+        float subtitleY = titleY + titleH;
         DrawCentered(g, "Your visitor profile — Grand Egyptian Museum", fontSubtitle,
             Color.FromArgb(238, CPapyrus),
-            new RectangleF(40, titleY + 48f, W - 80, 32f));
-        float statusTop = titleY + 48f + 32f + 12f;
-        const float statusH = 76f;
+            new RectangleF(40, subtitleY, W - 80, subtitleH));
+            
+        float statusY = subtitleY + subtitleH + spacing;
         DrawWrappedCentered(g, authStatus, fontBody, Color.White,
-            new RectangleF(40, statusTop, W - 80, statusH));
-        float panelTop = statusTop + statusH + 16f;
-        DrawAuthProfilePanel(g, panelTop);
-        const float panelH = 168f;
-        float countY = panelTop + panelH + 20f;
+            new RectangleF(40, statusY, W - 80, statusH));
+            
+        float panelY = statusY + statusH + spacing;
+        DrawAuthProfilePanel(g, panelY);
+        
+        float countY = panelY + panelH + spacing;
         if (profileWelcomeAutoContinueUtc.HasValue && !authInProgress)
         {
             double rem = (profileWelcomeAutoContinueUtc.Value - DateTime.UtcNow).TotalSeconds;
@@ -1608,7 +1626,7 @@ public class TuioDemo : Form, TuioListener
                 ? "Starting phone check…"
                 : "Continuing in " + sec + " second" + (sec == 1 ? "" : "s") + "…";
             DrawCentered(g, tail, fontHint, CGoldLight,
-                new RectangleF(40, countY, W - 80, 34f));
+                new RectangleF(40, countY, W - 80, countdownH));
         }
     }
 
@@ -3083,7 +3101,7 @@ public class TuioDemo : Form, TuioListener
             title = "SAVING ACCOUNT";
 
         DrawCentered(g, title, fontTitle, themeSecondary,
-            new RectangleF(0, H / 2f - 168f, W, 58));
+            new RectangleF(0, H / 2f - 200f, W, 58));  // Moved title up more
 
         float subtitleTop = H / 2f - 108f;
         float subtitleH = 40f;
@@ -3092,25 +3110,56 @@ public class TuioDemo : Form, TuioListener
             subtitleTop = H / 2f - 118f;
             subtitleH = 78f;
         }
-        if (loginPhase == LoginAuthPhase.RegisterScanning || loginPhase == LoginAuthPhase.MainPicker)
+        // Increase subtitle height for LoginScanning (Bluetooth verification) to show full text
+        if (loginPhase == LoginAuthPhase.LoginScanning)
+        {
+            subtitleTop = H / 2f - 135f;  // Position below title
+            subtitleH = 60f;  // Enough for 2 lines
+        }
+        // Increase subtitle height for LoginBluetoothRecovery to show full text
+        if (loginPhase == LoginAuthPhase.LoginBluetoothRecovery)
+        {
+            subtitleTop = H / 2f - 128f;
+            subtitleH = 80f;
+        }
+        if (loginPhase == LoginAuthPhase.RegisterScanning || loginPhase == LoginAuthPhase.MainPicker || 
+            loginPhase == LoginAuthPhase.LoginScanning)
             DrawWrappedCentered(g, subtitle, fontSubtitle, Color.FromArgb(238, CPapyrus),
                 new RectangleF(48, subtitleTop, W - 96, subtitleH));
         else
             DrawCentered(g, subtitle, fontSubtitle, Color.FromArgb(238, CPapyrus),
                 new RectangleF(40, subtitleTop, W - 80, subtitleH));
 
-        float statusTop = subtitleTop + subtitleH + 12f;
+        float statusTop = subtitleTop + subtitleH + 30f;  // More spacing
         bool wrapStatus = loginPhase == LoginAuthPhase.LoginBluetoothRecovery ||
                           loginPhase == LoginAuthPhase.RegisterBluetoothRecovery ||
                           loginPhase == LoginAuthPhase.NoFaceRecovery ||
                           loginPhase == LoginAuthPhase.AuthCameraIssue;
         float statusH = wrapStatus
-            ? (loginPhase == LoginAuthPhase.LoginBluetoothRecovery ? 120f
+            ? (loginPhase == LoginAuthPhase.LoginBluetoothRecovery ? 200f
                 : loginPhase == LoginAuthPhase.AuthCameraIssue ? 120f : 96f)
             : 52f;
         if (wrapStatus)
-            DrawWrappedCentered(g, authStatus, fontBody, Color.White,
-                new RectangleF(40, statusTop, W - 80, statusH));
+        {
+            // Use custom drawing without LineLimit flag for Bluetooth messages
+            if (loginPhase == LoginAuthPhase.LoginBluetoothRecovery)
+            {
+                var sf = new StringFormat
+                {
+                    Alignment = StringAlignment.Center,
+                    LineAlignment = StringAlignment.Near,
+                    Trimming = StringTrimming.Word,
+                    FormatFlags = StringFormatFlags.NoClip  // Remove LineLimit to show all text
+                };
+                using (var br = new SolidBrush(Color.White))
+                    g.DrawString(authStatus, fontBody, br, new RectangleF(40, statusTop, W - 80, statusH), sf);
+            }
+            else
+            {
+                DrawWrappedCentered(g, authStatus, fontBody, Color.White,
+                    new RectangleF(40, statusTop, W - 80, statusH));
+            }
+        }
         else
             DrawCentered(g, authStatus, fontBody, Color.White,
                 new RectangleF(40, statusTop, W - 80, statusH));
@@ -4179,6 +4228,32 @@ public class TuioDemo : Form, TuioListener
                 if (circularMenu.IsVisible) circularMenu.Hide();
                 else circularMenu.Show();
             }
+        }
+    }
+
+    private void OnWindowActivated(object sender, EventArgs e)
+    {
+        // Resume animation timer when window regains focus
+        if (animTimer != null && !animTimer.Enabled)
+        {
+            animTimer.Start();
+        }
+        if (recognitionTimer != null && state == AppState.Recognition && !recognitionTimer.Enabled)
+        {
+            recognitionTimer.Start();
+        }
+    }
+
+    private void OnWindowDeactivated(object sender, EventArgs e)
+    {
+        // Pause animation timer when window loses focus to prevent freeze on alt-tab
+        if (animTimer != null && animTimer.Enabled)
+        {
+            animTimer.Stop();
+        }
+        if (recognitionTimer != null && recognitionTimer.Enabled)
+        {
+            recognitionTimer.Stop();
         }
     }
 

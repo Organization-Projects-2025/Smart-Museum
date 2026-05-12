@@ -58,7 +58,14 @@ public class GestureClient : IDisposable
                         client.ReceiveTimeout = 5000;
 
                         StatusChanged?.Invoke(this, $"Connecting to {connectHost}:{port}...");
-                        await client.ConnectAsync(connectHost, port);
+                        
+                        // Add 3-second timeout to prevent UI freeze
+                        var connectTask = client.ConnectAsync(connectHost, port);
+                        if (await Task.WhenAny(connectTask, Task.Delay(3000)) != connectTask)
+                        {
+                            throw new TimeoutException($"Connection to {connectHost}:{port} timed out after 3 seconds");
+                        }
+                        await connectTask; // Propagate any exception
 
                         stream     = client.GetStream();
                         reader     = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: 4096, leaveOpen: true);
