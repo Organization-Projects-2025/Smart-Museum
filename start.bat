@@ -29,23 +29,14 @@ REM ── Optional overrides ────────────────�
 REM Uncomment and set MUSEUM_CAMERA if auto-detect picks the wrong webcam:
 REM set MUSEUM_CAMERA=1
 
-REM Uncomment to use fake YOLO tracks (no GPU / ultralytics needed):
-REM set YOLO_CONTEXT_MOCK=1
-
 REM Uncomment to disable individual services:
 REM set DISABLE_GESTURE=1
 REM set DISABLE_HAND=1
-REM set DISABLE_YOLO=1
+REM set DISABLE_OBJ_TRACK=1
 
 REM ── Start ─────────────────────────────────────────────────────────────────
 echo Using Python: %PYTHON%
 echo Starting all services...
 echo.
+echo Starting Smart Museum Server...
 %PYTHON% python\server\main.py
-
-REM ── If server exits with an error, keep the window open ───────────────────
-if errorlevel 1 (
-    echo.
-    echo Server exited with error code %errorlevel%
-    pause
-)

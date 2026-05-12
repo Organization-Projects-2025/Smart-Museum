@@ -172,7 +172,8 @@ public class GestureClient : IDisposable
                     TemplatesLoaded = response["templates"]?.ToObject<int>() ?? 0,
                     LastGesture = response["last_gesture"]?.ToString(),
                     WaitingForMotion = response["waiting_for_motion"]?.ToObject<bool>() ?? false,
-                    Capturing = response["capturing"]?.ToObject<bool>() ?? false
+                    Capturing = response["capturing"]?.ToObject<bool>() ?? false,
+                    ObjectVisible = response["object_visible"]?.ToObject<bool>() ?? false
                 };
             }
 
@@ -254,6 +255,8 @@ public class GestureClient : IDisposable
         public bool WaitingForMotion { get; set; }
         /// <summary>Python service: movement threshold passed; points are being recorded.</summary>
         public bool Capturing { get; set; }
+        /// <summary>Object tracking: the tracked object (watch) is currently visible in frame.</summary>
+        public bool ObjectVisible { get; set; }
     }
 
     /// <summary>

@@ -66,8 +66,8 @@ os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 import camera_hub as _cam_mod
 import auth_service
 import gaze_emotion_service
-import yolo_service
 import hand_service
+import object_tracking_service
 
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -101,16 +101,16 @@ def main():
     # 2. Wire hub into every service that needs frames
     auth_service.set_hub(hub)
     gaze_emotion_service.set_hub(hub)
-    yolo_service.set_hub(hub)
     hand_service.set_hub(hub)
+    object_tracking_service.set_hub(hub)
 
     # 3. Start services
     _log("SERVER", "Starting services...")
 
     _run("AUTH",       auth_service.start)
     _run("GAZE_EMO",   gaze_emotion_service.start)
-    _run("YOLO",       yolo_service.start)
     _run("HAND",       hand_service.start)
+    _run("OBJ_TRACK",  object_tracking_service.start)
 
     # Gesture service (dollarpy) — optional, failures are isolated
     if os.environ.get("DISABLE_GESTURE", "").strip() not in ("1","true","yes"):
@@ -130,8 +130,8 @@ def main():
     _log("SERVER", "  Face Auth:    127.0.0.1:5000")
     _log("SERVER", "  Gesture:      127.0.0.1:5001")
     _log("SERVER", "  Gaze+Emotion: 127.0.0.1:5002")
-    _log("SERVER", "  YOLO Context: 127.0.0.1:5003")
     _log("SERVER", "  Hand Track:   127.0.0.1:5004")
+    _log("SERVER", "  Obj Track:    127.0.0.1:5005")
     _log("SERVER", "Press Ctrl+C to stop.")
 
     try:

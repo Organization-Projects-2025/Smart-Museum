@@ -200,6 +200,17 @@ public class TuioDemo : Form, TuioListener
     private System.Windows.Forms.Timer gestureCheckTimer;
     private bool isGestureActive = false;
 
+    // Object-swipe client — connects to the YOLO watch tracker on port 5005
+    private GestureClient objectTrackingClient;
+    private System.Windows.Forms.Timer objectTrackingCheckTimer;
+    private bool isObjectGestureActive = false;
+    /// <summary>
+    /// Last time the YOLO watch was detected in frame.
+    /// Hand gestures are suppressed for 5 s after this timestamp.
+    /// </summary>
+    private DateTime _lastObjectSeenUtc = DateTime.MinValue;
+    private const int ObjectGesturePriorityCooldownMs = 5000; // 5 seconds
+
     // Input prioritization: blocks gestures when TUIOs present or during cooldown
     private InputPrioritizer inputPrioritizer = new InputPrioritizer();
 
@@ -338,6 +349,7 @@ public class TuioDemo : Form, TuioListener
         InitializeStoryLibrary();
         InitializeCircularMenu();
         InitializeGestureClient();
+        InitializeObjectTrackingClient();
         InitializeHandTracker();
         StartLoginFlow();
     }
@@ -1813,6 +1825,89 @@ public class TuioDemo : Form, TuioListener
         }
     }
 
+    /// <summary>
+    /// Connects to the YOLO watch-tracking app on port 5005.
+    /// Completely separate from the hand-gesture client on 5001.
+    /// </summary>
+    private async void InitializeObjectTrackingClient()
+    {
+        try
+        {
+            objectTrackingClient = new GestureClient("127.0.0.1", 5005);
+            objectTrackingClient.StatusChanged += (s, msg) =>
+                Console.WriteLine($"[ObjectSwipe] {msg}");
+
+            bool connected = await objectTrackingClient.ConnectAsync();
+            if (connected)
+            {
+                Console.WriteLine("[ObjectSwipe] Connected to YOLO watch tracker on port 5005");
+                await objectTrackingClient.StartTrackingAsync();
+
+                objectTrackingCheckTimer = new System.Windows.Forms.Timer { Interval = 200 };
+                objectTrackingCheckTimer.Tick += async (s, e) => await CheckForObjectGesture();
+                objectTrackingCheckTimer.Start();
+            }
+            else
+            {
+                Console.WriteLine("[ObjectSwipe] YOLO tracker not available (run app.py first)");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[ObjectSwipe] Init failed: {ex.Message}");
+        }
+    }
+
+    private async System.Threading.Tasks.Task CheckForObjectGesture()
+    {
+        if (isObjectGestureActive || objectTrackingClient == null || !objectTrackingClient.IsConnected) return;
+        if (!isLoggedIn) return;
+        try
+        {
+            var status = await objectTrackingClient.GetStatusAsync();
+
+            // Refresh the priority timestamp whenever the watch is visible in frame
+            if (status != null && status.ObjectVisible)
+            {
+                _lastObjectSeenUtc = DateTime.UtcNow;
+
+                // Auto-open the circular menu when the watch is first seen
+                if (!circularMenu.IsVisible && isLoggedIn && IsHandleCreated)
+                {
+                    BeginInvoke(new Action(() =>
+                    {
+                        circularMenu.Show();
+                        menuOpenedByGesture = true;
+                        Invalidate();
+                        Console.WriteLine("[ObjectTrack] Watch detected — circular menu opened");
+                    }));
+                }
+            }
+
+            if (status != null && !string.IsNullOrEmpty(status.LastGesture))
+            {
+                isObjectGestureActive = true;
+                var result = await objectTrackingClient.StopAndRecognizeAsync();
+                if (!string.IsNullOrEmpty(result.Gesture))
+                {
+                    Console.WriteLine($"[ObjectSwipe] Gesture received: {result.Gesture}");
+                    if (IsHandleCreated)
+                        BeginInvoke(new Action(() => HandleGesture(result.Gesture)));
+                }
+                isObjectGestureActive = false;
+            }
+            else if (status != null && !status.IsTracking)
+            {
+                await objectTrackingClient.StartTrackingAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[ObjectSwipe] Error: {ex.Message}");
+            isObjectGestureActive = false;
+        }
+    }
+
     private void InitializeHandTracker()
     {
         try
@@ -1854,6 +1949,23 @@ public class TuioDemo : Form, TuioListener
     private async System.Threading.Tasks.Task CheckForGesture()
     {
         if (isGestureActive || gestureClient == null || !gestureClient.IsConnected) return;
+
+        // ── Object-priority guard ──────────────────────────────────────────────
+        // If the YOLO watch tracker detected the watch within the last 5 seconds,
+        // suppress hand gestures (same concept as TUIO prioritization).
+        // Guard: _lastObjectSeenUtc starts at DateTime.MinValue (never seen) — skip math entirely.
+        bool objectBlocking = _lastObjectSeenUtc != DateTime.MinValue
+            && (DateTime.UtcNow - _lastObjectSeenUtc).TotalMilliseconds < ObjectGesturePriorityCooldownMs;
+        if (objectBlocking)
+        {
+            // Pause the hand-gesture service so it doesn't accumulate strokes
+            var statusChk = await gestureClient.GetStatusAsync();
+            if (statusChk != null && statusChk.IsTracking)
+                await gestureClient.PauseDetectionAsync();
+            Console.WriteLine("[Gesture] Blocked by object tracker (watch visible within last 5 s)");
+            return;
+        }
+        // ──────────────────────────────────────────────────────────────────────
 
         // Check input prioritization: pause gestures if TUIOs present or in cooldown
         if (!inputPrioritizer.CanAcceptGestures)
@@ -2107,8 +2219,94 @@ public class TuioDemo : Form, TuioListener
                 break;
 
             default:
-                Console.WriteLine($"✗ Unknown gesture: {gesture}");
+            {
+                // ── Object-swipe gestures (YOLO watch tracker, port 5005) ──────
+                // The cases above (thumbsup, close, swipeleft, swiperight, open)
+                // are all untouched — this block only handles "objectswipe*" names.
+
+                if (normalizedGesture == "objectswiperight" || normalizedGesture == "objectswipeleft")
+                {
+                    // Open menu if not visible yet
+                    if (!circularMenu.IsVisible)
+                    {
+                        circularMenu.Show();
+                        menuOpenedByGesture = true;
+                        Invalidate();
+                        break;
+                    }
+
+                    // Determine current level's item list and active index
+                    List<string> levelItems;
+                    int activeIndex;
+
+                    if (circularMenu.IsInThirdLevel)
+                    {
+                        levelItems  = circularMenu.FavoriteActions;
+                        activeIndex = circularMenu.ThirdIndex;
+                    }
+                    else if (circularMenu.IsInSecondLevel)
+                    {
+                        levelItems  = circularMenu.SelectedTop == "Favorites"
+                                        ? circularMenu.Favorites
+                                        : circularMenu.Watched;
+                        activeIndex = circularMenu.SecondIndex;
+                    }
+                    else
+                    {
+                        levelItems  = circularMenu.TopItems;
+                        activeIndex = circularMenu.TopIndex;
+                    }
+
+                    int n = levelItems.Count;
+                    if (n > 0)
+                    {
+                        // Right → next item   Left → previous item (within same level)
+                        int newIndex = normalizedGesture == "objectswiperight"
+                            ? (activeIndex + 1) % n
+                            : (activeIndex - 1 + n) % n;
+
+                        // Convert index back to the angle UpdateRotation expects
+                        float step     = (float)(Math.PI * 2.0 / n);
+                        float newAngle = newIndex * step - (float)Math.PI / 2f;
+                        circularMenu.UpdateRotation(newAngle);
+                        Invalidate();
+                    }
+                }
+                else if (normalizedGesture == "objectswipeup")
+                {
+                    // Open menu if closed
+                    if (!circularMenu.IsVisible)
+                    {
+                        circularMenu.Show();
+                        menuOpenedByGesture = true;
+                        Invalidate();
+                        break;
+                    }
+                    // MoveUpAction already handles:
+                    //   top level    → descend into second level (same index stays)
+                    //   second level → descend into third level OR trigger OnAction
+                    //   third level  → trigger OnAction (confirm selection)
+                    circularMenu.MoveUpAction();
+                    Invalidate();
+                }
+                else if (normalizedGesture == "objectswipedown")
+                {
+                    // MoveDownAction already handles:
+                    //   third level  → back to second level
+                    //   second level → back to top level
+                    //   top level    → nothing (already at root)
+                    if (circularMenu.IsVisible)
+                    {
+                        circularMenu.MoveDownAction();
+                        Invalidate();
+                    }
+                }
+                else
+                {
+                    Console.WriteLine($"✗ Unknown gesture: {gesture}");
+                }
                 break;
+            }
         }
     }
 
