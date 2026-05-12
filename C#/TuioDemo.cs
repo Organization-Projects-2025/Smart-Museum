@@ -315,6 +315,8 @@ public class TuioDemo : Form, TuioListener
 
         this.KeyDown += OnKeyDown;
         this.Closing += OnClosing;
+        this.Activated += OnWindowActivated;
+        this.Deactivate += OnWindowDeactivated;
 
         slideShow = new SlideShowManager();
         slideShow.SlideChanged += slide =>
@@ -337,7 +339,7 @@ public class TuioDemo : Form, TuioListener
         recognitionTimer = new System.Windows.Forms.Timer { Interval = 50 };
         recognitionTimer.Tick += OnRecognitionTick;
 
-        animTimer = new System.Windows.Forms.Timer { Interval = 33 };
+        animTimer = new System.Windows.Forms.Timer { Interval = 50 };  // Reduced from 33ms (30fps) to 50ms (20fps)
         animTimer.Tick += OnAnimTick;
         animTimer.Start();
 
@@ -464,7 +466,9 @@ public class TuioDemo : Form, TuioListener
     {
         authInProgress = true;
         loginPhase = LoginAuthPhase.RegisterScanning;
-        authStatus = "Warming up camera...";
+        authStatus = "Connecting to face recognition...";
+        authProgressState = "NO_FACE"; // Reset state for new scan
+        authProgressCountdown = 0f;
         SafeInvalidate();
 
         Thread t = new Thread(() =>
@@ -642,7 +646,7 @@ public class TuioDemo : Form, TuioListener
                         BeginInvoke(new Action(() =>
                         {
                             loginPhase = LoginAuthPhase.RegisterBluetoothRecovery;
-                            authRingItems = new List<string> { "Try again", "Restart scan" };
+                            authRingItems = new List<string> { "Retry\nBluetooth", "Restart\nFace ID" };
                             authRingSelectedIndex = 0;
                             authRingGestureArmed = true;
                             authRingHasLastY = false;
@@ -654,7 +658,7 @@ public class TuioDemo : Form, TuioListener
                     else
                     {
                         loginPhase = LoginAuthPhase.RegisterBluetoothRecovery;
-                        authRingItems = new List<string> { "Try again", "Restart scan" };
+                        authRingItems = new List<string> { "Retry\nBluetooth", "Restart\nFace ID" };
                         authRingSelectedIndex = 0;
                         authStatus = displayStatus;
                     }
@@ -689,7 +693,7 @@ public class TuioDemo : Form, TuioListener
                     BeginInvoke(new Action(() =>
                     {
                         loginPhase = LoginAuthPhase.RegisterBluetoothRecovery;
-                        authRingItems = new List<string> { "Try again", "Restart scan" };
+                        authRingItems = new List<string> { "Retry\nBluetooth", "Restart\nFace ID" };
                         authRingSelectedIndex = 0;
                         authRingGestureArmed = true;
                         authRingHasLastY = false;
@@ -701,7 +705,7 @@ public class TuioDemo : Form, TuioListener
                 else
                 {
                     loginPhase = LoginAuthPhase.RegisterBluetoothRecovery;
-                    authRingItems = new List<string> { "Try again", "Restart scan" };
+                    authRingItems = new List<string> { "Retry\nBluetooth", "Restart\nFace ID" };
                     authRingSelectedIndex = 0;
                     authStatus = displayStatus;
                 }
@@ -837,9 +841,9 @@ public class TuioDemo : Form, TuioListener
         {
             loginBluetoothRecoveryEscalated = false;
             loginBtCooldownUntilUtc = DateTime.UtcNow.AddSeconds(5);
-            authRingItems = new List<string> { "Try again", "Restart scan" };
+            authRingItems = new List<string> { "Retry\nBluetooth", "Restart\nFace ID" };
             string friendly = BluetoothService.FriendlyBluetoothError(bluetoothDetail);
-            authStatus = "Bluetooth verification did not succeed. " + friendly + " Please wait 5 seconds, then choose Try again.";
+            authStatus = "Bluetooth verification did not succeed. " + friendly + " Please wait 5 seconds, then choose Retry Bluetooth.";
         }
         loginPhase = LoginAuthPhase.LoginBluetoothRecovery;
         authRingSelectedIndex = 0;
@@ -1525,8 +1529,9 @@ public class TuioDemo : Form, TuioListener
             string label = authRingItems[i];
             if (label.Length > 16) label = label.Substring(0, 14) + "..";
             var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
-            float tx = cx + (float)Math.Cos(am) * (radius * 0.62f);
-            float ty = cy + (float)Math.Sin(am) * (radius * 0.62f);
+            // Reduced from 0.62f to 0.55f to keep text more centered and prevent overflow
+            float tx = cx + (float)Math.Cos(am) * (radius * 0.55f);
+            float ty = cy + (float)Math.Sin(am) * (radius * 0.55f);
             float fz = n > 20 ? Math.Max(8f, 220f / n) : Math.Max(11f, fontSmall.Size);
             using (var tbr = new SolidBrush(sel ? Color.FromArgb(245, 12, 12, 14) : Color.FromArgb(245, 248, 246, 238)))
             using (var lf = new Font("Georgia", fz, FontStyle.Bold, GraphicsUnit.Pixel))
@@ -1610,20 +1615,34 @@ public class TuioDemo : Form, TuioListener
     /// <summary>Top-anchored layout after face match — no TUIO ring; auto-advance timer drives Bluetooth step.</summary>
     private void DrawProfileWelcomeScreen(Graphics g)
     {
-        const float titleY = 40f;
+        // Calculate total content height for vertical centering
+        const float titleH = 50f;
+        const float subtitleH = 32f;
+        const float statusH = 76f;
+        const float panelH = 168f;
+        const float countdownH = 34f;
+        const float spacing = 16f;
+        
+        float totalHeight = titleH + subtitleH + spacing + statusH + spacing + panelH + spacing + countdownH;
+        float startY = (H - totalHeight) / 2f;
+        
+        float titleY = startY;
         DrawCentered(g, "WELCOME BACK", fontTitle, themeSecondary,
-            new RectangleF(0, titleY, W, 50f));
+            new RectangleF(0, titleY, W, titleH));
+            
+        float subtitleY = titleY + titleH;
         DrawCentered(g, "Your visitor profile — Grand Egyptian Museum", fontSubtitle,
             Color.FromArgb(238, CPapyrus),
-            new RectangleF(40, titleY + 48f, W - 80, 32f));
-        float statusTop = titleY + 48f + 32f + 12f;
-        const float statusH = 76f;
+            new RectangleF(40, subtitleY, W - 80, subtitleH));
+            
+        float statusY = subtitleY + subtitleH + spacing;
         DrawWrappedCentered(g, authStatus, fontBody, Color.White,
-            new RectangleF(40, statusTop, W - 80, statusH));
-        float panelTop = statusTop + statusH + 16f;
-        DrawAuthProfilePanel(g, panelTop);
-        const float panelH = 168f;
-        float countY = panelTop + panelH + 20f;
+            new RectangleF(40, statusY, W - 80, statusH));
+            
+        float panelY = statusY + statusH + spacing;
+        DrawAuthProfilePanel(g, panelY);
+        
+        float countY = panelY + panelH + spacing;
         if (profileWelcomeAutoContinueUtc.HasValue && !authInProgress)
         {
             double rem = (profileWelcomeAutoContinueUtc.Value - DateTime.UtcNow).TotalSeconds;
@@ -1632,7 +1651,7 @@ public class TuioDemo : Form, TuioListener
                 ? "Starting phone check…"
                 : "Continuing in " + sec + " second" + (sec == 1 ? "" : "s") + "…";
             DrawCentered(g, tail, fontHint, CGoldLight,
-                new RectangleF(40, countY, W - 80, 34f));
+                new RectangleF(40, countY, W - 80, countdownH));
         }
     }
 
@@ -3048,7 +3067,7 @@ public class TuioDemo : Form, TuioListener
 
         DrawCentered(g, "Press L on this window to restart sign-in", fontSmall,
             Color.FromArgb(190, 218, 200, 150),
-            new RectangleF(40, 8, W - 80, 22));
+            new RectangleF(40, 18, W - 80, 22));
 
         if (loginPhase == LoginAuthPhase.ProfileWelcome)
         {
@@ -3116,22 +3135,28 @@ public class TuioDemo : Form, TuioListener
             title = "SAVING ACCOUNT";
 
         DrawCentered(g, title, fontTitle, themeSecondary,
-            new RectangleF(0, H / 2f - 168f, W, 58));
+            new RectangleF(0, H / 2f - 180f, W, 58));  // Moved title up more
 
-        float subtitleTop = H / 2f - 108f;
+        float subtitleTop = H / 2f - 88f;
         float subtitleH = 40f;
         if (loginPhase == LoginAuthPhase.RegisterScanning || loginPhase == LoginAuthPhase.MainPicker)
         {
-            subtitleTop = H / 2f - 118f;
+            subtitleTop = H / 2f - 98f;
             subtitleH = 78f;
         }
-        else if (loginPhase == LoginAuthPhase.LoginScanning)
+        // Increase subtitle height for LoginScanning (Bluetooth verification) to show full text
+        if (loginPhase == LoginAuthPhase.LoginScanning)
         {
-            // Long Bluetooth line must wrap — a short centered rect clips the start of the sentence.
-            subtitleTop = H / 2f - 132f;
-            subtitleH = 100f;
+            subtitleTop = H / 2f - 125f;  // Position below title
+            subtitleH = 90f;  // Enough for 3 lines
         }
-        if (loginPhase == LoginAuthPhase.RegisterScanning || loginPhase == LoginAuthPhase.MainPicker ||
+        // Increase subtitle height for LoginBluetoothRecovery to show full text
+        if (loginPhase == LoginAuthPhase.LoginBluetoothRecovery)
+        {
+            subtitleTop = H / 2f - 108f;
+            subtitleH = 80f;
+        }
+        if (loginPhase == LoginAuthPhase.RegisterScanning || loginPhase == LoginAuthPhase.MainPicker || 
             loginPhase == LoginAuthPhase.LoginScanning)
             DrawWrappedCentered(g, subtitle, fontSubtitle, Color.FromArgb(238, CPapyrus),
                 new RectangleF(48, subtitleTop, W - 96, subtitleH));
@@ -3139,26 +3164,40 @@ public class TuioDemo : Form, TuioListener
             DrawCentered(g, subtitle, fontSubtitle, Color.FromArgb(238, CPapyrus),
                 new RectangleF(40, subtitleTop, W - 80, subtitleH));
 
-        float statusTop = subtitleTop + subtitleH + 12f;
+        float statusTop = subtitleTop + subtitleH + 30f;  // More spacing
         bool wrapStatus = loginPhase == LoginAuthPhase.LoginBluetoothRecovery ||
                           loginPhase == LoginAuthPhase.RegisterBluetoothRecovery ||
-                          loginPhase == LoginAuthPhase.NoFaceRecovery ||
-                          loginPhase == LoginAuthPhase.AuthCameraIssue ||
-                          loginPhase == LoginAuthPhase.LoginScanning ||
                           loginPhase == LoginAuthPhase.RegisterBluetoothScanning ||
-                          loginPhase == LoginAuthPhase.RegisterBluetoothConfirm;
-        float statusH = 52f;
+                          loginPhase == LoginAuthPhase.LoginScanning ||
+                          loginPhase == LoginAuthPhase.NoFaceRecovery ||
+                          loginPhase == LoginAuthPhase.AuthCameraIssue;
+        float statusH = wrapStatus
+            ? (loginPhase == LoginAuthPhase.LoginBluetoothRecovery ? 200f
+                : loginPhase == LoginAuthPhase.RegisterBluetoothScanning ? 120f
+                : loginPhase == LoginAuthPhase.LoginScanning ? 120f
+                : loginPhase == LoginAuthPhase.AuthCameraIssue ? 120f : 96f)
+            : 52f;
         if (wrapStatus)
         {
-            if (loginPhase == LoginAuthPhase.LoginBluetoothRecovery) statusH = 120f;
-            else if (loginPhase == LoginAuthPhase.AuthCameraIssue) statusH = 120f;
-            else if (loginPhase == LoginAuthPhase.LoginScanning) statusH = 100f;
-            else if (loginPhase == LoginAuthPhase.RegisterBluetoothConfirm) statusH = 72f;
-            else statusH = 96f;
+            // Use custom drawing without LineLimit flag for Bluetooth messages
+            if (loginPhase == LoginAuthPhase.LoginBluetoothRecovery)
+            {
+                var sf = new StringFormat
+                {
+                    Alignment = StringAlignment.Center,
+                    LineAlignment = StringAlignment.Near,
+                    Trimming = StringTrimming.Word,
+                    FormatFlags = StringFormatFlags.NoClip  // Remove LineLimit to show all text
+                };
+                using (var br = new SolidBrush(Color.White))
+                    g.DrawString(authStatus, fontBody, br, new RectangleF(40, statusTop, W - 80, statusH), sf);
+            }
+            else
+            {
+                DrawWrappedCentered(g, authStatus, fontBody, Color.White,
+                    new RectangleF(40, statusTop, W - 80, statusH));
+            }
         }
-        if (wrapStatus)
-            DrawWrappedCentered(g, authStatus, fontBody, Color.White,
-                new RectangleF(48, statusTop, W - 96, statusH));
         else
             DrawCentered(g, authStatus, fontBody, Color.White,
                 new RectangleF(40, statusTop, W - 80, statusH));
@@ -3166,7 +3205,7 @@ public class TuioDemo : Form, TuioListener
         if (loginPhase == LoginAuthPhase.RegisterScanning)
         {
             float cx = W / 2f;
-            float cy = H / 2f + 60f;
+            float cy = H / 2f + 80f;
             float radius = 30f;
             Color statusColor = Color.Gray;
 
@@ -3230,7 +3269,7 @@ public class TuioDemo : Form, TuioListener
                           loginPhase == LoginAuthPhase.RegisterBluetoothRecovery ||
                           loginPhase == LoginAuthPhase.NoFaceRecovery ||
                           loginPhase == LoginAuthPhase.AuthCameraIssue)
-                ? "Rotate marker to choose  •  Flick UP = confirm   Flick DOWN = restart scan"
+                ? "Rotate marker to choose  •  Flick UP = confirm   Flick DOWN = restart face ID"
                 : (loginPhase == LoginAuthPhase.RegisterEnterFirstName ||
                           loginPhase == LoginAuthPhase.RegisterEnterLastName ||
                           loginPhase == LoginAuthPhase.RegisterEnterAge)
@@ -4217,7 +4256,8 @@ public class TuioDemo : Form, TuioListener
         }
         else if (e.KeyCode == Keys.L)
         {
-            if (!authInProgress)
+            // L key restarts login flow - works during all login/2FA phases, but not after reaching home
+            if (!isLoggedIn)
                 StartLoginFlow();
         }
         else if (e.KeyCode == Keys.M)
@@ -4227,6 +4267,84 @@ public class TuioDemo : Form, TuioListener
                 if (circularMenu.IsVisible) circularMenu.Hide();
                 else circularMenu.Show();
             }
+        }
+    }
+
+    private void OnWindowActivated(object sender, EventArgs e)
+    {
+        // Resume animation timer when window regains focus
+        if (animTimer != null && !animTimer.Enabled)
+        {
+            animTimer.Start();
+        }
+        if (recognitionTimer != null && state == AppState.Recognition && !recognitionTimer.Enabled)
+        {
+            recognitionTimer.Start();
+        }
+        
+        // Resume gaze streaming if it was active
+        if (isLoggedIn && gazeEmotionClient != null && gazeEmotionClient.IsConnected)
+        {
+            Task.Run(async () =>
+            {
+                try
+                {
+                    await gazeEmotionClient.StartStreamingAsync();
+                }
+                catch { /* ignore errors on resume */ }
+            });
+        }
+        
+        // Resume YOLO streaming if it was active
+        if (isLoggedIn && yoloContextClient != null && yoloContextClient.IsConnected)
+        {
+            Task.Run(async () =>
+            {
+                try
+                {
+                    await yoloContextClient.StartStreamingAsync();
+                }
+                catch { /* ignore errors on resume */ }
+            });
+        }
+    }
+
+    private void OnWindowDeactivated(object sender, EventArgs e)
+    {
+        // Pause animation timer when window loses focus to prevent freeze on alt-tab
+        if (animTimer != null && animTimer.Enabled)
+        {
+            animTimer.Stop();
+        }
+        if (recognitionTimer != null && recognitionTimer.Enabled)
+        {
+            recognitionTimer.Stop();
+        }
+        
+        // Stop gaze streaming to prevent blocking when window is inactive
+        if (gazeEmotionClient != null && gazeEmotionClient.IsConnected)
+        {
+            Task.Run(async () =>
+            {
+                try
+                {
+                    await gazeEmotionClient.StopStreamingAsync();
+                }
+                catch { /* ignore errors on pause */ }
+            });
+        }
+        
+        // Stop YOLO streaming to reduce CPU usage when window is inactive
+        if (yoloContextClient != null && yoloContextClient.IsConnected)
+        {
+            Task.Run(async () =>
+            {
+                try
+                {
+                    await yoloContextClient.StopStreamingAsync();
+                }
+                catch { /* ignore errors on pause */ }
+            });
         }
     }
 

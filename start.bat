@@ -25,7 +25,7 @@ if not exist "%PYTHON%" (
     set "PYTHON=python"
 )
 
-%PYTHON% --version >nul 2>&1
+"%PYTHON%" --version >nul 2>&1
 if errorlevel 1 (
     echo ERROR: Python not found. Install Python or ensure your virtual environment is set correctly.
     pause
@@ -44,12 +44,21 @@ REM set DISABLE_GESTURE=1
 REM set DISABLE_HAND=1
 REM set DISABLE_YOLO=1
 
+REM Disable MediaPipe telemetry to Google:
+set MEDIAPIPE_DISABLE_GPU=1
+set GLOG_minloglevel=3
+set GLOG_logtostderr=0
+
+REM Suppress TensorFlow Lite warnings:
+set TF_CPP_MIN_LOG_LEVEL=3
+set TFLITE_LOG_LEVEL=3
+
 REM ── Start ─────────────────────────────────────────────────────────────────
 echo Using Python: %PYTHON%
 echo Starting all services...
 echo.
 set PYTHONUNBUFFERED=1
-%PYTHON% -u python\server\main.py
+"%PYTHON%" -u python\server\main.py
 
 REM ── If server exits with an error, keep the window open ───────────────────
 if errorlevel 1 (
