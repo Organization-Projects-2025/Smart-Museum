@@ -51,11 +51,15 @@ public class CircularMenuController
         IsVisible = true;
         IsInSecondLevel = false;
         IsInThirdLevel = false;
-        TopIndex = 0;
         SecondIndex = 0;
         ThirdIndex = 0;
         SelectedFavoriteTitle = null;
         _lastAngle = 0f;
+        // Default highlight to Home (outer ring) — not Favorite at index 0, which caused
+        // immediate Favorite actions when TUIO flick confirm fired right after opening.
+        var items = GetTopLevelItems();
+        int homeIdx = items.IndexOf("Home");
+        TopIndex = homeIdx >= 0 ? homeIdx : 0;
         SyncSelectionTexts();
     }
 

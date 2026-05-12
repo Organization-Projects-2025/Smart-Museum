@@ -356,6 +356,33 @@ public class TuioDemo : Form, TuioListener
 
     private void ShowAuthPicker()
     {
+        ResetAuthPickerToMainPicker();
+        // True immediately so gesture_service cannot grab the webcam before the face thread runs
+        // (avoids NOT_FOUND / “NO FACE FOUND” when using museum_vision_server shared camera).
+        authInProgress = true;
+        profileWelcomeAutoContinueUtc = null;
+        authStatus = "We’ll open a short camera check on this computer. Fit your face in the gold frame — when you’re done, your name appears here on the table.";
+        SafeInvalidate();
+        RunRegisterFaceScanThread();
+    }
+
+    /// <summary>
+    /// Return to the main sign-in ring after Logout — do not auto-launch face scan (that sets
+    /// authInProgress and blocks gestures / TUIO until the scan finishes, which felt "stuck").
+    /// </summary>
+    private void ShowMainLoginPickerWithoutFaceLobby()
+    {
+        ResetAuthPickerToMainPicker();
+        authInProgress = false;
+        profileWelcomeAutoContinueUtc = null;
+        authStatus = "You’ve been signed out. Choose how to sign in below.";
+        SafeInvalidate();
+        inputPrioritizer.Reset();
+        System.Threading.ThreadPool.QueueUserWorkItem(_ => TryReleaseGestureWebcamBlocking());
+    }
+
+    private void ResetAuthPickerToMainPicker()
+    {
         loginPhase = LoginAuthPhase.MainPicker;
         authRingItems = new List<string>();
         authRingSelectedIndex = 0;
@@ -378,13 +405,6 @@ public class TuioDemo : Form, TuioListener
         authRingGestureArmed = true;
         authRingHasLastY = false;
         authRingAccumY = 0f;
-        // True immediately so gesture_service cannot grab the webcam before the face thread runs
-        // (avoids NOT_FOUND / “NO FACE FOUND” when using museum_vision_server shared camera).
-        authInProgress = true;
-        profileWelcomeAutoContinueUtc = null;
-        authStatus = "We’ll open a short camera check on this computer. Fit your face in the gold frame — when you’re done, your name appears here on the table.";
-        SafeInvalidate();
-        RunRegisterFaceScanThread();
     }
 
     private void ShowNoFaceRecovery(string message)
@@ -425,7 +445,7 @@ public class TuioDemo : Form, TuioListener
         else { apply(); SafeInvalidate(); }
     }
 
-    private void StartLoginFlow()
+    private void StartLoginFlow(bool launchFaceLobbyScan = true)
     {
         if (isLoggedIn && analyticsRecorder != null)
             analyticsRecorder.FlushAndSave();
@@ -433,7 +453,11 @@ public class TuioDemo : Form, TuioListener
 
         isLoggedIn = false;
         visitorProfile = null;
-        ShowAuthPicker();
+
+        if (launchFaceLobbyScan)
+            ShowAuthPicker();
+        else
+            ShowMainLoginPickerWithoutFaceLobby();
     }
 
     private void RunRegisterFaceScanThread()
@@ -1976,7 +2000,11 @@ public class TuioDemo : Form, TuioListener
         if (adminAnalyticsVisible) return;
         if (LoginFlowBlocksGestureWebcam()) return;
         if (authInProgress) return;
-        if (!inputPrioritizer.CanAcceptGestures) return;
+        // While the circular menu is visible, always poll gestures (marker- or gesture-opened).
+        // Otherwise InputPrioritizer blocks when any TUIO is present — gestures would expire
+        // server-side before C# could read them after TUIO cooldowns.
+        bool gesturePollWhileMenu = circularMenu.IsVisible;
+        if (!inputPrioritizer.CanAcceptGestures && !gesturePollWhileMenu) return;
 
         try
         {
@@ -2030,6 +2058,8 @@ public class TuioDemo : Form, TuioListener
             case "close":
                 if (!circularMenu.IsVisible)
                 {
+                    // Match TUIO path: ShowFavorite must be set before Show() so default slot is correct.
+                    circularMenu.ShowFavorite = !string.IsNullOrEmpty(GetCurrentFigureStoryKey());
                     circularMenu.Show();
                     menuOpenedByGesture = true;
                     menuFlickNeedsResync = true;
@@ -2059,7 +2089,7 @@ public class TuioDemo : Form, TuioListener
             case "swipe_right":
                 if (circularMenu.IsVisible)
                 {
-                    circularMenu.NavigatePrevious(); // physical right swipe = go left in menu
+                    circularMenu.NavigateNext(); // align with gesture name / Python RECOGNIZE label
                     _menuNavigatedSinceOpen = true;
                     Console.WriteLine($"[Gesture] → {circularMenu.SelectedTop ?? circularMenu.SelectedSecond}");
                     Invalidate();
@@ -2069,7 +2099,7 @@ public class TuioDemo : Form, TuioListener
             case "swipe_left":
                 if (circularMenu.IsVisible)
                 {
-                    circularMenu.NavigateNext();     // physical left swipe = go right in menu
+                    circularMenu.NavigatePrevious();
                     _menuNavigatedSinceOpen = true;
                     Console.WriteLine($"[Gesture] ← {circularMenu.SelectedTop ?? circularMenu.SelectedSecond}");
                     Invalidate();
@@ -2165,11 +2195,7 @@ public class TuioDemo : Form, TuioListener
             StopAndUnlockSlides();
             adminAnalyticsVisible = false;
             if (adminAnalyticsPanel != null) adminAnalyticsPanel.Exit();
-            analyticsRecorder.FlushAndSave();
-            TeardownGazeAnalytics();
-            visitorProfile = null;
-            authStatus = "Logged out.";
-            StartLoginFlow();
+            StartLoginFlow(launchFaceLobbyScan: false);
             return;
         }
 
@@ -2767,6 +2793,7 @@ public class TuioDemo : Form, TuioListener
         // Open the menu when TUIO menu marker (symbol 3) appears; symbol 0 is reserved and unused for now.
         if (!circularMenu.IsVisible && marker != null)
         {
+            circularMenu.ShowFavorite = !string.IsNullOrEmpty(GetCurrentFigureStoryKey());
             circularMenu.Show();
             menuOpenedByGesture = false; // Opened by marker, not gesture
             menuFlickNeedsResync = true;
@@ -2799,8 +2826,14 @@ public class TuioDemo : Form, TuioListener
                 lastMenuFlickActionUtc = DateTime.UtcNow;
             }
 
+            // Hand-opened menu: only outer-ring navigation until user swipes once. Otherwise the
+            // TUIO flick timer reuses the same confirm path and can trigger MoveUp (e.g. Favorite)
+            // milliseconds after the gesture opened the menu.
+            bool allowTuioFlickConfirm = !menuOpenedByGesture || _menuNavigatedSinceOpen;
+
             // Tangible menus: confirm by dragging the fiducial away from the last rest position (Reactable-style “push” / pull).
-            if ((DateTime.UtcNow - lastMenuFlickActionUtc).TotalMilliseconds < MenuFlickCooldownMs)
+            if (allowTuioFlickConfirm &&
+                (DateTime.UtcNow - lastMenuFlickActionUtc).TotalMilliseconds < MenuFlickCooldownMs)
                 return;
 
             float rdx = marker.X - menuFlickArmX;
@@ -2812,7 +2845,7 @@ public class TuioDemo : Form, TuioListener
             bool back = rdy >= MenuFlickPullY ||
                          (dist >= MenuFlickDiagonalDist && rdy >= MenuFlickDiagonalBiasY);
 
-            if (confirm)
+            if (allowTuioFlickConfirm && confirm)
             {
                 circularMenu.MoveUpAction();
                 lastMenuFlickActionUtc = DateTime.UtcNow;
@@ -2820,7 +2853,7 @@ public class TuioDemo : Form, TuioListener
                 menuFlickArmY = marker.Y;
                 Invalidate();
             }
-            else if (back)
+            else if (allowTuioFlickConfirm && back)
             {
                 circularMenu.MoveDownAction();
                 lastMenuFlickActionUtc = DateTime.UtcNow;

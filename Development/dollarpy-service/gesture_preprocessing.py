@@ -193,7 +193,7 @@ def build_points_from_frames(frames_data: List[dict],
     return points
 
 
-def validate_gesture_points(points: List[Point], min_points: int = 10) -> bool:
+def validate_gesture_points(points: List[Point], min_points: int = 7) -> bool:
     """
     Validate that a gesture has enough points for recognition.
     
@@ -249,7 +249,7 @@ def calculate_gesture_motion(points: List[Point]) -> float:
 def preprocess_gesture_frames(frames_data: List[dict],
                               mode: str = "index_tip_path",
                               normalize_mode: str = "raw",
-                              min_motion: float = 0.05) -> Optional[List[Point]]:
+                              min_motion: float = 0.04) -> Optional[List[Point]]:
     """
     Complete preprocessing pipeline for a gesture.
     
@@ -270,7 +270,7 @@ def preprocess_gesture_frames(frames_data: List[dict],
     points = build_points_from_frames(frames_data, mode, normalize_mode)
     
     # Validate minimum points
-    if not validate_gesture_points(points, min_points=10):
+    if not validate_gesture_points(points, min_points=7):
         return None
     
     # Check motion amount

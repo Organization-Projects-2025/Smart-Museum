@@ -120,8 +120,12 @@ public class GestureClient : IDisposable
         public async Task<GestureResult> RecognizeOnlyAsync()
         {
             var response = await SendCommandAsync("RECOGNIZE");
+            if (response == null)
+                return new GestureResult { Gesture = null, Score = 0.0, Confidence = "low" };
 
-            if (response != null && response["status"]?.ToString() == "ok")
+            string st = response["status"]?.ToString() ?? "";
+            // Legacy servers may still return status=cooldown with no gesture; treat as empty.
+            if (st == "ok" || st == "cooldown")
             {
                 var result = new GestureResult
                 {
@@ -135,6 +139,8 @@ public class GestureClient : IDisposable
                     Console.WriteLine($"[GestureClient] \u2713 Gesture received: {result.Gesture} (score={result.Score:F3})");
                     GestureRecognized?.Invoke(this, new GestureRecognizedEventArgs(result));
                 }
+                else if (st == "cooldown")
+                    Console.WriteLine("[GestureClient] RECOGNIZE: server cooldown (no gesture payload)");
 
                 return result;
             }

@@ -42,14 +42,14 @@ before emitting it. Reduces false positives from occasional noise.
 """
 
 # Minimum motion distance for a valid gesture
-MIN_MOTION_DISTANCE = float(os.environ.get("GESTURE_MIN_MOTION", "0.05"))
+MIN_MOTION_DISTANCE = float(os.environ.get("GESTURE_MIN_MOTION", "0.04"))
 """
 Minimum total Euclidean distance for a gesture to be considered valid.
 Prevents recognition from very small, jittery movements.
 """
 
 # Minimum points for recognition
-MIN_GESTURE_POINTS = int(os.environ.get("GESTURE_MIN_POINTS", "10"))
+MIN_GESTURE_POINTS = int(os.environ.get("GESTURE_MIN_POINTS", "7"))
 """
 Minimum number of points required in a gesture before recognition is attempted.
 """

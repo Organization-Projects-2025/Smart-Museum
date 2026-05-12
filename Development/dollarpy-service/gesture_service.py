@@ -6,9 +6,10 @@ Uses the SAME recognition pipeline as gesture_gui.py:
   - centroid of index+middle+pinky fingertips (landmarks 8, 12, 20)
   - 3-frame moving-average smoothing on centroid
   - 30-frame sliding window (buffer)
+  - min 7 frames + min cumulative motion before a recognition attempt
   - Recognition every 7 frames (RECO_EVERY_N)
+  - first above-threshold menu gesture queues for C#; stroke buffer cleared; GESTURE_COOLDOWN s before next detect
   - dollarpy $N recogniser with deepcopy (non-mutating)
-  - buffer cleared on any detection ≥ CLEAR_THRESHOLD (0.40)
   - CameraHub (camera_hub.py) when running inside main.py
 
 C# protocol (newline-delimited JSON over TCP):
@@ -62,12 +63,11 @@ except ImportError:
 # ── Constants — MUST match gesture_gui.py ─────────────────────────────────────
 TEMPLATES_FILE   = os.path.join(SCRIPT_DIR, "gesture_templates.pkl")
 MAX_FRAMES       = 30      # sliding window size (frames)
-MIN_POINTS       = 10      # min pts before recognition attempt
-MIN_MOTION       = 0.02    # min cumulative centroid travel
+MIN_POINTS       = 7       # min frames in buffer before recognition attempt
+MIN_MOTION       = 0.04    # min cumulative centroid travel (normalized 0–1 space)
 SCORE_THRESHOLD  = 0.20    # min score to confirm a gesture
-GESTURE_COOLDOWN = 1.0     # seconds before next gesture accepted
+GESTURE_COOLDOWN = 1.0     # seconds before next gesture detection (camera loop)
 TRACK_TIPS       = (8, 12, 20)  # index, middle, pinky tip landmark IDs
-CLEAR_THRESHOLD  = 0.40   # clear buffer on detection at/above this score
 SMOOTH_WIN       = 3       # frames to average for centroid smoothing
 RECO_EVERY_N     = 7       # run recognition every N frames (7 ≈ every ~230 ms at 30 fps)
 
@@ -124,15 +124,6 @@ def _recognize_points(templates, pts):
     except Exception:
         pass
     return None, 0.0
-
-
-def _flip_swipe_label(name: str) -> str:
-    """Recognizer labels are inverted vs physical motion (mirrored camera vs templates)."""
-    if name == "swipe_left":
-        return "swipe_right"
-    if name == "swipe_right":
-        return "swipe_left"
-    return name
 
 
 def _load_templates():
@@ -314,22 +305,20 @@ class _ClientState:
                 pts = _extract_points(buf_snapshot)
                 if pts is not None:
                     name, score = _recognize_points(self.templates, pts)
-                    name = _flip_swipe_label(name)
 
-                    # Log every attempt that exceeds the confidence threshold
-                    if score >= SCORE_THRESHOLD:
+                    if name and score >= SCORE_THRESHOLD and name in CIRCULAR_MENU_GESTURES:
+                        self.last_gesture      = name
+                        self.last_score        = score
+                        self.last_gesture_time = now
+                        self._new_frames       = 0
+                        with self.lock:
+                            self.buf.clear()
+                        self._raw_tip_buf.clear()
+                        print(
+                            f"[GESTURE] ✓ {name}  score={score:.2f}  buf={len(buf_snapshot)}  → queued for C#"
+                        )
+                    elif score >= SCORE_THRESHOLD:
                         print(f"[GESTURE] {name}  score={score:.2f}  buf={len(buf_snapshot)}")
-
-                    if name and score >= SCORE_THRESHOLD:
-                        if name in CIRCULAR_MENU_GESTURES:
-                            self.last_gesture      = name
-                            self.last_score        = score
-                            self.last_gesture_time = now
-                            if score >= CLEAR_THRESHOLD:
-                                with self.lock:
-                                    self.buf.clear()
-                                self._raw_tip_buf.clear()
-                            print(f"[GESTURE] ✓ {name}  score={score:.2f}  → queued for C#")
 
             time.sleep(0.016)  # ~60 FPS
 
@@ -367,13 +356,18 @@ class _ClientState:
         return {"status": "ok", "message": "Detection resumed"}
 
     def cmd_recognize(self):
-        """Return last confirmed gesture and clear it so C# knows it was consumed."""
+        """Return last confirmed gesture and clear it so C# knows it was consumed.
+
+        Does NOT apply GESTURE_COOLDOWN here — that cooldown only suppresses new
+        detections in the camera loop. Blocking RECOGNIZE during cooldown caused C#
+        to miss gestures (empty JSON / status cooldown) whenever polling lagged or
+        InputPrioritizer delayed reads past the old 4s expiry.
+        """
         now = time.time()
-        if (now - self.last_gesture_time) < GESTURE_COOLDOWN:
-            return {"status": "cooldown", "gesture": None, "score": 0.0}
         if self.last_gesture is None:
             return {"status": "ok", "gesture": None, "score": 0.0}
-        if (now - self.last_gesture_time) > 4.0:
+        # Stale if client never consumed (e.g. disconnected); keep generous for TUIO blocks.
+        if (now - self.last_gesture_time) > 120.0:
             self.last_gesture = None
             return {"status": "ok", "gesture": None, "score": 0.0}
         name  = self.last_gesture
@@ -488,7 +482,10 @@ class GestureRecognitionService:
         self.is_running = True
         hub_mode = 'shared' if self.camera_hub else 'local'
         print(f"[GESTURE] Listening on {self.host}:{self.port}  ({len(self.templates)} templates, camera={hub_mode})")
-        print(f"[GESTURE] cooldown={GESTURE_COOLDOWN}s  reco_every={RECO_EVERY_N}fr  window={MAX_FRAMES}fr")
+        print(
+            f"[GESTURE] cooldown={GESTURE_COOLDOWN}s  reco_every={RECO_EVERY_N}fr  "
+            f"window={MAX_FRAMES}fr  min_pts={MIN_POINTS}  min_motion={MIN_MOTION}"
+        )
 
         try:
             while self.is_running:
