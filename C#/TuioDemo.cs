@@ -4223,7 +4223,8 @@ public class TuioDemo : Form, TuioListener
         }
         else if (e.KeyCode == Keys.L)
         {
-            if (!authInProgress)
+            // L key restarts login flow - works during all login/2FA phases, but not after reaching home
+            if (!isLoggedIn)
                 StartLoginFlow();
         }
         else if (e.KeyCode == Keys.M)
