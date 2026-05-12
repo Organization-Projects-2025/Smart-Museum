@@ -209,8 +209,26 @@ public class TuioDemo : Form, TuioListener
     private bool isGestureActive = false;
     private bool _gestureNeedsRearm = false;  // re-sends START_TRACKING after auth releases webcam
     private bool _menuNavigatedSinceOpen = false; // true once user swipes after opening menu
+    private bool _gestureTrackingActive = false;  // true only when gesture service is actively tracking
 
-    // Input prioritization: blocks gestures when TUIOs present or during cooldown
+    // Object tracking client — handles object detection and swipe gestures (port 5005)
+    private ObjectTrackingClient objectTrackingClient;
+    private System.Windows.Forms.Timer objectTrackingCheckTimer;
+    private bool objectMenuWasOpenedByTracking = false;  // Track if we opened menu due to object detection
+    private System.Windows.Forms.Timer objectVisibilityDebounceTimer;  // Debounce object visibility changes
+    private System.Windows.Forms.Timer objectStickyCloseTimer;  // Keep menu open for Xs even if object disappears
+    private DateTime lastObjectDetectionTime = DateTime.MinValue;  // Last time object was actually detected
+    private const int OBJECT_STICKY_DURATION_MS = 5000;  // Keep menu open for 5s after last detection
+    private bool _objectVisibilityLastState = false;  // Last confirmed object visibility state
+    private string lastDetectedObjectSwipe = null;  // Last detected object swipe gesture
+    private DateTime objectSwipeDisplayTime = DateTime.MinValue;  // When last object swipe was detected
+    private const double OBJECT_SWIPE_DISPLAY_DURATION = 2.5; // seconds to show the swipe message
+
+    // No-object timer: after 10s with no object on screen, hand gestures become active
+    private System.Windows.Forms.Timer noObjectGestureTimer;
+    private const int NO_OBJECT_GESTURE_DELAY_MS = 10000;  // 10 seconds
+
+    // Input prioritization: blocks gestures when objects visible, TUIOs present, or during cooldown
     private InputPrioritizer inputPrioritizer = new InputPrioritizer();
 
     // 3-D hand tracking client (port 5002)
@@ -224,18 +242,9 @@ public class TuioDemo : Form, TuioListener
     private double liveGazeGx = 0.5, liveGazeGy = 0.5;
     private string liveDominantEmotion = "neutral";
     private string liveGazeIssueUserText = "";
-    private YoloContextClient yoloContextClient;
     private readonly SessionAnalyticsRecorder analyticsRecorder = new SessionAnalyticsRecorder();
     private AdminAnalyticsPanel adminAnalyticsPanel;
     private bool adminAnalyticsVisible;
-
-    // YOLO: cell phone visible → bottom banner inviting download of the museum companion app.
-    // Replace URLs before production. Hysteresis reduces flicker when detection jitters.
-    private const string MuseumAppStoreIosUrl = "https://apps.apple.com/app/id0000000000";
-    private const string MuseumAppStoreAndroidUrl = "https://play.google.com/store/apps/details?id=com.example.smartmuseum";
-    private int _yoloPhonePresenceCounter;
-    private bool _showMuseumAppPhoneBanner;
-    private const int YoloPhoneBannerOnFrames = 2;
 
     // Gesture overlay display
     private string lastDetectedGesture = null;
@@ -317,6 +326,7 @@ public class TuioDemo : Form, TuioListener
         this.Closing += OnClosing;
         this.Activated += OnWindowActivated;
         this.Deactivate += OnWindowDeactivated;
+        this.Load += (s, e) => OnFormLoad();
 
         slideShow = new SlideShowManager();
         slideShow.SlideChanged += slide =>
@@ -351,13 +361,13 @@ public class TuioDemo : Form, TuioListener
         InitializeCircularMenu();
         // NOTE: Server must be started manually now (python/server/main.py)
         // Removed: StartMuseumPythonServer();
-        InitializeGestureClient();
         InitializeHandTracker();
         StartLoginFlow();
     }
 
     private void ShowAuthPicker()
     {
+        TryReleaseObjectTrackingWebcamBlocking();  // Ensure object tracking is off during auth
         loginPhase = LoginAuthPhase.MainPicker;
         authRingItems = new List<string>();
         authRingSelectedIndex = 0;
@@ -403,6 +413,7 @@ public class TuioDemo : Form, TuioListener
             authStatus = message;
             Invalidate();
             System.Threading.ThreadPool.QueueUserWorkItem(_ => TryReleaseGestureWebcamBlocking());
+            System.Threading.ThreadPool.QueueUserWorkItem(_ => TryReleaseObjectTrackingWebcamBlocking());
         };
         if (IsHandleCreated) BeginInvoke(apply);
         else { apply(); SafeInvalidate(); }
@@ -422,6 +433,7 @@ public class TuioDemo : Form, TuioListener
             authStatus = message;
             Invalidate();
             System.Threading.ThreadPool.QueueUserWorkItem(_ => TryReleaseGestureWebcamBlocking());
+            System.Threading.ThreadPool.QueueUserWorkItem(_ => TryReleaseObjectTrackingWebcamBlocking());
         };
         if (IsHandleCreated) BeginInvoke(apply);
         else { apply(); SafeInvalidate(); }
@@ -433,9 +445,73 @@ public class TuioDemo : Form, TuioListener
             analyticsRecorder.FlushAndSave();
         TeardownGazeAnalytics();
 
+        // Stop all post-login timers so they can't fire during face auth
+        if (noObjectGestureTimer != null) noObjectGestureTimer.Stop();
+        if (gestureCheckTimer != null) gestureCheckTimer.Stop();
+        if (objectTrackingCheckTimer != null) objectTrackingCheckTimer.Stop();
+        _gestureTrackingActive = false;
+
+        TryReleaseObjectTrackingWebcamBlocking();
+
         isLoggedIn = false;
         visitorProfile = null;
-        ShowAuthPicker();
+
+        // ── DEV BYPASS: skip face auth, log in directly as user4 (Youssef Afifi) ──
+        BypassAuthAsUser4();
+    }
+
+    /// <summary>
+    /// DEV ONLY — instantly logs in as user4 (Youssef Afifi) so object-swipe
+    /// testing can proceed without the face-ID server running.
+    /// Remove or gate behind a compile flag before production.
+    /// </summary>
+    private void BypassAuthAsUser4()
+    {
+        string csvPath = Path.Combine(GetWorkspaceRoot(), "C#", "content", "auth", "users.csv");
+        List<VisitorProfile> users = VisitorProfile.LoadFromCsv(csvPath);
+        VisitorProfile user4 = users.Find(u =>
+            string.Equals(u.FaceUserId, "user4", StringComparison.OrdinalIgnoreCase));
+
+        if (user4 == null)
+        {
+            // Fallback: build the profile inline if CSV lookup fails
+            user4 = new VisitorProfile
+            {
+                FaceUserId          = "user4",
+                FirstName           = "Youssef",
+                LastName            = "Afifi",
+                Age                 = 21,
+                Gender              = "male",
+                Race                = "black",
+                BluetoothMacAddress = "0",
+                FaceImagePath       = "python/data/faces/user4.jpg",
+                Role                = "visitor"
+            };
+            user4.ApplyDerivedPreferences();
+        }
+
+        visitorProfile = user4;
+        ApplyVisitorTheme();
+        ConfigureCircularMenuForUser();
+        authInProgress = false;
+        loginPhase     = LoginAuthPhase.MainPicker;
+        isLoggedIn     = true;
+        authStatus     = $"[DEV] Logged in as {user4.FullName} (user4) — face auth bypassed";
+        Console.WriteLine($"[DEV] Auth bypassed — logged in as {user4.FullName}");
+
+        Transition(AppState.Idle, null, null, null, null);
+        InitializeGazeAnalytics();
+        InitializeYoloContext();
+        // InitializeGestureAndObjectTrackingAfterLogin is called from OnFormLoad
+        // after the form handle is created, so BeginInvoke works correctly.
+        SafeInvalidate();
+    }
+
+    private void OnFormLoad()
+    {
+        // Form handle now exists — safe to start async clients that use BeginInvoke
+        if (isLoggedIn && objectTrackingClient == null)
+            InitializeGestureAndObjectTrackingAfterLogin();
     }
 
     private void RunRegisterFaceScanThread()
@@ -452,6 +528,7 @@ public class TuioDemo : Form, TuioListener
             try
             {
                 TryReleaseGestureWebcamBlocking();
+                TryReleaseObjectTrackingWebcamBlocking();
                 var faceService = new FaceRecognitionService();
                 FaceRegisterScanResult outcome;
                 string uid;
@@ -783,7 +860,7 @@ public class TuioDemo : Form, TuioListener
                         Transition(AppState.Idle, null, null, null, null);
                         InitializeGazeAnalytics();
                         InitializeYoloContext();
-                        RearmGestureTracking();
+                        InitializeGestureAndObjectTrackingAfterLogin();
                         Invalidate();
                     }));
                 }
@@ -843,7 +920,7 @@ public class TuioDemo : Form, TuioListener
         loginBluetoothFailureCount = 0;
         loginBluetoothRecoveryEscalated = false;
         loginBtCooldownUntilUtc = DateTime.MinValue;
-        RearmGestureTracking();
+        InitializeGestureAndObjectTrackingAfterLogin();
         authStatus = "You are visiting as a guest — enjoy the table experience.";
         Transition(AppState.Idle, null, null, null, null);
         InitializeGazeAnalytics();
@@ -924,7 +1001,7 @@ public class TuioDemo : Form, TuioListener
                         Transition(AppState.Idle, null, null, null, null);
                         InitializeGazeAnalytics();
                         InitializeYoloContext();
-                        RearmGestureTracking();
+                        InitializeGestureAndObjectTrackingAfterLogin();
                         Invalidate();
                     }));
                 }
@@ -1005,7 +1082,7 @@ public class TuioDemo : Form, TuioListener
                         regPendingFirstName = null;
                         regPendingLastName = null;
                         regPendingAge = 0;
-                        RearmGestureTracking();
+                        InitializeGestureAndObjectTrackingAfterLogin();
                         regPendingGender = null;
                         nameEntryBuffer = "";
                         Transition(AppState.Idle, null, null, null, null);
@@ -1687,83 +1764,12 @@ public class TuioDemo : Form, TuioListener
         }
     }
 
-    private async void InitializeYoloContext()
-    {
-        if (visitorProfile == null) return;
-        TeardownYoloContext();
-        yoloContextClient = new YoloContextClient("127.0.0.1", 5003);
-        bool ok = await yoloContextClient.ConnectAsync();
-        if (!ok)
-        {
-            Console.WriteLine("YOLO context service not available (start python/server/yolo_context_service.py on port 5003).");
-            return;
-        }
-        yoloContextClient.FrameReceived += OnYoloFrame;
-        bool streamOk = await yoloContextClient.StartStreamingAsync();
-        if (!streamOk)
-            Console.WriteLine("YOLO context STREAM handshake failed.");
-    }
+    private async void InitializeYoloContext() { /* removed — YOLO context service disabled */ }
 
-    private void TeardownYoloContext()
-    {
-        if (yoloContextClient != null)
-        {
-            yoloContextClient.FrameReceived -= OnYoloFrame;
-            try
-            {
-                yoloContextClient.StopStreamingAsync().GetAwaiter().GetResult();
-            }
-            catch { }
-            yoloContextClient.Dispose();
-            yoloContextClient = null;
-        }
-        _yoloPhonePresenceCounter = 0;
-        SetMuseumAppPhoneBannerVisible(false);
-    }
-
-    private void OnYoloFrame(YoloContextFrame frame)
-    {
-        if (visitorProfile == null || frame == null || !frame.Ok) return;
-        bool phone = false;
-        bool book = false;
-        bool large = false;
-        for (int i = 0; i < frame.Tracks.Count; i++)
-        {
-            YoloTrack t = frame.Tracks[i];
-            if (t.Conf < 0.35) continue;
-            string c = (t.ClassName ?? string.Empty).Trim().ToLowerInvariant();
-            if (c.IndexOf("phone", StringComparison.Ordinal) >= 0) phone = true;
-            if (c == "book" || c.IndexOf("laptop", StringComparison.Ordinal) >= 0) book = true;
-            if (c == "person" && t.W * t.H >= 0.10) large = true;
-        }
-        UpdateMuseumAppPhoneBanner(phone);
-        if (visitorProfile.SetCameraAmbientContext(phone, book, large))
-        {
-            ApplyVisitorTheme();
-            Invalidate();
-        }
-    }
-
-    private void UpdateMuseumAppPhoneBanner(bool phoneInFrame)
-    {
-        if (phoneInFrame)
-            _yoloPhonePresenceCounter = Math.Min(_yoloPhonePresenceCounter + 1, 20);
-        else
-            _yoloPhonePresenceCounter = Math.Max(_yoloPhonePresenceCounter - 1, 0);
-        bool want = _yoloPhonePresenceCounter >= YoloPhoneBannerOnFrames;
-        SetMuseumAppPhoneBannerVisible(want);
-    }
-
-    private void SetMuseumAppPhoneBannerVisible(bool visible)
-    {
-        if (visible == _showMuseumAppPhoneBanner) return;
-        _showMuseumAppPhoneBanner = visible;
-        Invalidate();
-    }
+    private void TeardownYoloContext() { /* removed — YOLO context service disabled */ }
 
     private void TeardownGazeAnalytics()
     {
-        TeardownYoloContext();
         if (gazeEmotionClient != null)
         {
             gazeEmotionClient.FrameReceived -= OnGazeFrame;
@@ -1874,70 +1880,183 @@ public class TuioDemo : Form, TuioListener
         AddFavoriteIfExists("relationship:1_2");
     }
 
-    private async void InitializeGestureClient()
+
+
+    /// <summary>
+    /// Initialize gesture and object tracking clients AFTER face ID login completes.
+    ///
+    /// Priority flow (face auth is NOT touched):
+    ///   1. Object tracking starts immediately (port 5005).
+    ///   2. Hand gesture client (port 5001) is connected but tracking is NOT started yet.
+    ///   3. A 10-second no-object timer begins. If no object appears within 10s,
+    ///      hand gesture tracking activates automatically.
+    ///   4. When an object is detected → gesture tracking is paused and the 10s
+    ///      timer is reset.
+    ///   5. When the object disappears → the 10s timer restarts; after 10s with
+    ///      no object, gesture tracking resumes.
+    ///   6. TUIO markers continue to block gestures via InputPrioritizer (unchanged).
+    /// </summary>
+    private async void InitializeGestureAndObjectTrackingAfterLogin()
     {
         try
         {
-            gestureClient = new GestureClient("127.0.0.1", 5001);
-            gestureClient.GestureRecognized += OnGestureRecognized;
-            gestureClient.StatusChanged += (s, status) =>
+            // ── Object tracking starts immediately — no waiting for gesture service ──
+            if (objectTrackingClient == null)
             {
-                // Only log connection state changes, not every poll status
-                if (status.Contains("Connected") || status.Contains("failed") || status.Contains("closed"))
-                    Console.WriteLine($"[Gesture] {status}");
-            };
+                objectTrackingClient = new ObjectTrackingClient("127.0.0.1", 5005);
 
-            bool connected = await gestureClient.ConnectAsync();
-            if (connected)
-            {
-                Console.WriteLine("[Gesture] Connected to gesture service on :5001");
-                await gestureClient.StartTrackingAsync();
-                gestureCheckTimer = new System.Windows.Forms.Timer { Interval = 300 };
-                gestureCheckTimer.Tick += async (s, e) => await CheckForGesture();
-                gestureCheckTimer.Start();
-            }
-            else
-            {
-                Console.WriteLine("[Gesture] Service not reachable on :5001 — retrying in 15s");
-                var retryTimer = new System.Windows.Forms.Timer { Interval = 15000 };
-                retryTimer.Tick += async (s, e) =>
+                objectTrackingClient.ObjectGestureRecognized += OnObjectGestureRecognized;
+
+                objectTrackingClient.ObjectVisibilityChanged += (s, isVisible) =>
                 {
-                    retryTimer.Stop();
-                    bool ok = await gestureClient.ConnectAsync();
-                    if (ok)
+                    inputPrioritizer.SetObjectPresent(isVisible);
+                    Action act = () => HandleObjectVisibilityWithDebounce(isVisible);
+                    if (IsHandleCreated)
                     {
-                        Console.WriteLine("[Gesture] Reconnected to gesture service");
-                        await gestureClient.StartTrackingAsync();
-                        gestureCheckTimer = new System.Windows.Forms.Timer { Interval = 300 };
-                        gestureCheckTimer.Tick += async (s2, e2) => await CheckForGesture();
-                        gestureCheckTimer.Start();
+                        if (InvokeRequired) BeginInvoke(act);
+                        else act();
                     }
-                    else Console.WriteLine("[Gesture] Retry failed — gesture control unavailable");
+                    Console.WriteLine($"[ObjectTracking] Object {(isVisible ? "detected" : "not detected")}");
                 };
-                retryTimer.Start();
+
+                objectTrackingClient.StatusChanged += (s, status) =>
+                {
+                    if (status.Contains("Connected") || status.Contains("failed") || status.Contains("closed"))
+                        Console.WriteLine($"[ObjectTracking] {status}");
+                };
+
+                bool connected = await objectTrackingClient.ConnectAsync();
+                if (connected)
+                {
+                    Console.WriteLine("[ObjectTracking] Connected to port 5005 — sending START_TRACKING");
+                    await objectTrackingClient.StartTrackingAsync();
+                    objectTrackingCheckTimer = new System.Windows.Forms.Timer { Interval = 300 };
+                    objectTrackingCheckTimer.Tick += async (s, e) => await CheckForObjectTracking();
+                    objectTrackingCheckTimer.Start();
+                    Console.WriteLine("[ObjectTracking] Polling timer started");
+                }
+                else
+                {
+                    Console.WriteLine("[ObjectTracking] Could not connect to port 5005 — is start.bat running?");
+                }
             }
+
+            // ── Gesture service connects in background — failure is non-blocking ──
+            if (gestureClient == null)
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        gestureClient = new GestureClient("127.0.0.1", 5001);
+                        gestureClient.GestureRecognized += OnGestureRecognized;
+                        bool connected = await gestureClient.ConnectAsync();
+                        if (connected)
+                        {
+                            Console.WriteLine("[Gesture] Connected to port 5001 (tracking deferred)");
+                            if (IsHandleCreated)
+                                BeginInvoke(new Action(() =>
+                                {
+                                    gestureCheckTimer = new System.Windows.Forms.Timer { Interval = 300 };
+                                    gestureCheckTimer.Tick += async (s, e) => await CheckForGesture();
+                                }));
+                        }
+                        else
+                        {
+                            Console.WriteLine("[Gesture] Port 5001 not available — gesture service skipped");
+                        }
+                    }
+                    catch { /* gesture service is optional */ }
+                });
+            }
+
+            StartNoObjectGestureTimer();
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[Gesture] Init failed: {ex.Message}");
+            Console.WriteLine($"[ObjectTracking] Init failed: {ex.Message}");
         }
     }
 
-    /// <summary>Called on every login success path to restart gesture tracking after auth blocked it.</summary>
-    private async void RearmGestureTracking()
+    /// <summary>
+    /// Start (or restart) the 10-second no-object countdown.
+    /// When it fires and no object is present, hand gesture tracking activates.
+    /// </summary>
+    private void StartNoObjectGestureTimer()
     {
+        if (noObjectGestureTimer == null)
+        {
+            noObjectGestureTimer = new System.Windows.Forms.Timer { Interval = NO_OBJECT_GESTURE_DELAY_MS };
+            noObjectGestureTimer.Tick += (s, e) =>
+            {
+                noObjectGestureTimer.Stop();
+                if (!inputPrioritizer.IsObjectPresent)
+                {
+                    Console.WriteLine("[Gesture] No object for 10s — activating hand gesture tracking");
+                    StartGestureTracking();
+                }
+                else
+                {
+                    // Object appeared while timer was running — it will restart when object clears
+                    Console.WriteLine("[Gesture] No-object timer fired but object is present — will retry when object clears");
+                }
+            };
+        }
+        noObjectGestureTimer.Stop();
+        noObjectGestureTimer.Start();
+        Console.WriteLine($"[Gesture] No-object timer started ({NO_OBJECT_GESTURE_DELAY_MS / 1000}s until hand gestures activate)");
+    }
+
+    /// <summary>
+    /// Activate hand gesture tracking on the gesture service.
+    /// Safe to call multiple times — checks if already active.
+    /// </summary>
+    private async void StartGestureTracking()
+    {
+        if (_gestureTrackingActive) return;
         if (gestureClient == null || !gestureClient.IsConnected) return;
+        if (!isLoggedIn || authInProgress) return;  // Never start during auth
+
         try
         {
+            _gestureTrackingActive = true;
             _gestureNeedsRearm = false;
-            await gestureClient.StartTrackingAsync().ConfigureAwait(false);
-            Console.WriteLine("[Gesture] Tracking re-armed after login");
+            await gestureClient.StartTrackingAsync();
+            if (gestureCheckTimer != null && !gestureCheckTimer.Enabled)
+                gestureCheckTimer.Start();
+            Console.WriteLine("[Gesture] Hand gesture tracking STARTED");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[Gesture] RearmGestureTracking failed: {ex.Message}");
+            _gestureTrackingActive = false;
+            Console.WriteLine($"[Gesture] StartGestureTracking failed: {ex.Message}");
         }
     }
+
+    /// <summary>
+    /// Pause hand gesture tracking (keeps the service connection alive).
+    /// Called when an object appears on screen.
+    /// </summary>
+    private async void StopGestureTracking()
+    {
+        if (!_gestureTrackingActive) return;
+        if (gestureClient == null || !gestureClient.IsConnected) return;
+
+        try
+        {
+            _gestureTrackingActive = false;
+            await gestureClient.StopTrackingSilentlyAsync();
+            if (gestureCheckTimer != null)
+                gestureCheckTimer.Stop();
+            Console.WriteLine("[Gesture] Hand gesture tracking PAUSED (object present)");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Gesture] StopGestureTracking failed: {ex.Message}");
+        }
+    }
+
+
 
     private void InitializeHandTracker()
     {
@@ -1979,7 +2098,29 @@ public class TuioDemo : Form, TuioListener
                 }
                 catch { /* ignore — face scan should still proceed */ }
             }).Wait(2000); // max 2s wait so the face thread isn't held up
+            _gestureTrackingActive = false;  // mark as stopped so StartGestureTracking() can re-arm
             _gestureNeedsRearm = true;  // re-arm tracking once auth completes
+        }
+        catch
+        {
+            // ignore — Face ID should still attempt open
+        }
+    }
+
+    private void TryReleaseObjectTrackingWebcamBlocking()
+    {
+        try
+        {
+            if (objectTrackingClient == null || !objectTrackingClient.IsConnected) return;
+            // Stop object tracking during face auth to free up camera hub
+            Task.Run(async () =>
+            {
+                try
+                {
+                    await objectTrackingClient.StopTrackingAsync().ConfigureAwait(false);
+                }
+                catch { /* ignore — face scan should still proceed */ }
+            }).Wait(2000); // max 2s wait so the face thread isn't held up
         }
         catch
         {
@@ -2004,7 +2145,10 @@ public class TuioDemo : Form, TuioListener
             {
                 _gestureNeedsRearm = false;
                 Console.WriteLine("[Gesture] Re-arming after auth");
-                await gestureClient.StartTrackingAsync().ConfigureAwait(false);
+                // Use StartGestureTracking so _gestureTrackingActive stays in sync
+                _gestureTrackingActive = false;  // allow StartGestureTracking to proceed
+                StartGestureTracking();
+                return;  // let the next tick do the actual recognize
             }
 
             var result = await gestureClient.RecognizeOnlyAsync();
@@ -2021,7 +2165,29 @@ public class TuioDemo : Form, TuioListener
         }
     }
 
+    private async System.Threading.Tasks.Task CheckForObjectTracking()
+    {
+        if (objectTrackingClient == null || !objectTrackingClient.IsConnected) return;
+        if (adminAnalyticsVisible) return;
+        if (authInProgress) return;
+        if (LoginFlowBlocksGestureWebcam()) return;
+
+        try
+        {
+            await objectTrackingClient.RecognizeGestureAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[ObjectTracking] Check error: {ex.Message}");
+        }
+    }
+
     private void OnGestureRecognized(object sender, GestureRecognizedEventArgs e) { }
+
+    private void OnObjectGestureRecognized(object sender, ObjectGestureRecognizedEventArgs e)
+    {
+        HandleObjectGesture(e.Gesture);
+    }
 
     private void HandleGesture(string gesture)
     {
@@ -2040,6 +2206,13 @@ public class TuioDemo : Form, TuioListener
         if (adminAnalyticsVisible)
         {
             if (gesture == "close") { adminAnalyticsVisible = false; adminAnalyticsPanel?.Exit(); Invalidate(); }
+            return;
+        }
+
+        // Check input priority: if objects are detected or TUIOs present, block hand gestures
+        if (!inputPrioritizer.CanAcceptGestures)
+        {
+            Console.WriteLine($"[Gesture] Gesture blocked by input prioritizer (object or TUIO present): {gesture}");
             return;
         }
 
@@ -2097,6 +2270,128 @@ public class TuioDemo : Form, TuioListener
             default:
                 Console.WriteLine($"[Gesture] Unknown gesture ignored: {gesture}");
                 break;
+        }
+    }
+
+    private void HandleObjectGesture(string gesture)
+    {
+        if (!IsHandleCreated) return;
+        if (InvokeRequired) { BeginInvoke(new Action(() => HandleObjectGesture(gesture))); return; }
+
+        Console.WriteLine($"[ObjectTracking] HandleObjectGesture called: {gesture} | menuVisible={circularMenu.IsVisible}");
+
+        lastDetectedGesture = gesture;
+        gestureDisplayTime = DateTime.Now;
+        lastDetectedObjectSwipe = gesture;
+        objectSwipeDisplayTime = DateTime.Now;
+
+        // Object gestures only work when the menu is visible
+        if (!circularMenu.IsVisible)
+        {
+            Console.WriteLine($"[ObjectTracking] Gesture IGNORED — menu not visible: {gesture}");
+            return;
+        }
+
+        switch (gesture.ToLowerInvariant())
+        {
+            case "objectswiperight":
+                // Navigate to next item in the current layer
+                circularMenu.NavigateNext();
+                Console.WriteLine($"[ObjectTracking] → Next: {circularMenu.SelectedTop ?? circularMenu.SelectedSecond ?? circularMenu.SelectedThird}");
+                Invalidate();
+                break;
+
+            case "objectswipeleft":
+                // Navigate to previous item in the current layer
+                circularMenu.NavigatePrevious();
+                Console.WriteLine($"[ObjectTracking] ← Prev: {circularMenu.SelectedTop ?? circularMenu.SelectedSecond ?? circularMenu.SelectedThird}");
+                Invalidate();
+                break;
+
+            case "objectswipeup":
+                // Enter next layer, or confirm if already at deepest layer
+                // MoveUpAction() handles both: enters sub-level if one exists,
+                // fires OnAction (confirm) if already at the deepest level.
+                circularMenu.MoveUpAction();
+                Console.WriteLine($"[ObjectTracking] ↑ Up/Confirm: {circularMenu.SelectedTop ?? circularMenu.SelectedSecond ?? circularMenu.SelectedThird}");
+                Invalidate();
+                break;
+
+            case "objectswipedown":
+                // Go back one layer (or do nothing if already at top)
+                circularMenu.MoveDownAction();
+                Console.WriteLine($"[ObjectTracking] ↓ Back: {circularMenu.SelectedTop ?? circularMenu.SelectedSecond ?? circularMenu.SelectedThird}");
+                Invalidate();
+                break;
+
+            default:
+                Console.WriteLine($"[ObjectTracking] Unknown gesture ignored: {gesture}");
+                break;
+        }
+    }
+
+    private void HandleObjectVisibilityWithDebounce(bool isVisible)
+    {
+        // ── Object appeared ───────────────────────────────────────────────────
+        if (isVisible)
+        {
+            lastObjectDetectionTime = DateTime.Now;
+
+            // Stop the no-object timer — an object is present, gestures should not activate
+            if (noObjectGestureTimer != null)
+                noObjectGestureTimer.Stop();
+
+            // Pause hand gesture tracking while object is on screen
+            if (_gestureTrackingActive)
+                StopGestureTracking();
+
+            if (!circularMenu.IsVisible)
+            {
+                circularMenu.Show();
+                objectMenuWasOpenedByTracking = true;
+                Console.WriteLine("[ObjectTracking] Menu opened (object detected)");
+                Invalidate();
+            }
+
+            // Cancel any pending sticky close timer
+            if (objectStickyCloseTimer != null)
+            {
+                objectStickyCloseTimer.Stop();
+                Console.WriteLine("[ObjectTracking] Object re-detected, cancelled close timer");
+            }
+        }
+        // ── Object disappeared ────────────────────────────────────────────────
+        else if (circularMenu.IsVisible && objectMenuWasOpenedByTracking)
+        {
+            // Start sticky close timer to keep menu open for a few seconds
+            if (objectStickyCloseTimer == null)
+            {
+                objectStickyCloseTimer = new System.Windows.Forms.Timer();
+                objectStickyCloseTimer.Interval = 200;
+                objectStickyCloseTimer.Tick += (s, e) =>
+                {
+                    int elapsedMs = (int)(DateTime.Now - lastObjectDetectionTime).TotalMilliseconds;
+                    if (elapsedMs > OBJECT_STICKY_DURATION_MS)
+                    {
+                        circularMenu.Hide();
+                        objectMenuWasOpenedByTracking = false;
+                        objectStickyCloseTimer.Stop();
+                        Console.WriteLine($"[ObjectTracking] Menu closed (object gone for {OBJECT_STICKY_DURATION_MS}ms)");
+
+                        // Object is gone — restart the 10s countdown to re-enable hand gestures
+                        StartNoObjectGestureTimer();
+                        Invalidate();
+                    }
+                };
+                objectStickyCloseTimer.Start();
+                Console.WriteLine("[ObjectTracking] Object disappeared, started sticky close timer (5s)");
+            }
+        }
+        else if (!isVisible && !circularMenu.IsVisible)
+        {
+            // Menu was never opened by tracking (or already closed) — still restart the gesture timer
+            // so gestures can activate after 10s of no object
+            StartNoObjectGestureTimer();
         }
     }
 
@@ -2791,8 +3086,8 @@ public class TuioDemo : Form, TuioListener
         }
 
         // If menu was opened by marker control, hide when marker is removed.
-        // BUT: Don't auto-close if menu was opened by hand gesture
-        if (circularMenu.IsVisible && marker == null && !menuOpenedByGesture)
+        // BUT: Don't auto-close if menu was opened by hand gesture or object tracking
+        if (circularMenu.IsVisible && marker == null && !menuOpenedByGesture && !objectMenuWasOpenedByTracking)
         {
             circularMenu.Hide();
             menuFlickNeedsResync = true;
@@ -2885,6 +3180,7 @@ public class TuioDemo : Form, TuioListener
         {
             DrawLoginScreen(g);
             DrawGestureOverlay(g); // Show gesture overlay even on login screen
+            DrawObjectSwipeOverlay(g);  // Show object swipe detection on login screen
             return;
         }
 
@@ -2892,8 +3188,8 @@ public class TuioDemo : Form, TuioListener
         {
             adminAnalyticsPanel.Draw(g, W, H, fontTitle, fontBody, fontSmall, themeSecondary, CPapyrus,
                 analyticsRecorder != null ? analyticsRecorder.GetLiveSnapshot() : null);
-            DrawMuseumAppPhoneDownloadBanner(g);
             DrawGestureOverlay(g);
+            DrawObjectSwipeOverlay(g);  // Show object swipe detection
             return;
         }
 
@@ -2924,34 +3220,10 @@ public class TuioDemo : Form, TuioListener
         DrawMuseumAppPhoneDownloadBanner(g);
         // Draw gesture overlay on top of everything
         DrawGestureOverlay(g);
+        DrawObjectSwipeOverlay(g);  // Show object swipe detection in top right
     }
 
-    /// <summary>YOLO detected a phone in frame — prompt visitor to install the companion app (URLs are constants above).</summary>
-    private void DrawMuseumAppPhoneDownloadBanner(Graphics g)
-    {
-        if (!_showMuseumAppPhoneBanner) return;
-
-        int padX = 24;
-        int barH = 108;
-        var rect = new Rectangle(padX, H - barH - 20, W - padX * 2, barH);
-        using (var bg = new SolidBrush(Color.FromArgb(230, 18, 20, 28)))
-            g.FillRectangle(bg, rect);
-        using (var outline = new Pen(Color.FromArgb(240, themeSecondary), 2))
-            g.DrawRectangle(outline, rect);
-
-        var titleRect = new RectangleF(rect.X + 16, rect.Y + 10, rect.Width - 32, 34);
-        var bodyRect = new RectangleF(rect.X + 16, rect.Y + 44, rect.Width - 32, rect.Height - 52);
-        using (var titleBrush = new SolidBrush(themeSecondary))
-        using (var bodyBrush = new SolidBrush(Color.FromArgb(235, 235, 240, 245)))
-        using (var sf = new StringFormat { Alignment = StringAlignment.Near, LineAlignment = StringAlignment.Near })
-        {
-            g.DrawString("Download the Museum app", fontSubtitle, titleBrush, titleRect, sf);
-            string body = "We noticed a phone — get maps, audio guides, and favorites on your device.\r\n"
-                + "iOS: " + MuseumAppStoreIosUrl + "\r\n"
-                + "Android: " + MuseumAppStoreAndroidUrl;
-            g.DrawString(body, fontSmall, bodyBrush, bodyRect, sf);
-        }
-    }
+    private void DrawMuseumAppPhoneDownloadBanner(Graphics g) { /* removed — YOLO context disabled */ }
 
     private void DrawGestureOverlay(Graphics g)
     {
@@ -3021,6 +3293,77 @@ public class TuioDemo : Form, TuioListener
         
         // Request another redraw if still visible (for fade animation)
         if (elapsedSeconds < GESTURE_DISPLAY_DURATION)
+        {
+            Invalidate();
+        }
+    }
+
+    private void DrawObjectSwipeOverlay(Graphics g)
+    {
+        // Check if we should display the object swipe
+        if (string.IsNullOrEmpty(lastDetectedObjectSwipe))
+            return;
+        
+        double elapsedSeconds = (DateTime.Now - objectSwipeDisplayTime).TotalSeconds;
+        
+        // Hide after 2.5 seconds
+        if (elapsedSeconds > OBJECT_SWIPE_DISPLAY_DURATION)
+        {
+            lastDetectedObjectSwipe = null;
+            return;
+        }
+        
+        // Calculate fade-out alpha (fade in last 0.5 seconds)
+        int alpha = 255;
+        if (elapsedSeconds > OBJECT_SWIPE_DISPLAY_DURATION - 0.5)
+        {
+            double fadeProgress = (OBJECT_SWIPE_DISPLAY_DURATION - elapsedSeconds) / 0.5;
+            alpha = (int)(255 * fadeProgress);
+        }
+        
+        // Format gesture name for display
+        string displayText = lastDetectedObjectSwipe.Replace("_", " ").ToUpper();
+        
+        // Make it more readable
+        if (displayText.Contains("OBJECTSWIPE"))
+            displayText = displayText.Replace("OBJECTSWIPE", "OBJECT SWIPE ");
+        
+        displayText += " DETECTED";
+        
+        // Position in top-right corner
+        int padding = 20;
+        int boxWidth = 280;
+        int boxHeight = 70;
+        int x = W - boxWidth - padding;
+        int y = padding + 80;  // Below gesture overlay if it exists
+        
+        // Draw semi-transparent background with distinct color (orange/gold)
+        using (var bgBrush = new SolidBrush(Color.FromArgb(alpha * 200 / 255, 255, 140, 0)))  // Orange
+        {
+            g.FillRectangle(bgBrush, x, y, boxWidth, boxHeight);
+        }
+        
+        // Draw border
+        using (var borderPen = new Pen(Color.FromArgb(alpha, 255, 200, 100), 2))
+        {
+            g.DrawRectangle(borderPen, x, y, boxWidth, boxHeight);
+        }
+        
+        // Draw text
+        using (var textBrush = new SolidBrush(Color.FromArgb(alpha, 40, 40, 40)))  // Dark text for contrast
+        {
+            var format = new StringFormat
+            {
+                Alignment = StringAlignment.Center,
+                LineAlignment = StringAlignment.Center
+            };
+            
+            RectangleF textRect = new RectangleF(x, y, boxWidth, boxHeight);
+            g.DrawString(displayText, fontSubtitle, textBrush, textRect, format);
+        }
+        
+        // Request another redraw if still visible (for fade animation)
+        if (elapsedSeconds < OBJECT_SWIPE_DISPLAY_DURATION)
         {
             Invalidate();
         }

@@ -37,6 +37,7 @@ class CameraHub:
         os.environ["MUSEUM_CAMERA"] = str(camera_index)
         self._lock    = threading.Lock()
         self._frame: Optional[np.ndarray] = None
+        self._frame_count = 0          # increments every time a NEW frame arrives
         self._running = False
         self._thread: Optional[threading.Thread] = None
 
@@ -58,6 +59,13 @@ class CameraHub:
     def get_frame(self) -> Optional[np.ndarray]:
         with self._lock:
             return self._frame.copy() if self._frame is not None else None
+
+    def get_frame_with_count(self):
+        """Returns (frame_copy, frame_count). Use frame_count to detect new frames."""
+        with self._lock:
+            if self._frame is None:
+                return None, self._frame_count
+            return self._frame.copy(), self._frame_count
 
     # Compatibility shims for gesture_service_refactored (SharedCameraHub API)
     def acquire(self, consumer_id: str = "") -> None:  pass
@@ -94,6 +102,7 @@ class CameraHub:
                 if ok and frame is not None:
                     with self._lock:
                         self._frame = frame
+                        self._frame_count += 1
                 else:
                     time.sleep(0.02)
         finally:

@@ -53,6 +53,10 @@ REM ── Start ─────────────────────
 echo Using Python: %PYTHON%
 echo Starting all services...
 echo.
+echo Available services:
+echo   - Face Authentication (port 5000)
+echo   - Object Tracking with Circular Menu Integration (port 5005)
+echo.
 set PYTHONUNBUFFERED=1
 "%PYTHON%" -u python\server\main.py
 

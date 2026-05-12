@@ -64,9 +64,7 @@ os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 import camera_hub as _cam_mod
 import auth_service
 import demographics_service
-import gaze_emotion_service
-import yolo_service
-import hand_service
+import object_tracking_service
 
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -97,40 +95,22 @@ def main():
     hub.start()
     time.sleep(0.5)  # let first frame arrive
 
-    # 2. Wire hub into every service that needs frames
+    # 2. Wire hub into services
     auth_service.set_hub(hub)
-    gaze_emotion_service.set_hub(hub)
-    yolo_service.set_hub(hub)
-    hand_service.set_hub(hub)
+    object_tracking_service.set_hub(hub)
 
     # 3. Start services
     _log("SERVER", "Starting services...")
 
-    _run("AUTH",       auth_service.start)
-    _run("GAZE_EMO",   gaze_emotion_service.start)
-    _run("YOLO",       yolo_service.start)
-    _run("HAND",       hand_service.start)
+    _run("AUTH",     auth_service.start)
+    _run("OBJTRACK", object_tracking_service.start)
 
-    # 4. Pre-download DeepFace models in background (first-time only)
+    # Pre-download DeepFace models in background (first-time only)
     _run("DEMOGRAPHICS", demographics_service.warmup)
-
-    # Gesture service (dollarpy) — optional, failures are isolated
-    if os.environ.get("DISABLE_GESTURE", "").strip() not in ("1", "true", "yes"):
-        try:
-            from gesture_service import GestureRecognitionService
-            svc = GestureRecognitionService(host="127.0.0.1", port=5001, camera_hub=hub)
-            _run("GESTURE", svc.start_server)
-            _log("GESTURE", "Gesture service started on port 5001")
-        except Exception as e:
-            _log("GESTURE", f"ERROR: Failed to start gesture service: {type(e).__name__}: {e}")
-            _log("GESTURE", "WARNING: Gesture service unavailable — port 5001 will not be bound")
 
     _log("SERVER", "All services started.")
     _log("SERVER", "  Face Auth:    127.0.0.1:5000")
-    _log("SERVER", "  Gesture:      127.0.0.1:5001")
-    _log("SERVER", "  Gaze+Emotion: 127.0.0.1:5002")
-    _log("SERVER", "  YOLO Context: 127.0.0.1:5003")
-    _log("SERVER", "  Hand Track:   127.0.0.1:5004")
+    _log("SERVER", "  Object Track: 127.0.0.1:5005")
     _log("SERVER", "Press Ctrl+C to stop.")
 
     try:

@@ -272,6 +272,46 @@ public class CircularMenuController
         }
     }
 
+    /// <summary>
+    /// Handle object swipe right — moves to next item in current level.
+    /// </summary>
+    public void ObjectSwipeRight()
+    {
+        if (!IsVisible) return;
+        NavigateNext();
+        Console.WriteLine($"[CircularMenu] ObjectSwipeRight: Navigated to next item");
+    }
+
+    /// <summary>
+    /// Handle object swipe left — moves to previous item in current level.
+    /// </summary>
+    public void ObjectSwipeLeft()
+    {
+        if (!IsVisible) return;
+        NavigatePrevious();
+        Console.WriteLine($"[CircularMenu] ObjectSwipeLeft: Navigated to previous item");
+    }
+
+    /// <summary>
+    /// Handle object swipe up — moves to next level (or confirms selection if no next level).
+    /// </summary>
+    public void ObjectSwipeUp()
+    {
+        if (!IsVisible) return;
+        MoveUpAction();
+        Console.WriteLine($"[CircularMenu] ObjectSwipeUp: Executed move up action");
+    }
+
+    /// <summary>
+    /// Handle object swipe down — moves to previous level (goes back).
+    /// </summary>
+    public void ObjectSwipeDown()
+    {
+        if (!IsVisible) return;
+        MoveDownAction();
+        Console.WriteLine($"[CircularMenu] ObjectSwipeDown: Executed move down action");
+    }
+
     public void Draw(Graphics g, int w, int h, Color secondary, Color tertiary, Font titleFont, Font smallFont)
     {
         if (!IsVisible) return;

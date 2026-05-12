@@ -69,9 +69,9 @@
     <Compile Include="UserPreferencesManager.cs" />
     <Compile Include="InputPrioritizer.cs" />
     <Compile Include="GestureClient.cs" />
+    <Compile Include="ObjectTrackingClient.cs" />
     <Compile Include="GazeEmotionClient.cs" />
     <Compile Include="HandTrackClient.cs" />
-    <Compile Include="YoloContextClient.cs" />
     <Compile Include="TUIO\TuioClient.cs" />
     <Compile Include="TUIO\TuioContainer.cs" />
     <Compile Include="TUIO\TuioCursor.cs" />
