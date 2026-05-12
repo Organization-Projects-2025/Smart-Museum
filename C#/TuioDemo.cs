@@ -622,7 +622,7 @@ public class TuioDemo : Form, TuioListener
                         BeginInvoke(new Action(() =>
                         {
                             loginPhase = LoginAuthPhase.RegisterBluetoothRecovery;
-                            authRingItems = new List<string> { "Try again", "Restart scan" };
+                            authRingItems = new List<string> { "Retry Bluetooth", "Restart Face" };
                             authRingSelectedIndex = 0;
                             authRingGestureArmed = true;
                             authRingHasLastY = false;
@@ -634,7 +634,7 @@ public class TuioDemo : Form, TuioListener
                     else
                     {
                         loginPhase = LoginAuthPhase.RegisterBluetoothRecovery;
-                        authRingItems = new List<string> { "Try again", "Restart scan" };
+                        authRingItems = new List<string> { "Retry Bluetooth", "Restart Face" };
                         authRingSelectedIndex = 0;
                         authStatus = displayStatus;
                     }
@@ -669,7 +669,7 @@ public class TuioDemo : Form, TuioListener
                     BeginInvoke(new Action(() =>
                     {
                         loginPhase = LoginAuthPhase.RegisterBluetoothRecovery;
-                        authRingItems = new List<string> { "Try again", "Restart scan" };
+                        authRingItems = new List<string> { "Retry Bluetooth", "Restart Face" };
                         authRingSelectedIndex = 0;
                         authRingGestureArmed = true;
                         authRingHasLastY = false;
@@ -681,7 +681,7 @@ public class TuioDemo : Form, TuioListener
                 else
                 {
                     loginPhase = LoginAuthPhase.RegisterBluetoothRecovery;
-                    authRingItems = new List<string> { "Try again", "Restart scan" };
+                    authRingItems = new List<string> { "Retry Bluetooth", "Restart Face" };
                     authRingSelectedIndex = 0;
                     authStatus = displayStatus;
                 }
@@ -817,9 +817,9 @@ public class TuioDemo : Form, TuioListener
         {
             loginBluetoothRecoveryEscalated = false;
             loginBtCooldownUntilUtc = DateTime.UtcNow.AddSeconds(5);
-            authRingItems = new List<string> { "Try again", "Restart scan" };
+            authRingItems = new List<string> { "Retry Bluetooth", "Restart Face" };
             string friendly = BluetoothService.FriendlyBluetoothError(bluetoothDetail);
-            authStatus = "Bluetooth verification did not succeed. " + friendly + " Please wait 5 seconds, then choose Try again.";
+            authStatus = "Bluetooth verification did not succeed. " + friendly + " Please wait 5 seconds, then choose Retry Bluetooth.";
         }
         loginPhase = LoginAuthPhase.LoginBluetoothRecovery;
         authRingSelectedIndex = 0;
@@ -1505,8 +1505,9 @@ public class TuioDemo : Form, TuioListener
             string label = authRingItems[i];
             if (label.Length > 16) label = label.Substring(0, 14) + "..";
             var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
-            float tx = cx + (float)Math.Cos(am) * (radius * 0.62f);
-            float ty = cy + (float)Math.Sin(am) * (radius * 0.62f);
+            // Reduced from 0.62f to 0.55f to keep text more centered and prevent overflow
+            float tx = cx + (float)Math.Cos(am) * (radius * 0.55f);
+            float ty = cy + (float)Math.Sin(am) * (radius * 0.55f);
             float fz = n > 20 ? Math.Max(8f, 220f / n) : Math.Max(11f, fontSmall.Size);
             using (var tbr = new SolidBrush(sel ? Color.FromArgb(245, 12, 12, 14) : Color.FromArgb(245, 248, 246, 238)))
             using (var lf = new Font("Georgia", fz, FontStyle.Bold, GraphicsUnit.Pixel))
@@ -3133,10 +3134,12 @@ public class TuioDemo : Form, TuioListener
         float statusTop = subtitleTop + subtitleH + 30f;  // More spacing
         bool wrapStatus = loginPhase == LoginAuthPhase.LoginBluetoothRecovery ||
                           loginPhase == LoginAuthPhase.RegisterBluetoothRecovery ||
+                          loginPhase == LoginAuthPhase.RegisterBluetoothScanning ||
                           loginPhase == LoginAuthPhase.NoFaceRecovery ||
                           loginPhase == LoginAuthPhase.AuthCameraIssue;
         float statusH = wrapStatus
             ? (loginPhase == LoginAuthPhase.LoginBluetoothRecovery ? 200f
+                : loginPhase == LoginAuthPhase.RegisterBluetoothScanning ? 120f
                 : loginPhase == LoginAuthPhase.AuthCameraIssue ? 120f : 96f)
             : 52f;
         if (wrapStatus)
@@ -3231,7 +3234,7 @@ public class TuioDemo : Form, TuioListener
                           loginPhase == LoginAuthPhase.RegisterBluetoothRecovery ||
                           loginPhase == LoginAuthPhase.NoFaceRecovery ||
                           loginPhase == LoginAuthPhase.AuthCameraIssue)
-                ? "Rotate marker to choose  •  Flick UP = confirm   Flick DOWN = restart scan"
+                ? "Rotate marker to choose  •  Flick UP = confirm   Flick DOWN = restart face"
                 : (loginPhase == LoginAuthPhase.RegisterEnterFirstName ||
                           loginPhase == LoginAuthPhase.RegisterEnterLastName ||
                           loginPhase == LoginAuthPhase.RegisterEnterAge)
@@ -4242,6 +4245,32 @@ public class TuioDemo : Form, TuioListener
         {
             recognitionTimer.Start();
         }
+        
+        // Resume gaze streaming if it was active
+        if (isLoggedIn && gazeEmotionClient != null && gazeEmotionClient.IsConnected)
+        {
+            Task.Run(async () =>
+            {
+                try
+                {
+                    await gazeEmotionClient.StartStreamingAsync();
+                }
+                catch { /* ignore errors on resume */ }
+            });
+        }
+        
+        // Resume YOLO streaming if it was active
+        if (isLoggedIn && yoloContextClient != null && yoloContextClient.IsConnected)
+        {
+            Task.Run(async () =>
+            {
+                try
+                {
+                    await yoloContextClient.StartStreamingAsync();
+                }
+                catch { /* ignore errors on resume */ }
+            });
+        }
     }
 
     private void OnWindowDeactivated(object sender, EventArgs e)
@@ -4254,6 +4283,32 @@ public class TuioDemo : Form, TuioListener
         if (recognitionTimer != null && recognitionTimer.Enabled)
         {
             recognitionTimer.Stop();
+        }
+        
+        // Stop gaze streaming to prevent blocking when window is inactive
+        if (gazeEmotionClient != null && gazeEmotionClient.IsConnected)
+        {
+            Task.Run(async () =>
+            {
+                try
+                {
+                    await gazeEmotionClient.StopStreamingAsync();
+                }
+                catch { /* ignore errors on pause */ }
+            });
+        }
+        
+        // Stop YOLO streaming to reduce CPU usage when window is inactive
+        if (yoloContextClient != null && yoloContextClient.IsConnected)
+        {
+            Task.Run(async () =>
+            {
+                try
+                {
+                    await yoloContextClient.StopStreamingAsync();
+                }
+                catch { /* ignore errors on pause */ }
+            });
         }
     }
 
