@@ -3092,7 +3092,14 @@ public class TuioDemo : Form, TuioListener
             subtitleTop = H / 2f - 118f;
             subtitleH = 78f;
         }
-        if (loginPhase == LoginAuthPhase.RegisterScanning || loginPhase == LoginAuthPhase.MainPicker)
+        else if (loginPhase == LoginAuthPhase.LoginScanning)
+        {
+            // Long Bluetooth line must wrap — a short centered rect clips the start of the sentence.
+            subtitleTop = H / 2f - 132f;
+            subtitleH = 100f;
+        }
+        if (loginPhase == LoginAuthPhase.RegisterScanning || loginPhase == LoginAuthPhase.MainPicker ||
+            loginPhase == LoginAuthPhase.LoginScanning)
             DrawWrappedCentered(g, subtitle, fontSubtitle, Color.FromArgb(238, CPapyrus),
                 new RectangleF(48, subtitleTop, W - 96, subtitleH));
         else
@@ -3103,14 +3110,22 @@ public class TuioDemo : Form, TuioListener
         bool wrapStatus = loginPhase == LoginAuthPhase.LoginBluetoothRecovery ||
                           loginPhase == LoginAuthPhase.RegisterBluetoothRecovery ||
                           loginPhase == LoginAuthPhase.NoFaceRecovery ||
-                          loginPhase == LoginAuthPhase.AuthCameraIssue;
-        float statusH = wrapStatus
-            ? (loginPhase == LoginAuthPhase.LoginBluetoothRecovery ? 120f
-                : loginPhase == LoginAuthPhase.AuthCameraIssue ? 120f : 96f)
-            : 52f;
+                          loginPhase == LoginAuthPhase.AuthCameraIssue ||
+                          loginPhase == LoginAuthPhase.LoginScanning ||
+                          loginPhase == LoginAuthPhase.RegisterBluetoothScanning ||
+                          loginPhase == LoginAuthPhase.RegisterBluetoothConfirm;
+        float statusH = 52f;
+        if (wrapStatus)
+        {
+            if (loginPhase == LoginAuthPhase.LoginBluetoothRecovery) statusH = 120f;
+            else if (loginPhase == LoginAuthPhase.AuthCameraIssue) statusH = 120f;
+            else if (loginPhase == LoginAuthPhase.LoginScanning) statusH = 100f;
+            else if (loginPhase == LoginAuthPhase.RegisterBluetoothConfirm) statusH = 72f;
+            else statusH = 96f;
+        }
         if (wrapStatus)
             DrawWrappedCentered(g, authStatus, fontBody, Color.White,
-                new RectangleF(40, statusTop, W - 80, statusH));
+                new RectangleF(48, statusTop, W - 96, statusH));
         else
             DrawCentered(g, authStatus, fontBody, Color.White,
                 new RectangleF(40, statusTop, W - 80, statusH));
