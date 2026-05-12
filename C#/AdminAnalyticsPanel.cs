@@ -245,7 +245,7 @@ public class AdminAnalyticsPanel
                 TuioControlMarker.MenuAuthSymbolId, lastTuioAngleDeg)
             : string.Format("Place marker {0} on the table to navigate", TuioControlMarker.MenuAuthSymbolId);
         DrawCentered(g, rotLine, fontSmall, Color.FromArgb(140, 200, 200, 210),
-            new RectangleF(20, h - 22, w - 40, 18));
+            new RectangleF(20, h - 33, w - 40, 18));
     }
 
     // ─── Navigation helpers ───────────────────────────────────────────────────
@@ -723,7 +723,7 @@ public class AdminAnalyticsPanel
 
             // 6. Timeline progress bar + time label
             long totalMs = seg.Samples[seg.Samples.Count - 1].TRelMs;
-            int barY = h - 36;
+            int barY = h - 47;
             var barRect = new Rectangle(60, barY, w - 120, 10);
             using (var bgBr = new SolidBrush(Color.FromArgb(120, 40, 40, 50)))
                 g.FillRectangle(bgBr, barRect);
