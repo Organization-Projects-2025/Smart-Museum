@@ -8,7 +8,8 @@ Uses the SAME recognition pipeline as gesture_gui.py:
   - 30-frame sliding window (buffer)
   - Recognition every 7 frames (RECO_EVERY_N)
   - dollarpy $N recogniser with deepcopy (non-mutating)
-  - buffer cleared on any detection ≥ CLEAR_THRESHOLD (0.40)
+  - 1s cooldown after each accepted menu gesture; buffer cleared on accept;
+    no new buffer samples during cooldown (avoids immediate re-match)
   - CameraHub (camera_hub.py) when running inside main.py
 
 C# protocol (newline-delimited JSON over TCP):
@@ -153,7 +154,6 @@ MIN_MOTION       = 0.02    # min cumulative centroid travel
 SCORE_THRESHOLD  = 0.20    # min score to confirm a gesture
 GESTURE_COOLDOWN = 1.0     # seconds before next gesture accepted
 TRACK_TIPS       = (8, 12, 20)  # index, middle, pinky tip landmark IDs
-CLEAR_THRESHOLD  = 0.40   # clear buffer on detection at/above this score
 SMOOTH_WIN       = 3       # frames to average for centroid smoothing
 RECO_EVERY_N     = 7       # run recognition every N frames (7 ≈ every ~230 ms at 30 fps)
 
@@ -210,6 +210,15 @@ def _recognize_points(templates, pts):
     except Exception:
         pass
     return None, 0.0
+
+
+def _flip_swipe_label(name: str) -> str:
+    """Recognizer labels are inverted vs physical motion (mirrored camera vs templates)."""
+    if name == "swipe_left":
+        return "swipe_right"
+    if name == "swipe_right":
+        return "swipe_left"
+    return name
 
 
 def _load_templates():
@@ -352,6 +361,9 @@ class _ClientState:
                 time.sleep(0.016)
                 continue
 
+            now = time.time()
+            in_cooldown = (now - self.last_gesture_time) < GESTURE_COOLDOWN
+
             # ── Sliding window — 3-finger centroid + smoothing ────────────────
             if res.multi_hand_landmarks:
                 self._new_frames += 1
@@ -364,10 +376,13 @@ class _ClientState:
                 self._raw_tip_buf.append((raw_x, raw_y))
                 sx = sum(p[0] for p in self._raw_tip_buf) / len(self._raw_tip_buf)
                 sy = sum(p[1] for p in self._raw_tip_buf) / len(self._raw_tip_buf)
-                with self.lock:
-                    self.buf.append({"x": sx, "y": sy})
-                    if len(self.buf) > MAX_FRAMES:
-                        self.buf.pop(0)
+                # Do not grow the stroke buffer during cooldown — the same pose
+                # would refill the window and re-trigger as soon as cooldown ends.
+                if not in_cooldown:
+                    with self.lock:
+                        self.buf.append({"x": sx, "y": sy})
+                        if len(self.buf) > MAX_FRAMES:
+                            self.buf.pop(0)
             else:
                 # Hand lost — slowly drain, reset smoothing
                 self._raw_tip_buf.clear()
@@ -377,9 +392,6 @@ class _ClientState:
                         self.buf.pop(0)
 
             # ── Recognition — every RECO_EVERY_N new hand frames ──────────────
-            now = time.time()
-            in_cooldown = (now - self.last_gesture_time) < GESTURE_COOLDOWN
-
             if (not in_cooldown
                     and len(self.buf) >= MIN_POINTS
                     and self._new_frames >= RECO_EVERY_N):
@@ -391,6 +403,7 @@ class _ClientState:
                 pts = _extract_points(buf_snapshot)
                 if pts is not None:
                     name, score = _recognize_points(self.templates, pts)
+                    name = _flip_swipe_label(name)
 
                     # Log every attempt that exceeds the confidence threshold
                     if score >= SCORE_THRESHOLD:
@@ -401,10 +414,10 @@ class _ClientState:
                             self.last_gesture      = name
                             self.last_score        = score
                             self.last_gesture_time = now
-                            if score >= CLEAR_THRESHOLD:
-                                with self.lock:
-                                    self.buf.clear()
-                                self._raw_tip_buf.clear()
+                            self._new_frames       = 0
+                            with self.lock:
+                                self.buf.clear()
+                            self._raw_tip_buf.clear()
                             print(f"[GESTURE] ✓ {name}  score={score:.2f}  → queued for C#")
 
             time.sleep(0.016)  # ~60 FPS

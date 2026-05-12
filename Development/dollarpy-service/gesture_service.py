@@ -126,6 +126,15 @@ def _recognize_points(templates, pts):
     return None, 0.0
 
 
+def _flip_swipe_label(name: str) -> str:
+    """Recognizer labels are inverted vs physical motion (mirrored camera vs templates)."""
+    if name == "swipe_left":
+        return "swipe_right"
+    if name == "swipe_right":
+        return "swipe_left"
+    return name
+
+
 def _load_templates():
     """Load templates from gesture_templates.pkl; return list or []."""
     if not os.path.exists(TEMPLATES_FILE):
@@ -305,6 +314,7 @@ class _ClientState:
                 pts = _extract_points(buf_snapshot)
                 if pts is not None:
                     name, score = _recognize_points(self.templates, pts)
+                    name = _flip_swipe_label(name)
 
                     # Log every attempt that exceeds the confidence threshold
                     if score >= SCORE_THRESHOLD:
