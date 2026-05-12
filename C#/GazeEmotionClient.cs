@@ -114,6 +114,13 @@ public class GazeEmotionClient : IDisposable
         {
             while (streaming && !disposed)
             {
+                // Check if data is available with timeout to prevent indefinite blocking
+                if (!netStream.DataAvailable)
+                {
+                    Thread.Sleep(50); // Small delay to prevent CPU spinning
+                    continue;
+                }
+                
                 string line = reader.ReadLine(); // blocks until a line arrives
                 if (line == null) break;
 

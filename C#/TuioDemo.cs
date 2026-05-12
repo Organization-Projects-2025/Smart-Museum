@@ -622,7 +622,7 @@ public class TuioDemo : Form, TuioListener
                         BeginInvoke(new Action(() =>
                         {
                             loginPhase = LoginAuthPhase.RegisterBluetoothRecovery;
-                            authRingItems = new List<string> { "Retry Bluetooth", "Restart Face" };
+                            authRingItems = new List<string> { "Retry\nBluetooth", "Restart\nFace ID" };
                             authRingSelectedIndex = 0;
                             authRingGestureArmed = true;
                             authRingHasLastY = false;
@@ -634,7 +634,7 @@ public class TuioDemo : Form, TuioListener
                     else
                     {
                         loginPhase = LoginAuthPhase.RegisterBluetoothRecovery;
-                        authRingItems = new List<string> { "Retry Bluetooth", "Restart Face" };
+                        authRingItems = new List<string> { "Retry\nBluetooth", "Restart\nFace ID" };
                         authRingSelectedIndex = 0;
                         authStatus = displayStatus;
                     }
@@ -669,7 +669,7 @@ public class TuioDemo : Form, TuioListener
                     BeginInvoke(new Action(() =>
                     {
                         loginPhase = LoginAuthPhase.RegisterBluetoothRecovery;
-                        authRingItems = new List<string> { "Retry Bluetooth", "Restart Face" };
+                        authRingItems = new List<string> { "Retry\nBluetooth", "Restart\nFace ID" };
                         authRingSelectedIndex = 0;
                         authRingGestureArmed = true;
                         authRingHasLastY = false;
@@ -681,7 +681,7 @@ public class TuioDemo : Form, TuioListener
                 else
                 {
                     loginPhase = LoginAuthPhase.RegisterBluetoothRecovery;
-                    authRingItems = new List<string> { "Retry Bluetooth", "Restart Face" };
+                    authRingItems = new List<string> { "Retry\nBluetooth", "Restart\nFace ID" };
                     authRingSelectedIndex = 0;
                     authStatus = displayStatus;
                 }
@@ -817,7 +817,7 @@ public class TuioDemo : Form, TuioListener
         {
             loginBluetoothRecoveryEscalated = false;
             loginBtCooldownUntilUtc = DateTime.UtcNow.AddSeconds(5);
-            authRingItems = new List<string> { "Retry Bluetooth", "Restart Face" };
+            authRingItems = new List<string> { "Retry\nBluetooth", "Restart\nFace ID" };
             string friendly = BluetoothService.FriendlyBluetoothError(bluetoothDetail);
             authStatus = "Bluetooth verification did not succeed. " + friendly + " Please wait 5 seconds, then choose Retry Bluetooth.";
         }
@@ -3034,7 +3034,7 @@ public class TuioDemo : Form, TuioListener
 
         DrawCentered(g, "Press L on this window to restart sign-in", fontSmall,
             Color.FromArgb(190, 218, 200, 150),
-            new RectangleF(40, 8, W - 80, 22));
+            new RectangleF(40, 18, W - 80, 22));
 
         if (loginPhase == LoginAuthPhase.ProfileWelcome)
         {
@@ -3102,25 +3102,25 @@ public class TuioDemo : Form, TuioListener
             title = "SAVING ACCOUNT";
 
         DrawCentered(g, title, fontTitle, themeSecondary,
-            new RectangleF(0, H / 2f - 200f, W, 58));  // Moved title up more
+            new RectangleF(0, H / 2f - 180f, W, 58));  // Moved title up more
 
-        float subtitleTop = H / 2f - 108f;
+        float subtitleTop = H / 2f - 88f;
         float subtitleH = 40f;
         if (loginPhase == LoginAuthPhase.RegisterScanning || loginPhase == LoginAuthPhase.MainPicker)
         {
-            subtitleTop = H / 2f - 118f;
+            subtitleTop = H / 2f - 98f;
             subtitleH = 78f;
         }
         // Increase subtitle height for LoginScanning (Bluetooth verification) to show full text
         if (loginPhase == LoginAuthPhase.LoginScanning)
         {
-            subtitleTop = H / 2f - 135f;  // Position below title
-            subtitleH = 60f;  // Enough for 2 lines
+            subtitleTop = H / 2f - 125f;  // Position below title
+            subtitleH = 90f;  // Enough for 3 lines
         }
         // Increase subtitle height for LoginBluetoothRecovery to show full text
         if (loginPhase == LoginAuthPhase.LoginBluetoothRecovery)
         {
-            subtitleTop = H / 2f - 128f;
+            subtitleTop = H / 2f - 108f;
             subtitleH = 80f;
         }
         if (loginPhase == LoginAuthPhase.RegisterScanning || loginPhase == LoginAuthPhase.MainPicker || 
@@ -3135,11 +3135,13 @@ public class TuioDemo : Form, TuioListener
         bool wrapStatus = loginPhase == LoginAuthPhase.LoginBluetoothRecovery ||
                           loginPhase == LoginAuthPhase.RegisterBluetoothRecovery ||
                           loginPhase == LoginAuthPhase.RegisterBluetoothScanning ||
+                          loginPhase == LoginAuthPhase.LoginScanning ||
                           loginPhase == LoginAuthPhase.NoFaceRecovery ||
                           loginPhase == LoginAuthPhase.AuthCameraIssue;
         float statusH = wrapStatus
             ? (loginPhase == LoginAuthPhase.LoginBluetoothRecovery ? 200f
                 : loginPhase == LoginAuthPhase.RegisterBluetoothScanning ? 120f
+                : loginPhase == LoginAuthPhase.LoginScanning ? 120f
                 : loginPhase == LoginAuthPhase.AuthCameraIssue ? 120f : 96f)
             : 52f;
         if (wrapStatus)
@@ -3170,7 +3172,7 @@ public class TuioDemo : Form, TuioListener
         if (loginPhase == LoginAuthPhase.RegisterScanning)
         {
             float cx = W / 2f;
-            float cy = H / 2f + 60f;
+            float cy = H / 2f + 80f;
             float radius = 30f;
             Color statusColor = Color.Gray;
 
@@ -3234,7 +3236,7 @@ public class TuioDemo : Form, TuioListener
                           loginPhase == LoginAuthPhase.RegisterBluetoothRecovery ||
                           loginPhase == LoginAuthPhase.NoFaceRecovery ||
                           loginPhase == LoginAuthPhase.AuthCameraIssue)
-                ? "Rotate marker to choose  •  Flick UP = confirm   Flick DOWN = restart face"
+                ? "Rotate marker to choose  •  Flick UP = confirm   Flick DOWN = restart face ID"
                 : (loginPhase == LoginAuthPhase.RegisterEnterFirstName ||
                           loginPhase == LoginAuthPhase.RegisterEnterLastName ||
                           loginPhase == LoginAuthPhase.RegisterEnterAge)

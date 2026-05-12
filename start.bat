@@ -49,6 +49,10 @@ set MEDIAPIPE_DISABLE_GPU=1
 set GLOG_minloglevel=3
 set GLOG_logtostderr=0
 
+REM Suppress TensorFlow Lite warnings:
+set TF_CPP_MIN_LOG_LEVEL=3
+set TFLITE_LOG_LEVEL=3
+
 REM ── Start ─────────────────────────────────────────────────────────────────
 echo Using Python: %PYTHON%
 echo Starting all services...

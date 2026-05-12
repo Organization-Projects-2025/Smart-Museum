@@ -92,5 +92,7 @@ obj/
 *.rar
 *.7z
 
+# Documentation
+ALT_TAB_FREEZE_FIX_V2.md
 
 puml-diagrams/
