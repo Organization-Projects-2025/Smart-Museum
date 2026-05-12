@@ -2094,11 +2094,15 @@ public class TuioDemo : Form, TuioListener
                 {
                     // Match TUIO path: ShowFavorite must be set before Show() so default slot is correct.
                     circularMenu.ShowFavorite = !string.IsNullOrEmpty(GetCurrentFigureStoryKey());
-                    circularMenu.Show();
-                    menuOpenedByGesture = true;
-                    menuFlickNeedsResync = true;
-                    _menuNavigatedSinceOpen = false; // reset until user navigates or confirms
-                    Console.WriteLine("[Gesture] Menu opened");
+                    if (circularMenu.Show())
+                    {
+                        menuOpenedByGesture = true;
+                        menuFlickNeedsResync = true;
+                        _menuNavigatedSinceOpen = false; // reset until user navigates or confirms
+                        Console.WriteLine("[Gesture] Menu opened");
+                    }
+                    else
+                        Console.WriteLine("[Gesture] Menu open skipped — no valid top-level selection.");
                 }
                 else
                 {
@@ -2822,7 +2826,8 @@ public class TuioDemo : Form, TuioListener
         if (!circularMenu.IsVisible && marker != null)
         {
             circularMenu.ShowFavorite = !string.IsNullOrEmpty(GetCurrentFigureStoryKey());
-            circularMenu.Show();
+            if (!circularMenu.Show())
+                return;
             menuOpenedByGesture = false; // Opened by marker, not gesture
             menuFlickNeedsResync = true;
         }
@@ -2839,7 +2844,7 @@ public class TuioDemo : Form, TuioListener
         if (!circularMenu.IsVisible) return;
 
         // Hide/show Favorite entry dynamically based on whether a figure context exists.
-        circularMenu.ShowFavorite = !string.IsNullOrEmpty(GetCurrentFigureStoryKey());
+        circularMenu.ApplyShowFavorite(!string.IsNullOrEmpty(GetCurrentFigureStoryKey()));
 
         if (marker != null)
         {
@@ -4274,7 +4279,11 @@ public class TuioDemo : Form, TuioListener
             if (isLoggedIn)
             {
                 if (circularMenu.IsVisible) circularMenu.Hide();
-                else circularMenu.Show();
+                else
+                {
+                    circularMenu.ShowFavorite = !string.IsNullOrEmpty(GetCurrentFigureStoryKey());
+                    circularMenu.Show();
+                }
             }
         }
     }

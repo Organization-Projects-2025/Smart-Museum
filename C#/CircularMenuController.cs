@@ -33,6 +33,32 @@ public class CircularMenuController
     };
     public bool ShowFavorite = true;
 
+    /// <summary>
+    /// Toggle Favorite wedge visibility. When the top-level list length changes, keeps the same
+    /// logical item (e.g. Home) if it still exists; otherwise clamps TopIndex.
+    /// </summary>
+    public void ApplyShowFavorite(bool showFavorite)
+    {
+        if (ShowFavorite == showFavorite) return;
+        string preserved = SelectedTop;
+        ShowFavorite = showFavorite;
+        var items = GetTopLevelItems();
+        if (items.Count == 0)
+        {
+            TopIndex = 0;
+            SelectedTop = null;
+            return;
+        }
+        if (!string.IsNullOrEmpty(preserved) && items.Contains(preserved))
+            TopIndex = items.IndexOf(preserved);
+        else
+        {
+            if (TopIndex < 0) TopIndex = 0;
+            if (TopIndex >= items.Count) TopIndex = items.Count - 1;
+        }
+        SyncSelectionTexts();
+    }
+
     public int TopIndex;
     public int SecondIndex;
     public int ThirdIndex;
@@ -46,21 +72,43 @@ public class CircularMenuController
     private float _lastAngle = 0f;
     private const float AngleHysteresis = 0.08f; // ~4.6 degrees - reduced for smoother response
 
-    public void Show()
+    /// <summary>After discrete top-level navigation (hand swipes), ignore TUIO angle→index briefly so a
+    /// fixed fiducial does not snap the highlight back to the wedge that matches its resting angle.</summary>
+    private DateTime _suppressAngleDrivenTopNavUntilUtc = DateTime.MinValue;
+    private const int AngleTopNavSuppressionAfterGestureMs = 800;
+
+    /// <summary>
+    /// Opens the menu only when at least one top-level wedge exists and a selection is set.
+    /// Returns false if the menu stays closed (e.g. empty top list — callers must not arm TUIO/gesture state).
+    /// </summary>
+    public bool Show()
     {
-        IsVisible = true;
+        var items = GetTopLevelItems();
+        if (items == null || items.Count == 0)
+            return false;
+
         IsInSecondLevel = false;
         IsInThirdLevel = false;
         SecondIndex = 0;
         ThirdIndex = 0;
         SelectedFavoriteTitle = null;
         _lastAngle = 0f;
+        _suppressAngleDrivenTopNavUntilUtc = DateTime.MinValue;
         // Default highlight to Home (outer ring) — not Favorite at index 0, which caused
         // immediate Favorite actions when TUIO flick confirm fired right after opening.
-        var items = GetTopLevelItems();
         int homeIdx = items.IndexOf("Home");
         TopIndex = homeIdx >= 0 ? homeIdx : 0;
+
+        IsVisible = true;
         SyncSelectionTexts();
+
+        if (string.IsNullOrEmpty(SelectedTop))
+        {
+            IsVisible = false;
+            return false;
+        }
+
+        return true;
     }
 
     public void Hide()
@@ -70,6 +118,7 @@ public class CircularMenuController
         IsInThirdLevel = false;
         SelectedFavoriteTitle = null;
         _lastAngle = 0f;
+        _suppressAngleDrivenTopNavUntilUtc = DateTime.MinValue;
     }
 
     public void UpdateRotation(float angleRadians)
@@ -84,8 +133,6 @@ public class CircularMenuController
         // But always allow updates if we're crossing a segment boundary
         if (angleDiff < AngleHysteresis && angleDiff > 0.001f)
             return;
-
-        _lastAngle = angleRadians;
 
         List<string> topItems = GetTopLevelItems();
         int count;
@@ -110,11 +157,21 @@ public class CircularMenuController
         {
             if (IsInThirdLevel) ThirdIndex = idx;
             else if (IsInSecondLevel) SecondIndex = idx;
-            else TopIndex = idx;
+            else
+            {
+                // Swipe gestures update TopIndex; without this, the next TUIO frame maps the
+                // (fixed) marker angle back to one wedge — usually Home — and wipes the swipe.
+                if (DateTime.UtcNow < _suppressAngleDrivenTopNavUntilUtc)
+                    return;
+
+                TopIndex = idx;
+            }
 
             Console.WriteLine($"[CircularMenu] Rotation: angle={angleRadians:F2} idx={idx} (was {oldIdx}) top={( !IsInSecondLevel && !IsInThirdLevel && topItems.Count > idx ? topItems[idx] : "?")}");
             SyncSelectionTexts();
         }
+
+        _lastAngle = angleRadians;
     }
 
     /// <summary>
@@ -138,7 +195,12 @@ public class CircularMenuController
         else
         {
             var items = GetTopLevelItems();
-            if (items.Count > 0) TopIndex = (TopIndex + 1) % items.Count;
+            if (items.Count > 0)
+            {
+                TopIndex = (TopIndex + 1) % items.Count;
+                _suppressAngleDrivenTopNavUntilUtc =
+                    DateTime.UtcNow.AddMilliseconds(AngleTopNavSuppressionAfterGestureMs);
+            }
         }
 
         SyncSelectionTexts();
@@ -164,7 +226,12 @@ public class CircularMenuController
         else
         {
             var items = GetTopLevelItems();
-            if (items.Count > 0) TopIndex = (TopIndex - 1 + items.Count) % items.Count;
+            if (items.Count > 0)
+            {
+                TopIndex = (TopIndex - 1 + items.Count) % items.Count;
+                _suppressAngleDrivenTopNavUntilUtc =
+                    DateTime.UtcNow.AddMilliseconds(AngleTopNavSuppressionAfterGestureMs);
+            }
         }
 
         SyncSelectionTexts();
@@ -280,6 +347,10 @@ public class CircularMenuController
     {
         if (!IsVisible) return;
 
+        // ShowFavorite can change while the menu is open (figure on/off table). Without a sync,
+        // TopIndex may point past the shorter top list — no wedge matches and the hub label goes blank.
+        SyncSelectionTexts();
+
         int cx = w / 2;
         int cy = h / 2;
         int innerHoleRadius = 70;
@@ -372,7 +443,12 @@ public class CircularMenuController
         string centerText = IsInThirdLevel
             ? (SelectedThird ?? string.Empty)
             : (IsInSecondLevel ? (SelectedSecond ?? string.Empty) : (SelectedTop ?? string.Empty));
-        DrawCentered(g, centerText, titleFont, secondary, new RectangleF(cx - 150, cy - 26, 300, 52));
+        if (string.IsNullOrWhiteSpace(centerText))
+            centerText = "Rotate to select";
+
+        // Hub uses a light fill — theme secondary is often pale gold and disappears here; use a dark label.
+        Color hubLabel = Color.FromArgb(245, 18, 22, 28);
+        DrawCentered(g, centerText, titleFont, hubLabel, new RectangleF(cx - 150, cy - 30, 300, 56));
 
         int segCount = IsInThirdLevel
             ? FavoriteActions.Count
@@ -408,6 +484,8 @@ public class CircularMenuController
     {
         if (labels == null || labels.Count == 0) return;
 
+        int safeSelected = Math.Max(0, Math.Min(selectedIndex, labels.Count - 1));
+
         float segmentSweep = 360f / labels.Count;
         float gap = Math.Min(3.5f, segmentSweep * 0.22f);
 
@@ -416,7 +494,7 @@ public class CircularMenuController
             float start = -90f + i * segmentSweep + gap / 2f;
             float sweep = segmentSweep - gap;
 
-            bool selected = selectedRingActive && i == selectedIndex;
+            bool selected = selectedRingActive && i == safeSelected;
             Color fill = selected ? activeFill : (i % 2 == 0 ? panelA : panelB);
 
             using (GraphicsPath path = BuildDonutSegmentPath(cx, cy, innerRadius, outerRadius, start, sweep))
@@ -509,6 +587,8 @@ public class CircularMenuController
         List<string> topItems = GetTopLevelItems();
         if (topItems.Count > 0)
         {
+            // Only clamp — do not force TopIndex from SelectedTop here, or every NavigateNext/Previous
+            // is immediately undone (SelectedTop still held the old wedge name for one call).
             if (TopIndex < 0) TopIndex = 0;
             if (TopIndex >= topItems.Count) TopIndex = topItems.Count - 1;
             SelectedTop = topItems[TopIndex];
