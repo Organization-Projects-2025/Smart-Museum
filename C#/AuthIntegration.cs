@@ -491,6 +491,11 @@ public class BluetoothService
 
     public bool Verify(string targetMac, out string status)
     {
+        // TEMPORARY: Bluetooth 2FA disabled for testing
+        status = "⚠ Bluetooth 2FA temporarily disabled";
+        return true;
+
+        /* ORIGINAL CODE - UNCOMMENT TO RE-ENABLE BLUETOOTH 2FA
         // MANDATORY Bluetooth verification for users with registered MAC addresses
         // SKIPPED completely for users without MAC addresses (MAC = "0" or empty)
 
@@ -570,6 +575,7 @@ public class BluetoothService
             status = "✗ Bluetooth verification error: " + FriendlyBluetoothError(ex.Message);
             return false; // BLOCK login - Bluetooth is mandatory
         }
+        */
     }
 
     /// <summary>Registration: discover a nearby BLE device (Python picks best named candidate).</summary>

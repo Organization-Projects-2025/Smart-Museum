@@ -228,6 +228,7 @@ public class TuioDemo : Form, TuioListener
     private readonly SessionAnalyticsRecorder analyticsRecorder = new SessionAnalyticsRecorder();
     private AdminAnalyticsPanel adminAnalyticsPanel;
     private bool adminAnalyticsVisible;
+    private UserPreferencesManager preferencesManager;
 
     // YOLO: cell phone visible → bottom banner inviting download of the museum companion app.
     // Replace URLs before production. Hysteresis reduces flicker when detection jitters.
@@ -349,6 +350,11 @@ public class TuioDemo : Form, TuioListener
 
         InitializeStoryLibrary();
         InitializeCircularMenu();
+        
+        // Initialize preferences manager
+        string prefsPath = Path.Combine(GetWorkspaceRoot(), "C#", "content", "auth", "user_preferences.csv");
+        preferencesManager = new UserPreferencesManager(prefsPath);
+        
         // NOTE: Server must be started manually now (python/server/main.py)
         // Removed: StartMuseumPythonServer();
         InitializeGestureClient();
@@ -647,6 +653,17 @@ public class TuioDemo : Form, TuioListener
                 {
                     authInProgress = false;
                     string displayStatus = BluetoothService.FriendlyBluetoothError(st);
+                    
+                    // Check if this is a server connection failure
+                    if (st != null && (st.Contains("Cannot connect to the Python server") || 
+                        st.Contains("Cannot reach authentication server") || 
+                        st.Contains("Cannot connect to") || 
+                        st.Contains("No response from")))
+                    {
+                        ShowAuthCameraIssueRecovery(displayStatus);
+                        return;
+                    }
+                    
                     if (IsHandleCreated)
                     {
                         BeginInvoke(new Action(() =>
@@ -694,6 +711,18 @@ public class TuioDemo : Form, TuioListener
             {
                 authInProgress = false;
                 string displayStatus = BluetoothService.FriendlyBluetoothError(ex.Message);
+                
+                // Check if this is a server connection failure
+                if (ex.Message != null && (ex.Message.Contains("Cannot connect to the Python server") || 
+                    ex.Message.Contains("Cannot reach authentication server") || 
+                    ex.Message.Contains("Cannot connect to") || 
+                    ex.Message.Contains("No response from") ||
+                    ex is System.Net.Sockets.SocketException))
+                {
+                    ShowAuthCameraIssueRecovery("Cannot connect to the authentication server. Please ensure the Python services are running (start.bat), then try again.");
+                    return;
+                }
+                
                 if (IsHandleCreated)
                 {
                     BeginInvoke(new Action(() =>
@@ -781,6 +810,15 @@ public class TuioDemo : Form, TuioListener
 
                 if (!btOk)
                 {
+                    // Check if this is a server connection failure rather than a Bluetooth device issue
+                    if (btStatus != null && (btStatus.Contains("Cannot reach authentication server") || 
+                        btStatus.Contains("Cannot connect to") || 
+                        btStatus.Contains("No response from")))
+                    {
+                        ShowAuthCameraIssueRecovery(btStatus);
+                        return;
+                    }
+                    
                     pendingLoginBluetoothUser = selected;
                     pendingLoginBluetoothFromDuplicate = true;
                     authInProgress = false;
@@ -804,6 +842,7 @@ public class TuioDemo : Form, TuioListener
                         loginBtCooldownUntilUtc = DateTime.MinValue;
                         ApplyVisitorTheme();
                         ConfigureCircularMenuForUser();
+                        LoadUserPreferences(); // Load saved Favorites and Watched
                         authInProgress = false;
                         loginPhase = LoginAuthPhase.MainPicker;
                         isLoggedIn = true;
@@ -820,7 +859,19 @@ public class TuioDemo : Form, TuioListener
             }
             catch (Exception ex)
             {
-                authStatus = BluetoothService.FriendlyBluetoothError(ex.Message);
+                string errorMsg = BluetoothService.FriendlyBluetoothError(ex.Message);
+                authStatus = errorMsg;
+                
+                // Check if this is a server connection failure
+                if (ex.Message != null && (ex.Message.Contains("Cannot reach authentication server") || 
+                    ex.Message.Contains("Cannot connect to") || 
+                    ex.Message.Contains("No response from") ||
+                    ex is System.Net.Sockets.SocketException))
+                {
+                    ShowAuthCameraIssueRecovery("Cannot connect to the authentication server. Please ensure the Python services are running (start.bat), then try again.");
+                    return;
+                }
+                
                 authInProgress = false;
                 loginPhase = LoginAuthPhase.MainPicker;
                 SafeInvalidate();
@@ -864,6 +915,7 @@ public class TuioDemo : Form, TuioListener
         visitorProfile = VisitorProfile.CreateGuestVisitor();
         ApplyVisitorTheme();
         ConfigureCircularMenuForUser();
+        LoadUserPreferences(); // Load saved Favorites and Watched (guest has none, but keeps code consistent)
         authInProgress = false;
         loginPhase = LoginAuthPhase.MainPicker;
         isLoggedIn = true;
@@ -954,6 +1006,15 @@ public class TuioDemo : Form, TuioListener
 
                 if (!btOk)
                 {
+                    // Check if this is a server connection failure rather than a Bluetooth device issue
+                    if (btStatus != null && (btStatus.Contains("Cannot reach authentication server") || 
+                        btStatus.Contains("Cannot connect to") || 
+                        btStatus.Contains("No response from")))
+                    {
+                        ShowAuthCameraIssueRecovery(btStatus);
+                        return;
+                    }
+                    
                     authInProgress = false;
                     if (IsHandleCreated)
                         BeginInvoke(new Action(() => ShowLoginBluetoothFailureState(btStatus)));
@@ -975,6 +1036,7 @@ public class TuioDemo : Form, TuioListener
                         loginBtCooldownUntilUtc = DateTime.MinValue;
                         ApplyVisitorTheme();
                         ConfigureCircularMenuForUser();
+                        LoadUserPreferences(); // Load saved Favorites and Watched
                         authInProgress = false;
                         loginPhase = LoginAuthPhase.MainPicker;
                         isLoggedIn = true;
@@ -994,6 +1056,17 @@ public class TuioDemo : Form, TuioListener
             {
                 string msg = BluetoothService.FriendlyBluetoothError(ex.Message);
                 authStatus = msg;
+                
+                // Check if this is a server connection failure
+                if (ex.Message != null && (ex.Message.Contains("Cannot reach authentication server") || 
+                    ex.Message.Contains("Cannot connect to") || 
+                    ex.Message.Contains("No response from") ||
+                    ex is System.Net.Sockets.SocketException))
+                {
+                    ShowAuthCameraIssueRecovery("Cannot connect to the authentication server. Please ensure the Python services are running (start.bat), then try again.");
+                    return;
+                }
+                
                 authInProgress = false;
                 if (IsHandleCreated)
                     BeginInvoke(new Action(() => ShowLoginBluetoothFailureState(msg)));
@@ -1058,6 +1131,7 @@ public class TuioDemo : Form, TuioListener
                     {
                         ApplyVisitorTheme();
                         ConfigureCircularMenuForUser();
+                        LoadUserPreferences(); // Load saved Favorites and Watched
                         authInProgress = false;
                         loginPhase = LoginAuthPhase.MainPicker;
                         isLoggedIn = true;
@@ -1700,6 +1774,74 @@ public class TuioDemo : Form, TuioListener
             circularMenu.TopItems.Insert(3, "Analytics");
     }
 
+    private void LoadUserPreferences()
+    {
+        if (visitorProfile == null || preferencesManager == null) return;
+        
+        try
+        {
+            var prefs = preferencesManager.Load(visitorProfile.FaceUserId);
+            if (prefs != null)
+            {
+                // Clear existing lists
+                circularMenu.Favorites.Clear();
+                circularMenu.Watched.Clear();
+                
+                // Load favorites
+                if (prefs.Favorites != null)
+                {
+                    foreach (var title in prefs.Favorites)
+                    {
+                        if (!string.IsNullOrEmpty(title))
+                            circularMenu.Favorites.Add(title);
+                    }
+                    Console.WriteLine($"[Preferences] Loaded {prefs.Favorites.Count} favorites for {visitorProfile.FaceUserId}");
+                }
+                
+                // Load watched
+                if (prefs.Watched != null)
+                {
+                    foreach (var title in prefs.Watched)
+                    {
+                        if (!string.IsNullOrEmpty(title))
+                            circularMenu.Watched.Add(title);
+                    }
+                    Console.WriteLine($"[Preferences] Loaded {prefs.Watched.Count} watched items for {visitorProfile.FaceUserId}");
+                }
+            }
+            else
+            {
+                Console.WriteLine($"[Preferences] No saved preferences found for {visitorProfile.FaceUserId}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Preferences] Error loading preferences: {ex.Message}");
+        }
+    }
+
+    private void SaveUserPreferences()
+    {
+        if (visitorProfile == null || preferencesManager == null) return;
+        
+        try
+        {
+            var prefs = new UserPreferences
+            {
+                UserId = visitorProfile.FaceUserId,
+                Favorites = new List<string>(circularMenu.Favorites),
+                Watched = new List<string>(circularMenu.Watched)
+            };
+            
+            preferencesManager.Save(prefs);
+            Console.WriteLine($"[Preferences] Saved {prefs.Favorites.Count} favorites and {prefs.Watched.Count} watched items for {visitorProfile.FaceUserId}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Preferences] Error saving preferences: {ex.Message}");
+        }
+    }
+
     private async void InitializeGazeAnalytics()
     {
         if (visitorProfile == null) return;
@@ -1945,10 +2087,7 @@ public class TuioDemo : Form, TuioListener
     {
         circularMenu.OnAction = HandleMenuAction;
 
-        AddFavoriteIfExists("figure:1");
-        AddFavoriteIfExists("figure:2");
-        AddFavoriteIfExists("figure:7");
-        AddFavoriteIfExists("relationship:1_2");
+        // Removed hardcoded favorites - they are now loaded per-user from CSV
     }
 
     private async void InitializeGestureClient()
@@ -2200,10 +2339,22 @@ public class TuioDemo : Form, TuioListener
 
     private void AddWatchedIfExists(string key)
     {
-        if (!storyTitleByKey.ContainsKey(key)) return;
+        if (!storyTitleByKey.ContainsKey(key))
+        {
+            Console.WriteLine($"[Watched] Key not found in storyTitleByKey: {key}");
+            return;
+        }
         string title = storyTitleByKey[key];
         if (!circularMenu.Watched.Contains(title))
+        {
             circularMenu.Watched.Add(title);
+            Console.WriteLine($"[Watched] Added to Watched list: {title} (key: {key})");
+            SaveUserPreferences(); // Save immediately
+        }
+        else
+        {
+            Console.WriteLine($"[Watched] Already in Watched list: {title}");
+        }
     }
 
     private void HandleMenuAction(string action, string payload)
@@ -2238,6 +2389,7 @@ public class TuioDemo : Form, TuioListener
                 {
                     circularMenu.Favorites.Add(title);
                     authStatus = "Added to favorites: " + title;
+                    SaveUserPreferences(); // Save immediately
                 }
                 else
                 {
@@ -2258,6 +2410,7 @@ public class TuioDemo : Form, TuioListener
 
         if (action == "Logout")
         {
+            SaveUserPreferences(); // Save Favorites and Watched before logout
             circularMenu.Hide();
             menuOpenedByGesture = false; // Clear flag
             StopAndUnlockSlides();
@@ -2288,23 +2441,37 @@ public class TuioDemo : Form, TuioListener
         {
             circularMenu.Favorites.Remove(payload);
             authStatus = "Removed from favorites: " + payload;
+            SaveUserPreferences(); // Save immediately
             circularMenu.MoveDownAction();
             return;
         }
 
         if ((action == "Favorites" || action == "Watched") && !string.IsNullOrEmpty(payload))
         {
+            Console.WriteLine($"[Menu] Action: {action}, Payload: {payload}");
             string key;
             if (storyKeyByTitle.TryGetValue(payload, out key))
             {
+                Console.WriteLine($"[Menu] Found key: {key}");
                 List<ContentSlide> slides;
                 if (storySlidesByKey.TryGetValue(key, out slides))
                 {
+                    Console.WriteLine($"[Menu] Found slides: {slides.Count} slides");
                     circularMenu.Hide();
                     menuOpenedByGesture = false; // Clear flag
                     StartLockedSlideShow(slides, SlideShowContext.MenuStory, key);
                 }
+                else
+                {
+                    Console.WriteLine($"[Menu] No slides found for key: {key}");
+                }
             }
+            else
+            {
+                Console.WriteLine($"[Menu] No key found for title: {payload}");
+                Console.WriteLine($"[Menu] Available titles: {string.Join(", ", storyTitleByKey.Values)}");
+            }
+            return;
         }
     }
 

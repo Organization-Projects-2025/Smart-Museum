@@ -260,7 +260,11 @@ public class CircularMenuController
 
             if (HasSecondLevel(top))
             {
-                Console.WriteLine($"[CircularMenu] MoveUpAction: Entering second level for {top}. Items: {(top == "Favorites" ? Favorites.Count : Watched.Count)}");
+                Console.WriteLine($"[CircularMenu] MoveUpAction: Entering second level for {top}. Items: {(top == "Favorites" ? Favorites.Count : (top == "Watched" ? Watched.Count : 0))}");
+                if (top == "Watched")
+                {
+                    Console.WriteLine($"[CircularMenu] Watched items: {string.Join(", ", Watched.Select(s => "'" + s + "'"))}");
+                }
                 IsInSecondLevel = true;
                 IsInThirdLevel = false;
                 SecondIndex = 0;
