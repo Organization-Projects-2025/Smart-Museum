@@ -8,6 +8,82 @@ using System.Linq;
 using System.Net.Sockets;
 using System.Text;
 
+public static class AppEnvironment
+{
+    public static bool SkipAuth
+    {
+        get { return string.Equals(Get("skip_auth", "0"), "1", StringComparison.OrdinalIgnoreCase); }
+    }
+
+    public static string SkipUserId
+    {
+        get
+        {
+            string value = Get("skip_user", "1").Trim();
+            if (value.Length == 0)
+                value = "1";
+            return value.StartsWith("user", StringComparison.OrdinalIgnoreCase)
+                ? value
+                : "user" + value;
+        }
+    }
+
+    public static string Get(string key, string defaultValue)
+    {
+        string environmentValue = Environment.GetEnvironmentVariable(key);
+        if (!string.IsNullOrWhiteSpace(environmentValue))
+            return environmentValue.Trim();
+
+        string envPath = FindEnvFile();
+        if (string.IsNullOrEmpty(envPath))
+            return defaultValue;
+
+        try
+        {
+            foreach (string rawLine in File.ReadAllLines(envPath))
+            {
+                string line = rawLine.Trim();
+                if (line.Length == 0 || line.StartsWith("#", StringComparison.Ordinal))
+                    continue;
+
+                int equals = line.IndexOf('=');
+                if (equals <= 0)
+                    continue;
+
+                string name = line.Substring(0, equals).Trim();
+                if (!string.Equals(name, key, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                string value = line.Substring(equals + 1).Trim();
+                if ((value.StartsWith("\"", StringComparison.Ordinal) && value.EndsWith("\"", StringComparison.Ordinal)) ||
+                    (value.StartsWith("'", StringComparison.Ordinal) && value.EndsWith("'", StringComparison.Ordinal)))
+                    value = value.Substring(1, value.Length - 2);
+
+                return value;
+            }
+        }
+        catch
+        {
+            return defaultValue;
+        }
+
+        return defaultValue;
+    }
+
+    private static string FindEnvFile()
+    {
+        DirectoryInfo dir = new DirectoryInfo(AppDomain.CurrentDomain.BaseDirectory);
+        while (dir != null)
+        {
+            string candidate = Path.Combine(dir.FullName, ".env");
+            if (File.Exists(candidate))
+                return candidate;
+            dir = dir.Parent;
+        }
+        return null;
+    }
+}
+
 public class SocketClient
 {
     public NetworkStream stream;

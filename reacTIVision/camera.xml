@@ -4,7 +4,7 @@
         <!-- Reduced resolution for better performance -->
         <capture width="640" height="480" fps="15" compress="true" />
         <!-- Optimized settings for performance -->
-        <settings brightness="127" contrast="default" gain="min" shutter="min" exposure="default" sharpness="default" gamma="default" focus="min" />
+        <settings brightness="default" contrast="default" gain="min" shutter="min" exposure="default" sharpness="default" gamma="default" focus="min" />
         <frame width="max" height="max" xoff="0" yoff="0" />
     </camera>
 </portvideo>

@@ -456,6 +456,12 @@ public class TuioDemo : Form, TuioListener
         isLoggedIn = false;
         visitorProfile = null;
 
+        if (launchFaceLobbyScan && AppEnvironment.SkipAuth)
+        {
+            LoginSkipAuthUserAndEnter();
+            return;
+        }
+
         if (launchFaceLobbyScan)
             ShowAuthPicker();
         else
@@ -869,6 +875,37 @@ public class TuioDemo : Form, TuioListener
         loginBtCooldownUntilUtc = DateTime.MinValue;
         RearmGestureTracking();
         authStatus = "You are visiting as a guest — enjoy the table experience.";
+        Transition(AppState.Idle, null, null, null, null);
+        InitializeGazeAnalytics();
+        InitializeYoloContext();
+        Invalidate();
+    }
+
+    private void LoginSkipAuthUserAndEnter()
+    {
+        string skipUserId = AppEnvironment.SkipUserId;
+        VisitorProfile profile;
+        if (!TryLoadVisitorProfile(skipUserId, out profile))
+        {
+            authStatus = "skip_auth=1, but " + skipUserId + " was not found in users.csv.";
+            ShowMainLoginPickerWithoutFaceLobby();
+            return;
+        }
+
+        visitorProfile = profile;
+        ApplyVisitorTheme();
+        ConfigureCircularMenuForUser();
+        authInProgress = false;
+        loginPhase = LoginAuthPhase.MainPicker;
+        isLoggedIn = true;
+        pendingDuplicateUserId = null;
+        pendingLoginBluetoothUser = null;
+        pendingLoginBluetoothFromDuplicate = false;
+        loginBluetoothFailureCount = 0;
+        loginBluetoothRecoveryEscalated = false;
+        loginBtCooldownUntilUtc = DateTime.MinValue;
+        RearmGestureTracking();
+        authStatus = "Authentication skipped by .env skip_auth=1. Logged in as " + visitorProfile.FullName + ".";
         Transition(AppState.Idle, null, null, null, null);
         InitializeGazeAnalytics();
         InitializeYoloContext();
