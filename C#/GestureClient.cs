@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Net.Sockets;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -18,6 +19,7 @@ public class GestureClient : IDisposable
     private bool isConnected = false;
     private string host;
     private int port;
+    private readonly SemaphoreSlim _sendLock = new SemaphoreSlim(1, 1);
 
         public event EventHandler<GestureRecognizedEventArgs> GestureRecognized;
         public event EventHandler<string> StatusChanged;
@@ -205,7 +207,11 @@ public class GestureClient : IDisposable
                     TemplatesLoaded = response["templates"]?.ToObject<int>() ?? 0,
                     LastGesture = response["last_gesture"]?.ToString(),
                     WaitingForMotion = response["waiting_for_motion"]?.ToObject<bool>() ?? false,
-                    Capturing = response["capturing"]?.ToObject<bool>() ?? false
+                    Capturing = response["capturing"]?.ToObject<bool>() ?? false,
+                    ObjectVisible = response["object_visible"]?.ToObject<bool>() ?? false,
+                    ClockPriorityActive = response["clock_priority_active"]?.ToObject<bool>() ?? false,
+                    IdleCloseSec = response["idle_close_sec"]?.ToObject<double>() ?? 10.0,
+                    SecondsSinceClock = response["seconds_since_clock"]?.ToObject<double?>()
                 };
             }
 
@@ -233,19 +239,19 @@ public class GestureClient : IDisposable
                 return null;
             }
 
+            await _sendLock.WaitAsync().ConfigureAwait(false);
             try
             {
                 // Send command (newline is the Python server's delimiter)
                 byte[] data = Encoding.UTF8.GetBytes(command + "\n");
-                await stream.WriteAsync(data, 0, data.Length);
+                await stream.WriteAsync(data, 0, data.Length).ConfigureAwait(false);
 
                 // ReadLineAsync reads exactly one \n-terminated line — safe across packet splits
-                string line = await reader.ReadLineAsync();
+                string line = await reader.ReadLineAsync().ConfigureAwait(false);
                 if (line == null)
                 {
-                    // Server closed the connection
                     isConnected = false;
-                    Console.WriteLine("[GestureClient] Server closed connection.");
+                    Console.WriteLine($"[GestureClient] Server closed connection (port {port}).");
                     StatusChanged?.Invoke(this, "Server closed connection");
                     return null;
                 }
@@ -255,9 +261,13 @@ public class GestureClient : IDisposable
             catch (Exception ex)
             {
                 StatusChanged?.Invoke(this, $"Communication error: {ex.Message}");
-                Console.WriteLine($"[GestureClient] SendCommandAsync error ({command}): {ex.GetType().Name}: {ex.Message}");
+                Console.WriteLine($"[GestureClient:{port}] SendCommandAsync error ({command}): {ex.GetType().Name}: {ex.Message}");
                 isConnected = false;
                 return null;
+            }
+            finally
+            {
+                _sendLock.Release();
             }
         }
 
@@ -295,6 +305,14 @@ public class GestureClient : IDisposable
         public bool WaitingForMotion { get; set; }
         /// <summary>Python service: movement threshold passed; points are being recorded.</summary>
         public bool Capturing { get; set; }
+        /// <summary>YOLO watch service: clock/watch visible in the current frame.</summary>
+        public bool ObjectVisible { get; set; }
+        /// <summary>YOLO watch service: clock visible or within post-clock idle window.</summary>
+        public bool ClockPriorityActive { get; set; }
+        /// <summary>YOLO watch service: seconds without clock before hand gestures resume (YOLO_IDLE_CLOSE_SEC).</summary>
+        public double IdleCloseSec { get; set; }
+        /// <summary>YOLO: seconds since last stable clock detection (null if never seen).</summary>
+        public double? SecondsSinceClock { get; set; }
     }
 
     /// <summary>

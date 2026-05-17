@@ -260,11 +260,14 @@ public class CircularMenuController
 
             if (HasSecondLevel(top))
             {
-                Console.WriteLine($"[CircularMenu] MoveUpAction: Entering second level for {top}. Items: {(top == "Favorites" ? Favorites.Count : (top == "Watched" ? Watched.Count : 0))}");
-                if (top == "Watched")
+                var secondItems = GetSecondLevelItems();
+                if (secondItems.Count == 0)
                 {
-                    Console.WriteLine($"[CircularMenu] Watched items: {string.Join(", ", Watched.Select(s => "'" + s + "'"))}");
+                    Console.WriteLine($"[CircularMenu] MoveUpAction: {top} is empty — staying on top tier");
+                    if (OnAction != null) OnAction(top + "Empty", null);
+                    return;
                 }
+                Console.WriteLine($"[CircularMenu] MoveUpAction: Entering second level for {top} ({secondItems.Count} items)");
                 IsInSecondLevel = true;
                 IsInThirdLevel = false;
                 SecondIndex = 0;
@@ -391,9 +394,11 @@ public class CircularMenuController
 
         // Show second level ring as preview (unhighlighted) if hovering over item with submenu,
         // or highlighted if actually in second level
-        bool hasSecondLevelAtCurrent = HasSecondLevel(topItems.Count > TopIndex && TopIndex >= 0 ? topItems[TopIndex] : "");
-        bool showSecondRing = (IsInSecondLevel && !IsInThirdLevel) || (!IsInSecondLevel && !IsInThirdLevel && hasSecondLevelAtCurrent);
-        
+        string currentTop = topItems.Count > TopIndex && TopIndex >= 0 ? topItems[TopIndex] : "";
+        bool hasPopulatedSecond = HasPopulatedSecondLevel(currentTop);
+        bool showSecondRing = (IsInSecondLevel && !IsInThirdLevel && GetSecondLevelItems().Count > 0)
+            || (!IsInSecondLevel && !IsInThirdLevel && hasPopulatedSecond);
+
         if (showSecondRing)
         {
             List<string> second = GetSecondLevelItems();
@@ -605,6 +610,13 @@ public class CircularMenuController
 
         SelectedThird = null;
 
+        if (IsInSecondLevel && GetSecondLevelItems().Count == 0)
+        {
+            IsInSecondLevel = false;
+            IsInThirdLevel = false;
+            SelectedFavoriteTitle = null;
+        }
+
         var second = GetSecondLevelItems();
         if (second.Count > 0)
         {
@@ -642,6 +654,13 @@ public class CircularMenuController
     private static bool HasSecondLevel(string top)
     {
         return top == "Favorites" || top == "Watched";
+    }
+
+    private bool HasPopulatedSecondLevel(string top)
+    {
+        if (top == "Favorites") return Favorites.Count > 0;
+        if (top == "Watched") return Watched.Count > 0;
+        return false;
     }
 
     private List<string> GetTopLevelItems()

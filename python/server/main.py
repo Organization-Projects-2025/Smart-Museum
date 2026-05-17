@@ -10,7 +10,7 @@ Services:
   5000  auth_server        — Face ID + Bluetooth
   5001  gesture            — Gesture recognition (dollarpy-service)
   5002  gaze_emotion_server — Gaze tracking + emotion detection
-  5003  yolo_server        — YOLOv8 object context
+  5005  yolo_server        — Watch/clock swipes for circular menu
   5004  hand_server        — Hand pose tracking
 
 Usage:
@@ -58,6 +58,26 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(THIS_DIR))
 if THIS_DIR not in sys.path:
     sys.path.insert(0, THIS_DIR)
 
+
+def _load_dotenv():
+    """Load .env from project root into os.environ (setdefault — does not override existing)."""
+    env_path = os.path.join(PROJECT_ROOT, ".env")
+    if not os.path.isfile(env_path):
+        return
+    with open(env_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip()
+            val = val.strip().strip('"').strip("'")
+            if key:
+                os.environ.setdefault(key, val)
+
+
+_load_dotenv()
+
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 
 # ── Imports ───────────────────────────────────────────────────────────────────
@@ -65,7 +85,7 @@ import camera_hub as _cam_mod
 import auth_service
 import demographics_service
 import gaze_emotion_service
-import yolo_service
+import yolo_server
 import hand_service
 
 
@@ -100,7 +120,7 @@ def main():
     # 2. Wire hub into every service that needs frames
     auth_service.set_hub(hub)
     gaze_emotion_service.set_hub(hub)
-    yolo_service.set_hub(hub)
+    yolo_server.set_hub(hub)
     hand_service.set_hub(hub)
 
     # 3. Start services
@@ -108,7 +128,11 @@ def main():
 
     _run("AUTH",       auth_service.start)
     _run("GAZE_EMO",   gaze_emotion_service.start)
-    _run("YOLO",       yolo_service.start)
+    if os.environ.get("DISABLE_YOLO", "").strip() not in ("1", "true", "yes"):
+        def _start_yolo():
+            yolo_server.start(camera_hub=hub)
+
+        _run("YOLO", _start_yolo)
     _run("HAND",       hand_service.start)
 
     # 4. Pre-download DeepFace models in background (first-time only)
@@ -129,7 +153,7 @@ def main():
     _log("SERVER", "  Face Auth:    127.0.0.1:5000")
     _log("SERVER", "  Gesture:      127.0.0.1:5001")
     _log("SERVER", "  Gaze+Emotion: 127.0.0.1:5002")
-    _log("SERVER", "  YOLO Context: 127.0.0.1:5003")
+    _log("SERVER", "  YOLO Watch:   127.0.0.1:5005")
     _log("SERVER", "  Hand Track:   127.0.0.1:5004")
     _log("SERVER", "Press Ctrl+C to stop.")
 

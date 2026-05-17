@@ -99,6 +99,8 @@ public class TuioDemo : Form, TuioListener
     private string activeStoryKey = null;
 
     private bool isLoggedIn = false;
+    /// <summary>Last FaceUserId (or "guest") — used to re-login on close gesture while logged out.</summary>
+    private string _lastLoggedInUserId = null;
     private bool authInProgress = false;
     private string authStatus = "Waiting for Face ID";
     private string authProgressState = "NO_FACE";
@@ -185,6 +187,7 @@ public class TuioDemo : Form, TuioListener
     private Dictionary<string, string> storyKeyByTitle =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     private bool menuOpenedByGesture = false; // Track if menu was opened by hand gesture vs marker
+    private bool menuOpenedByWatch = false;   // Menu opened by YOLO clock (:5005)
     /// <summary>Flick baseline in normalized TUIO space (0–1). Confirm = displacement from here.</summary>
     private float menuFlickArmX = 0.5f, menuFlickArmY = 0.5f;
     private DateTime lastMenuFlickActionUtc = DateTime.MinValue;
@@ -203,12 +206,27 @@ public class TuioDemo : Form, TuioListener
     private const float MenuMoveTriggerDeltaY = 0.035f;
     private const float MenuMoveNeutralBandY = 0.015f;
 
-    // Gesture recognition for circular menu
+    // Gesture recognition for circular menu (hand = :5001, watch/YOLO = :5005)
     private GestureClient gestureClient;
+    private GestureClient watchGestureClient;
     private System.Windows.Forms.Timer gestureCheckTimer;
     private bool isGestureActive = false;
+    private bool isWatchGestureActive = false;
     private bool _gestureNeedsRearm = false;  // re-sends START_TRACKING after auth releases webcam
     private bool _menuNavigatedSinceOpen = false; // true once user swipes after opening menu
+    // Watch (YOLO) priority over hand gestures — matches python YOLO_IDLE_CLOSE_SEC (default 10s)
+    private DateTime _watchLastSeenUtc = DateTime.MinValue;
+    private double _watchIdleCloseSec = 10.0;
+    private bool _watchCurrentlyVisible = false;
+    private bool _watchClockPriorityActive = false;
+    private bool _handPausedForWatch = false;
+    private bool _watchHandBlockLogged = false;
+    private DateTime _watchLastMenuOpenUtc = DateTime.MinValue;
+    private DateTime _watchMenuSessionStartUtc = DateTime.MinValue;
+    private DateTime _watchMenuProtectedUntilUtc = DateTime.MinValue;
+    private int _gesturePollRunning = 0;
+    private const double WatchMenuOpenCooldownSec = 2.0;
+    private const double WatchMenuMinStaySec = 3.0;
 
     // Input prioritization: blocks gestures when TUIOs present or during cooldown
     private InputPrioritizer inputPrioritizer = new InputPrioritizer();
@@ -238,8 +256,10 @@ public class TuioDemo : Form, TuioListener
     private bool _showMuseumAppPhoneBanner;
     private const int YoloPhoneBannerOnFrames = 2;
 
-    // Gesture overlay display
+    // Gesture overlay display ("hand" | "clock")
     private string lastDetectedGesture = null;
+    private string lastGestureSource = null;
+    private string lastGestureActionText = null;
     private DateTime gestureDisplayTime = DateTime.MinValue;
     private const double GESTURE_DISPLAY_DURATION = 2.0; // seconds
 
@@ -358,6 +378,7 @@ public class TuioDemo : Form, TuioListener
         // NOTE: Server must be started manually now (python/server/main.py)
         // Removed: StartMuseumPythonServer();
         InitializeGestureClient();
+        InitializeWatchGestureClient();
         InitializeHandTracker();
         StartLoginFlow();
     }
@@ -459,6 +480,7 @@ public class TuioDemo : Form, TuioListener
             analyticsRecorder.FlushAndSave();
         TeardownGazeAnalytics();
 
+        RememberLoggedInUser();
         isLoggedIn = false;
         visitorProfile = null;
 
@@ -831,6 +853,7 @@ public class TuioDemo : Form, TuioListener
                 }
 
                 visitorProfile = selected;
+                RememberLoggedInUser();
                 authStatus = "Welcome, " + visitorProfile.FullName + ". Your visit will use " + visitorProfile.Language + ".";
 
                 if (IsHandleCreated)
@@ -913,6 +936,7 @@ public class TuioDemo : Form, TuioListener
     private void LoginGuestAndEnter()
     {
         visitorProfile = VisitorProfile.CreateGuestVisitor();
+        RememberLoggedInUser();
         ApplyVisitorTheme();
         ConfigureCircularMenuForUser();
         LoadUserPreferences(); // Load saved Favorites and Watched (guest has none, but keeps code consistent)
@@ -945,6 +969,7 @@ public class TuioDemo : Form, TuioListener
         }
 
         visitorProfile = profile;
+        RememberLoggedInUser();
         ApplyVisitorTheme();
         ConfigureCircularMenuForUser();
         authInProgress = false;
@@ -1025,6 +1050,7 @@ public class TuioDemo : Form, TuioListener
                 }
 
                 visitorProfile = user;
+                RememberLoggedInUser();
                 authStatus = "Welcome, " + visitorProfile.FullName + ". Your experience will be in " + visitorProfile.Language + ".";
 
                 if (IsHandleCreated)
@@ -1123,6 +1149,7 @@ public class TuioDemo : Form, TuioListener
                 }
 
                 visitorProfile = profile;
+                RememberLoggedInUser();
                 authStatus = "Welcome " + visitorProfile.FullName + " (" + visitorProfile.Language + ")";
 
                 if (IsHandleCreated)
@@ -1613,9 +1640,66 @@ public class TuioDemo : Form, TuioListener
 
         if (normalizedGesture == "close")
         {
+            if (TryReloginLastUser())
+                return;
             OnAuthRingBack();
             Invalidate();
         }
+    }
+
+    private void RememberLoggedInUser()
+    {
+        if (visitorProfile == null) return;
+        _lastLoggedInUserId = visitorProfile.GuestSession
+            ? "guest"
+            : visitorProfile.FaceUserId;
+    }
+
+    /// <summary>While logged out, close gesture (hand or clock) signs in the previous user again.</summary>
+    private bool TryReloginLastUser()
+    {
+        if (authInProgress) return false;
+        if (string.IsNullOrEmpty(_lastLoggedInUserId))
+        {
+            Console.WriteLine("[Auth] close — no previous user to restore");
+            return false;
+        }
+
+        if (string.Equals(_lastLoggedInUserId, "guest", StringComparison.OrdinalIgnoreCase))
+        {
+            LoginGuestAndEnter();
+            Console.WriteLine("[Auth] Re-logged in as guest (close gesture)");
+            return true;
+        }
+
+        VisitorProfile profile;
+        if (!TryLoadVisitorProfile(_lastLoggedInUserId, out profile))
+        {
+            Console.WriteLine("[Auth] close — could not restore " + _lastLoggedInUserId + " (not in users.csv)");
+            return false;
+        }
+
+        visitorProfile = profile;
+        ApplyVisitorTheme();
+        ConfigureCircularMenuForUser();
+        LoadUserPreferences();
+        authInProgress = false;
+        loginPhase = LoginAuthPhase.MainPicker;
+        isLoggedIn = true;
+        pendingDuplicateUserId = null;
+        pendingLoginBluetoothUser = null;
+        pendingLoginBluetoothFromDuplicate = false;
+        loginBluetoothFailureCount = 0;
+        loginBluetoothRecoveryEscalated = false;
+        loginBtCooldownUntilUtc = DateTime.MinValue;
+        RearmGestureTracking();
+        authStatus = "Welcome back, " + visitorProfile.FullName + ".";
+        Transition(AppState.Idle, null, null, null, null);
+        InitializeGazeAnalytics();
+        InitializeYoloContext();
+        Console.WriteLine("[Auth] Re-logged in as " + visitorProfile.FaceUserId + " (close gesture)");
+        Invalidate();
+        return true;
     }
 
     private void DrawAuthTuioRing(Graphics g, int cx, int cy, int radius, Color accent, Color dim)
@@ -2090,15 +2174,40 @@ public class TuioDemo : Form, TuioListener
         // Removed hardcoded favorites - they are now loaded per-user from CSV
     }
 
+    /// <summary>300ms poll for watch (:5005) and hand (:5001). Runs even if only one service is up.</summary>
+    private void EnsureGesturePollTimerStarted()
+    {
+        if (gestureCheckTimer != null) return;
+        gestureCheckTimer = new System.Windows.Forms.Timer { Interval = 300 };
+        gestureCheckTimer.Tick += GestureCheckTimer_Tick;
+        gestureCheckTimer.Start();
+        Console.WriteLine("[Gesture] Poll timer started (watch :5005 + hand :5001)");
+    }
+
+    private async void GestureCheckTimer_Tick(object sender, EventArgs e)
+    {
+        if (System.Threading.Interlocked.CompareExchange(ref _gesturePollRunning, 1, 0) != 0)
+            return;
+        try
+        {
+            await CheckForGesture().ConfigureAwait(false);
+        }
+        finally
+        {
+            System.Threading.Interlocked.Exchange(ref _gesturePollRunning, 0);
+        }
+    }
+
     private async void InitializeGestureClient()
     {
         try
         {
+            EnsureGesturePollTimerStarted();
+
             gestureClient = new GestureClient("127.0.0.1", 5001);
             gestureClient.GestureRecognized += OnGestureRecognized;
             gestureClient.StatusChanged += (s, status) =>
             {
-                // Only log connection state changes, not every poll status
                 if (status.Contains("Connected") || status.Contains("failed") || status.Contains("closed"))
                     Console.WriteLine($"[Gesture] {status}");
             };
@@ -2108,9 +2217,6 @@ public class TuioDemo : Form, TuioListener
             {
                 Console.WriteLine("[Gesture] Connected to gesture service on :5001");
                 await gestureClient.StartTrackingAsync();
-                gestureCheckTimer = new System.Windows.Forms.Timer { Interval = 300 };
-                gestureCheckTimer.Tick += async (s, e) => await CheckForGesture();
-                gestureCheckTimer.Start();
             }
             else
             {
@@ -2119,16 +2225,15 @@ public class TuioDemo : Form, TuioListener
                 retryTimer.Tick += async (s, e) =>
                 {
                     retryTimer.Stop();
+                    if (gestureClient == null) return;
                     bool ok = await gestureClient.ConnectAsync();
                     if (ok)
                     {
                         Console.WriteLine("[Gesture] Reconnected to gesture service");
                         await gestureClient.StartTrackingAsync();
-                        gestureCheckTimer = new System.Windows.Forms.Timer { Interval = 300 };
-                        gestureCheckTimer.Tick += async (s2, e2) => await CheckForGesture();
-                        gestureCheckTimer.Start();
                     }
-                    else Console.WriteLine("[Gesture] Retry failed — gesture control unavailable");
+                    else
+                        Console.WriteLine("[Gesture] Retry failed — gesture control unavailable");
                 };
                 retryTimer.Start();
             }
@@ -2139,15 +2244,70 @@ public class TuioDemo : Form, TuioListener
         }
     }
 
+    private async void InitializeWatchGestureClient()
+    {
+        try
+        {
+            EnsureGesturePollTimerStarted();
+
+            watchGestureClient = new GestureClient("127.0.0.1", 5005);
+            watchGestureClient.StatusChanged += (s, status) =>
+            {
+                if (status.Contains("Connected") || status.Contains("failed") || status.Contains("closed"))
+                    Console.WriteLine($"[WatchYOLO] {status}");
+            };
+
+            bool connected = await watchGestureClient.ConnectAsync();
+            if (connected)
+            {
+                Console.WriteLine("[WatchYOLO] Connected to yolo_server on :5005");
+                await watchGestureClient.StartTrackingAsync();
+            }
+            else
+            {
+                Console.WriteLine("[WatchYOLO] Service not reachable on :5005 — retrying in 10s (run start.bat)");
+                var retryTimer = new System.Windows.Forms.Timer { Interval = 10000 };
+                retryTimer.Tick += async (s, e) =>
+                {
+                    retryTimer.Stop();
+                    if (watchGestureClient == null) return;
+                    bool ok = await watchGestureClient.ConnectAsync();
+                    if (ok)
+                    {
+                        Console.WriteLine("[WatchYOLO] Reconnected to yolo_server on :5005");
+                        await watchGestureClient.StartTrackingAsync();
+                    }
+                    else
+                    {
+                        Console.WriteLine("[WatchYOLO] Retry failed — still no :5005");
+                        retryTimer.Start();
+                    }
+                };
+                retryTimer.Start();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[WatchYOLO] Init failed: {ex.Message}");
+        }
+    }
+
     /// <summary>Called on every login success path to restart gesture tracking after auth blocked it.</summary>
     private async void RearmGestureTracking()
     {
-        if (gestureClient == null || !gestureClient.IsConnected) return;
         try
         {
             _gestureNeedsRearm = false;
-            await gestureClient.StartTrackingAsync().ConfigureAwait(false);
-            Console.WriteLine("[Gesture] Tracking re-armed after login");
+            if (gestureClient != null && gestureClient.IsConnected)
+            {
+                await gestureClient.StartTrackingAsync().ConfigureAwait(false);
+                Console.WriteLine("[Gesture] Tracking re-armed after login");
+            }
+            if (watchGestureClient != null && watchGestureClient.IsConnected)
+            {
+                await watchGestureClient.StartTrackingAsync().ConfigureAwait(false);
+                Console.WriteLine("[WatchYOLO] Tracking re-armed after login");
+            }
         }
         catch (Exception ex)
         {
@@ -2205,21 +2365,39 @@ public class TuioDemo : Form, TuioListener
 
     private async System.Threading.Tasks.Task CheckForGesture()
     {
+        // ── Watch / clock (YOLO :5005) — runs unconditionally, no TUIO or login gate ──
+        // RefreshWatchPriority must run first so HandGesturesBlockedByWatch() is current.
+        if (!isWatchGestureActive)
+        {
+            try
+            {
+                await RefreshWatchPriorityAsync().ConfigureAwait(false);
+                await SyncHandGesturePauseForWatchAsync().ConfigureAwait(false);
+                await DrainHandGesturesWhileClockActiveAsync().ConfigureAwait(false);
+                await PollWatchGesturesAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[WatchYOLO] CheckForGesture error: {ex.Message}");
+            }
+        }
+
+        // ── Hand gesture service (:5001) — gated by the usual conditions ──
         if (isGestureActive) return;
-        if (gestureClient == null || !gestureClient.IsConnected) return;
         if (adminAnalyticsVisible) return;
         if (LoginFlowBlocksGestureWebcam()) return;
         if (authInProgress) return;
-        // While the circular menu is visible, always poll gestures (marker- or gesture-opened).
-        // Otherwise InputPrioritizer blocks when any TUIO is present — gestures would expire
-        // server-side before C# could read them after TUIO cooldowns.
-        bool gesturePollWhileMenu = circularMenu.IsVisible;
+        if (HandGesturesBlockedByWatch()) return;
+
+        // Allow hand menu navigation when menu is open, unless clock has priority.
+        bool gesturePollWhileMenu = circularMenu.IsVisible && !menuOpenedByWatch;
         if (!inputPrioritizer.CanAcceptGestures && !gesturePollWhileMenu) return;
 
+        if (gestureClient == null || !gestureClient.IsConnected) return;
+
+        isGestureActive = true;
         try
         {
-            isGestureActive = true;
-
             if (_gestureNeedsRearm)
             {
                 _gestureNeedsRearm = false;
@@ -2241,21 +2419,344 @@ public class TuioDemo : Form, TuioListener
         }
     }
 
+    /// <summary>Read YOLO STATUS — block hand gestures while clock visible, then YOLO_IDLE_CLOSE_SEC after it leaves.</summary>
+    private async System.Threading.Tasks.Task RefreshWatchPriorityAsync()
+    {
+        if (watchGestureClient == null || !watchGestureClient.IsConnected) return;
+
+        var status = await watchGestureClient.GetStatusAsync().ConfigureAwait(false);
+        if (status == null) return;
+
+        if (status.IdleCloseSec > 0)
+            _watchIdleCloseSec = status.IdleCloseSec;
+
+        _watchClockPriorityActive = status.ClockPriorityActive;
+        bool visible = status.ObjectVisible;
+        if (visible)
+        {
+            if (!_watchCurrentlyVisible)
+            {
+                if (!InWatchMenuSession())
+                    _watchMenuSessionStartUtc = DateTime.UtcNow;
+
+                if (_watchLastSeenUtc != DateTime.MinValue &&
+                    (DateTime.UtcNow - _watchLastSeenUtc).TotalSeconds < _watchIdleCloseSec)
+                {
+                    Console.WriteLine("[WatchYOLO] Clock detected again — cooldown reset, hand gestures stay off");
+                }
+                else
+                {
+                    Console.WriteLine(
+                        $"[WatchYOLO] Clock detected — hand gestures paused until gone + {_watchIdleCloseSec:0}s cooldown");
+                }
+            }
+            _watchCurrentlyVisible = true;
+            TryOpenMenuFromWatch();
+        }
+        else
+        {
+            if (_watchCurrentlyVisible)
+            {
+                _watchLastSeenUtc = DateTime.UtcNow;
+                Console.WriteLine(
+                    $"[WatchYOLO] Clock gone — hand gestures resume in {_watchIdleCloseSec:0}s (YOLO_IDLE_CLOSE_SEC)");
+            }
+            _watchCurrentlyVisible = false;
+
+            if (isLoggedIn && circularMenu.IsVisible && menuOpenedByWatch
+                && status.SecondsSinceClock.HasValue
+                && status.SecondsSinceClock.Value >= _watchIdleCloseSec
+                && !InWatchMenuSession())
+            {
+                circularMenu.Hide();
+                menuOpenedByGesture = false;
+                menuOpenedByWatch = false;
+                _watchMenuSessionStartUtc = DateTime.MinValue;
+                ShowGestureOverlay("clock", "CLOSE MENU", "close_menu");
+                Console.WriteLine("[WatchYOLO] Menu closed (clock idle timeout)");
+            }
+        }
+
+        if (!InWatchMenuSession() && _watchMenuSessionStartUtc != DateTime.MinValue
+            && !_watchCurrentlyVisible && !_watchClockPriorityActive)
+        {
+            _watchMenuSessionStartUtc = DateTime.MinValue;
+        }
+
+        bool blocked = HandGesturesBlockedByWatch();
+        if (blocked && !_watchHandBlockLogged)
+        {
+            _watchHandBlockLogged = true;
+            Console.WriteLine($"[WatchYOLO] Hand gesture service (:5001) blocked for clock priority");
+        }
+        else if (!blocked)
+        {
+            _watchHandBlockLogged = false;
+        }
+    }
+
+    /// <summary>Pause/resume Python hand gesture detection so queued swipes cannot fight the watch.</summary>
+    private async System.Threading.Tasks.Task SyncHandGesturePauseForWatchAsync()
+    {
+        if (gestureClient == null || !gestureClient.IsConnected) return;
+
+        bool blocked = HandGesturesBlockedByWatch();
+        if (blocked == _handPausedForWatch) return;
+
+        _handPausedForWatch = blocked;
+        if (blocked)
+        {
+            await gestureClient.PauseDetectionAsync().ConfigureAwait(false);
+            await gestureClient.ResetAsync().ConfigureAwait(false);
+            Console.WriteLine("[WatchYOLO] PAUSE_DETECTION + RESET on hand gesture service (:5001)");
+        }
+        else
+        {
+            await gestureClient.ResumeDetectionAsync().ConfigureAwait(false);
+            _gestureNeedsRearm = true;
+            Console.WriteLine("[WatchYOLO] RESUME_DETECTION on hand gesture service (:5001)");
+        }
+    }
+
+    /// <summary>First clock sighting within YOLO_IDLE_CLOSE_SEC — menu must open and stay protected from flicker.</summary>
+    private bool InWatchMenuSession()
+    {
+        if (_watchMenuSessionStartUtc == DateTime.MinValue) return false;
+        return (DateTime.UtcNow - _watchMenuSessionStartUtc).TotalSeconds < _watchIdleCloseSec;
+    }
+
+    private bool ShouldIgnoreWatchMenuGesture(string gesture)
+    {
+        if (!InWatchMenuSession() && !menuOpenedByWatch) return false;
+        string g = (gesture ?? "").ToLowerInvariant();
+        if (g == "swipe_down" || g == "close_menu")
+            return InWatchMenuSession();
+        if (g == "close" && circularMenu.IsVisible && InWatchMenuSession()
+            && !_menuNavigatedSinceOpen && DateTime.UtcNow < _watchMenuProtectedUntilUtc)
+            return true;
+        return false;
+    }
+
+    /// <summary>Open circularMenu when YOLO reports clock visible (logged-in main experience).</summary>
+    private void TryOpenMenuFromWatch()
+    {
+        if (!isLoggedIn)
+            return;
+        if (authInProgress || adminAnalyticsVisible)
+            return;
+
+        bool inSession = InWatchMenuSession();
+        if (circularMenu.IsVisible)
+            return;
+
+        if (!inSession
+            && (DateTime.UtcNow - _watchLastMenuOpenUtc).TotalSeconds < WatchMenuOpenCooldownSec)
+            return;
+
+        circularMenu.ShowFavorite = !string.IsNullOrEmpty(GetCurrentFigureStoryKey());
+        if (circularMenu.Show())
+        {
+            menuOpenedByGesture = true;
+            menuOpenedByWatch = true;
+            menuFlickNeedsResync = true;
+            _menuNavigatedSinceOpen = false;
+            _watchLastMenuOpenUtc = DateTime.UtcNow;
+            _watchMenuProtectedUntilUtc = DateTime.UtcNow.AddSeconds(WatchMenuMinStaySec);
+            ShowGestureOverlay("clock", "OPEN MENU", "close");
+            Console.WriteLine(inSession
+                ? "[WatchYOLO] Menu opened (clock session, protected)"
+                : "[WatchYOLO] Menu opened (clock visible via STATUS)");
+        }
+        else
+        {
+            Console.WriteLine("[WatchYOLO] Menu open failed — circularMenu has no top-level items (ConfigureCircularMenuForUser?)");
+        }
+    }
+
+    /// <summary>True while clock is visible, or for YOLO_IDLE_CLOSE_SEC after it disappears.</summary>
+    private bool HandGesturesBlockedByWatch()
+    {
+        if (_watchClockPriorityActive || _watchCurrentlyVisible) return true;
+        if (menuOpenedByWatch && circularMenu.IsVisible) return true;
+        if (_watchLastSeenUtc == DateTime.MinValue) return false;
+        return (DateTime.UtcNow - _watchLastSeenUtc).TotalSeconds < _watchIdleCloseSec;
+    }
+
+    private double GetWatchCooldownRemainingSec()
+    {
+        if (_watchCurrentlyVisible || _watchClockPriorityActive)
+            return _watchIdleCloseSec;
+        if (_watchLastSeenUtc == DateTime.MinValue)
+            return 0;
+        double elapsed = (DateTime.UtcNow - _watchLastSeenUtc).TotalSeconds;
+        return Math.Max(0.0, _watchIdleCloseSec - elapsed);
+    }
+
+    /// <summary>Bottom-left HUD while clock has priority or post-clock hand-gesture cooldown.</summary>
+    private void DrawWatchClockCooldown(Graphics g)
+    {
+        if (!HandGesturesBlockedByWatch())
+            return;
+
+        double totalSec = Math.Max(1.0, _watchIdleCloseSec);
+        double remainingSec = GetWatchCooldownRemainingSec();
+        bool clockOnTable = _watchCurrentlyVisible || _watchClockPriorityActive;
+        float progress = clockOnTable
+            ? 1f
+            : (float)Math.Max(0.0, Math.Min(1.0, remainingSec / totalSec));
+
+        int pad = 20;
+        int boxW = 168;
+        int boxH = 76;
+        int x = pad;
+        int y = H - boxH - pad;
+        var box = new Rectangle(x, y, boxW, boxH);
+
+        Color accent = Color.FromArgb(230, 100, 190, 255);
+        Color accentDim = Color.FromArgb(120, 60, 110, 140);
+
+        using (var bg = new SolidBrush(Color.FromArgb(210, 14, 16, 28)))
+            g.FillRectangle(bg, box);
+        using (var border = new Pen(accent, 2f))
+            g.DrawRectangle(border, box);
+
+        const int ringPad = 10;
+        int ringSize = boxH - ringPad * 2;
+        var ringRect = new Rectangle(x + ringPad, y + ringPad, ringSize, ringSize);
+        using (var trackPen = new Pen(accentDim, 4f))
+            g.DrawArc(trackPen, ringRect, 0, 360);
+        float sweep = progress * 360f;
+        if (sweep > 0.5f)
+        {
+            using (var progPen = new Pen(accent, 4f) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+                g.DrawArc(progPen, ringRect, -90, -sweep);
+        }
+
+        string countText = clockOnTable
+            ? ((int)totalSec).ToString()
+            : Math.Ceiling(remainingSec).ToString("0");
+        string subText = clockOnTable
+            ? "CLOCK · hand off"
+            : "s until hand OK";
+
+        var sfCenter = new StringFormat
+        {
+            Alignment = StringAlignment.Center,
+            LineAlignment = StringAlignment.Center
+        };
+        using (var numBrush = new SolidBrush(Color.White))
+        using (var smallBrush = new SolidBrush(accent))
+        {
+            g.DrawString(countText, fontTitle, numBrush,
+                new RectangleF(ringRect.X, ringRect.Y - 2, ringRect.Width, ringRect.Height), sfCenter);
+
+            int textX = ringRect.Right + 6;
+            int textW = box.Right - textX - 8;
+            g.DrawString("CLOCK", fontSmall, smallBrush,
+                new RectangleF(textX, y + 14, textW, 22), StringFormat.GenericDefault);
+            using (var subBrush = new SolidBrush(Color.FromArgb(200, 200, 210, 230)))
+                g.DrawString(subText, fontHint, subBrush,
+                    new RectangleF(textX, y + 36, textW, 28), StringFormat.GenericDefault);
+        }
+    }
+
+    /// <summary>Discard queued hand gestures so they cannot move the menu during clock priority.</summary>
+    private async System.Threading.Tasks.Task DrainHandGesturesWhileClockActiveAsync()
+    {
+        if (!HandGesturesBlockedByWatch()) return;
+        if (gestureClient == null || !gestureClient.IsConnected) return;
+
+        for (int i = 0; i < 8; i++)
+        {
+            var result = await gestureClient.RecognizeOnlyAsync().ConfigureAwait(false);
+            if (result == null || string.IsNullOrEmpty(result.Gesture))
+                break;
+            Console.WriteLine($"[WatchYOLO] Dropped hand gesture (clock priority): {result.Gesture}");
+        }
+    }
+
+    private async System.Threading.Tasks.Task PollWatchGesturesAsync()
+    {
+        if (isWatchGestureActive) return;
+        if (watchGestureClient == null || !watchGestureClient.IsConnected) return;
+        // No isLoggedIn gate — "close" (open menu) must fire regardless of login state.
+        // HandleGesture already routes non-logged-in calls to HandleAuthScreenGesture.
+
+        try
+        {
+            isWatchGestureActive = true;
+            for (int i = 0; i < 8; i++)
+            {
+                var result = await watchGestureClient.RecognizeOnlyAsync().ConfigureAwait(false);
+                if (result == null || string.IsNullOrEmpty(result.Gesture))
+                    break;
+
+                if (ShouldIgnoreWatchMenuGesture(result.Gesture))
+                {
+                    Console.WriteLine(
+                        $"[WatchYOLO] Ignored {result.Gesture} (clock session / menu protected)");
+                    continue;
+                }
+
+                Console.WriteLine(
+                    $"[WatchYOLO] RECOGNIZE → {result.Gesture}  score={result.Score:F2}  → circularMenu");
+                HandleGesture(result.Gesture, fromWatch: true);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[WatchYOLO] Error: {ex.Message}");
+        }
+        finally
+        {
+            isWatchGestureActive = false;
+        }
+    }
+
     private void OnGestureRecognized(object sender, GestureRecognizedEventArgs e) { }
 
-    private void HandleGesture(string gesture)
+    private void HandleGesture(string gesture, bool fromWatch = false)
     {
-        if (InvokeRequired) { BeginInvoke(new Action(() => HandleGesture(gesture))); return; }
+        if (InvokeRequired) { BeginInvoke(new Action(() => HandleGesture(gesture, fromWatch))); return; }
 
-        lastDetectedGesture = gesture;
-        gestureDisplayTime = DateTime.Now;
+        string logTag = fromWatch ? "[WatchYOLO]" : "[Gesture]";
+
+        if (!fromWatch && HandGesturesBlockedByWatch())
+        {
+            Console.WriteLine($"[WatchYOLO] Blocked hand gesture: {gesture}");
+            return;
+        }
 
         if (!isLoggedIn)
         {
+            if (string.Equals(gesture, "close", StringComparison.OrdinalIgnoreCase))
+            {
+                if (TryReloginLastUser())
+                {
+                    ShowGestureOverlay(fromWatch ? "clock" : "hand", "WELCOME BACK", "close");
+                    return;
+                }
+            }
+            if (fromWatch)
+            {
+                Console.WriteLine($"[WatchYOLO] Ignored {gesture} — log in first (close restores last user)");
+                return;
+            }
+            ShowGestureOverlay("hand", GestureActionLabel(gesture, false), gesture);
             HandleAuthScreenGesture(gesture.ToLower().Replace("_", ""));
-            Invalidate();
             return;
         }
+
+        if (fromWatch && ShouldIgnoreWatchMenuGesture(gesture))
+        {
+            Console.WriteLine($"[WatchYOLO] Ignored {gesture} (clock session / menu protected)");
+            return;
+        }
+
+        if (fromWatch)
+            ShowGestureOverlay("clock", GestureActionLabel(gesture, true), gesture);
+        else
+            ShowGestureOverlay("hand", GestureActionLabel(gesture, false), gesture);
 
         if (adminAnalyticsVisible)
         {
@@ -2273,12 +2774,15 @@ public class TuioDemo : Form, TuioListener
                     if (circularMenu.Show())
                     {
                         menuOpenedByGesture = true;
+                        menuOpenedByWatch = fromWatch;
                         menuFlickNeedsResync = true;
-                        _menuNavigatedSinceOpen = false; // reset until user navigates or confirms
-                        Console.WriteLine("[Gesture] Menu opened");
+                        _menuNavigatedSinceOpen = false;
+                        if (fromWatch)
+                            _watchMenuProtectedUntilUtc = DateTime.UtcNow.AddSeconds(WatchMenuMinStaySec);
+                        Console.WriteLine($"{logTag} Menu opened (circularMenu)");
                     }
                     else
-                        Console.WriteLine("[Gesture] Menu open skipped — no valid top-level selection.");
+                        Console.WriteLine($"{logTag} Menu open skipped — no valid top-level selection.");
                 }
                 else
                 {
@@ -2287,7 +2791,7 @@ public class TuioDemo : Form, TuioListener
                     circularMenu.MoveUpAction();
                     _menuNavigatedSinceOpen = true; // unlock TUIO flick + treat as “navigated” for inner-tier use
                     Console.WriteLine(
-                        $"[Gesture] Close→confirm tier top={circularMenu.SelectedTop ?? "—"} " +
+                        $"{logTag} close→confirm top={circularMenu.SelectedTop ?? "—"} " +
                         $"second={circularMenu.SelectedSecond ?? "—"} third={circularMenu.SelectedThird ?? "—"}");
                 }
                 Invalidate();
@@ -2296,11 +2800,13 @@ public class TuioDemo : Form, TuioListener
             case "swipe_right":
                 if (circularMenu.IsVisible)
                 {
-                    circularMenu.NavigateNext(); // align with gesture name / Python RECOGNIZE label
+                    circularMenu.NavigateNext();
                     _menuNavigatedSinceOpen = true;
-                    Console.WriteLine($"[Gesture] → {circularMenu.SelectedTop ?? circularMenu.SelectedSecond}");
+                    Console.WriteLine($"{logTag} swipe_right → {circularMenu.SelectedTop ?? circularMenu.SelectedSecond}");
                     Invalidate();
                 }
+                else if (fromWatch)
+                    Console.WriteLine($"{logTag} swipe_right — menu hidden (show clock to open)");
                 break;
 
             case "swipe_left":
@@ -2308,13 +2814,41 @@ public class TuioDemo : Form, TuioListener
                 {
                     circularMenu.NavigatePrevious();
                     _menuNavigatedSinceOpen = true;
-                    Console.WriteLine($"[Gesture] ← {circularMenu.SelectedTop ?? circularMenu.SelectedSecond}");
+                    Console.WriteLine($"{logTag} swipe_left ← {circularMenu.SelectedTop ?? circularMenu.SelectedSecond}");
                     Invalidate();
                 }
+                else if (fromWatch)
+                    Console.WriteLine($"{logTag} swipe_left — menu hidden");
+                break;
+
+            case "swipe_up":
+                if (circularMenu.IsVisible)
+                {
+                    circularMenu.MoveUpAction();
+                    _menuNavigatedSinceOpen = true;
+                    Console.WriteLine($"{logTag} swipe_up ↑ confirm");
+                    Invalidate();
+                }
+                else if (fromWatch)
+                    Console.WriteLine($"{logTag} swipe_up — menu hidden");
+                break;
+
+            case "swipe_down":
+            case "close_menu":
+                if (circularMenu.IsVisible)
+                {
+                    circularMenu.Hide();
+                    menuOpenedByGesture = false;
+                    menuOpenedByWatch = false;
+                    Console.WriteLine($"{logTag} {gesture} ↓ menu closed");
+                    Invalidate();
+                }
+                else if (fromWatch && gesture.Equals("close_menu", StringComparison.OrdinalIgnoreCase))
+                    Console.WriteLine($"{logTag} close_menu (idle) — menu already hidden");
                 break;
 
             default:
-                Console.WriteLine($"[Gesture] Unknown gesture ignored: {gesture}");
+                Console.WriteLine($"{logTag} Unknown gesture ignored: {gesture}");
                 break;
         }
     }
@@ -2364,6 +2898,7 @@ public class TuioDemo : Form, TuioListener
             if (visitorProfile == null || !visitorProfile.IsAdmin) return;
             circularMenu.Hide();
             menuOpenedByGesture = false;
+            menuOpenedByWatch = false;
             adminAnalyticsVisible = true;
             if (adminAnalyticsPanel == null)
                 adminAnalyticsPanel = new AdminAnalyticsPanel(analyticsRecorder,
@@ -2402,7 +2937,8 @@ public class TuioDemo : Form, TuioListener
         if (action == "Home")
         {
             circularMenu.Hide();
-            menuOpenedByGesture = false; // Clear flag
+            menuOpenedByGesture = false;
+            menuOpenedByWatch = false; // Clear flag
             StopAndUnlockSlides();
             Transition(AppState.Idle, null, null, null, null);
             return;
@@ -2412,7 +2948,8 @@ public class TuioDemo : Form, TuioListener
         {
             SaveUserPreferences(); // Save Favorites and Watched before logout
             circularMenu.Hide();
-            menuOpenedByGesture = false; // Clear flag
+            menuOpenedByGesture = false;
+            menuOpenedByWatch = false; // Clear flag
             StopAndUnlockSlides();
             Transition(AppState.Idle, null, null, null, null);
             adminAnalyticsVisible = false;
@@ -2430,7 +2967,8 @@ public class TuioDemo : Form, TuioListener
                 if (storySlidesByKey.TryGetValue(key, out slides))
                 {
                     circularMenu.Hide();
-                    menuOpenedByGesture = false; // Clear flag
+                    menuOpenedByGesture = false;
+            menuOpenedByWatch = false; // Clear flag
                     StartLockedSlideShow(slides, SlideShowContext.MenuStory, key);
                 }
             }
@@ -2458,7 +2996,8 @@ public class TuioDemo : Form, TuioListener
                 {
                     Console.WriteLine($"[Menu] Found slides: {slides.Count} slides");
                     circularMenu.Hide();
-                    menuOpenedByGesture = false; // Clear flag
+                    menuOpenedByGesture = false;
+            menuOpenedByWatch = false; // Clear flag
                     StartLockedSlideShow(slides, SlideShowContext.MenuStory, key);
                 }
                 else
@@ -2937,7 +3476,8 @@ public class TuioDemo : Form, TuioListener
             state == AppState.SingleFigure || state == AppState.PairNotFacing || state == AppState.PairFacing ||
             fadingIn || circularMenu.IsVisible ||
             !isLoggedIn || adminAnalyticsVisible ||
-            (slideShow != null && slideShow.IsRunning && currentSlide != null))
+            (slideShow != null && slideShow.IsRunning && currentSlide != null) ||
+            HandGesturesBlockedByWatch())
             Invalidate();
     }
 
@@ -3032,7 +3572,8 @@ public class TuioDemo : Form, TuioListener
             circularMenu.ShowFavorite = !string.IsNullOrEmpty(GetCurrentFigureStoryKey());
             if (!circularMenu.Show())
                 return;
-            menuOpenedByGesture = false; // Opened by marker, not gesture
+            menuOpenedByGesture = false;
+            menuOpenedByWatch = false; // Opened by marker, not gesture
             menuFlickNeedsResync = true;
         }
 
@@ -3136,6 +3677,7 @@ public class TuioDemo : Form, TuioListener
         if (!isLoggedIn)
         {
             DrawLoginScreen(g);
+            DrawWatchClockCooldown(g);
             DrawGestureOverlay(g); // Show gesture overlay even on login screen
             return;
         }
@@ -3145,6 +3687,7 @@ public class TuioDemo : Form, TuioListener
             adminAnalyticsPanel.Draw(g, W, H, fontTitle, fontBody, fontSmall, themeSecondary, CPapyrus,
                 analyticsRecorder != null ? analyticsRecorder.GetLiveSnapshot() : null);
             DrawMuseumAppPhoneDownloadBanner(g);
+            DrawWatchClockCooldown(g);
             DrawGestureOverlay(g);
             return;
         }
@@ -3174,7 +3717,7 @@ public class TuioDemo : Form, TuioListener
             circularMenu.Draw(g, W, H, themeSecondary, themeTertiary, fontSubtitle, fontSmall);
 
         DrawMuseumAppPhoneDownloadBanner(g);
-        // Draw gesture overlay on top of everything
+        DrawWatchClockCooldown(g);
         DrawGestureOverlay(g);
     }
 
@@ -3205,77 +3748,89 @@ public class TuioDemo : Form, TuioListener
         }
     }
 
+    private static string GestureActionLabel(string gesture, bool fromWatch)
+    {
+        switch ((gesture ?? "").ToLowerInvariant())
+        {
+            case "close": return fromWatch ? "OPEN MENU" : "OPEN / CONFIRM";
+            case "close_menu": return "CLOSE MENU";
+            case "swipe_right": return "NEXT";
+            case "swipe_left": return "PREVIOUS";
+            case "swipe_up": return "CONFIRM";
+            case "swipe_down": return "CANCEL";
+            case "thumbsup":
+            case "thumbup":
+            case "thumbs": return "CONFIRM";
+            case "open": return "OPEN";
+            default: return gesture.Replace("_", " ").ToUpperInvariant();
+        }
+    }
+
+    private void ShowGestureOverlay(string source, string actionLabel, string gestureKey)
+    {
+        lastGestureSource = source;
+        lastGestureActionText = actionLabel;
+        lastDetectedGesture = gestureKey;
+        gestureDisplayTime = DateTime.Now;
+        Invalidate();
+    }
+
     private void DrawGestureOverlay(Graphics g)
     {
-        // Check if we should display the gesture
-        if (string.IsNullOrEmpty(lastDetectedGesture))
+        if (string.IsNullOrEmpty(lastDetectedGesture) && string.IsNullOrEmpty(lastGestureActionText))
             return;
-        
+
         double elapsedSeconds = (DateTime.Now - gestureDisplayTime).TotalSeconds;
-        
-        // Hide after 2 seconds
         if (elapsedSeconds > GESTURE_DISPLAY_DURATION)
         {
             lastDetectedGesture = null;
+            lastGestureSource = null;
+            lastGestureActionText = null;
             return;
         }
-        
-        // Calculate fade-out alpha (fade in last 0.5 seconds)
+
         int alpha = 255;
         if (elapsedSeconds > GESTURE_DISPLAY_DURATION - 0.5)
         {
             double fadeProgress = (GESTURE_DISPLAY_DURATION - elapsedSeconds) / 0.5;
             alpha = (int)(255 * fadeProgress);
         }
-        
-        // Format gesture name for display (capitalize, replace underscores)
-        string displayText = lastDetectedGesture.Replace("_", " ").ToUpper();
-        
-        // Rename gestures for better user understanding
-        if (displayText == "SWIPEL" || displayText == "SWIPE LEFT")
-            displayText = "SWIPE RIGHT";
-        else if (displayText == "SWIPER" || displayText == "SWIPE RIGHT")
-            displayText = "SWIPE LEFT";
-        else if (displayText == "THUMBS" || displayText == "THUMBSUP" || displayText == "THUMBUP")
-            displayText = "THUMBS UP";
-        
-        // Position in top-right corner
+
+        bool isClock = string.Equals(lastGestureSource, "clock", StringComparison.OrdinalIgnoreCase);
+        string sourceLine = isClock ? "CLOCK" : "HAND";
+        string actionLine = lastGestureActionText;
+        if (string.IsNullOrEmpty(actionLine))
+        {
+            actionLine = lastDetectedGesture.Replace("_", " ").ToUpperInvariant();
+            if (actionLine == "SWIPEL" || actionLine == "SWIPE LEFT") actionLine = "SWIPE RIGHT";
+            else if (actionLine == "SWIPER" || actionLine == "SWIPE RIGHT") actionLine = "SWIPE LEFT";
+        }
+
         int padding = 20;
-        int boxWidth = 250;
-        int boxHeight = 60;
+        int boxWidth = 280;
+        int boxHeight = 72;
         int x = W - boxWidth - padding;
         int y = padding;
-        
-        // Draw semi-transparent background
-        using (var bgBrush = new SolidBrush(Color.FromArgb(alpha * 180 / 255, 12, 12, 12)))
-        {
+
+        Color accent = isClock ? Color.FromArgb(255, 120, 200, 255) : themeSecondary;
+
+        using (var bgBrush = new SolidBrush(Color.FromArgb(alpha * 200 / 255, 12, 12, 12)))
             g.FillRectangle(bgBrush, x, y, boxWidth, boxHeight);
-        }
-        
-        // Draw border with theme color
-        using (var borderPen = new Pen(Color.FromArgb(alpha, themeSecondary), 2))
-        {
+        using (var borderPen = new Pen(Color.FromArgb(alpha, accent), 2))
             g.DrawRectangle(borderPen, x, y, boxWidth, boxHeight);
-        }
-        
-        // Draw gesture text
-        using (var textBrush = new SolidBrush(Color.FromArgb(alpha, themeSecondary)))
+
+        var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
+        using (var sourceBrush = new SolidBrush(Color.FromArgb(alpha, accent)))
+        using (var actionBrush = new SolidBrush(Color.FromArgb(alpha, Color.White)))
         {
-            StringFormat format = new StringFormat
-            {
-                Alignment = StringAlignment.Center,
-                LineAlignment = StringAlignment.Center
-            };
-            
-            RectangleF textRect = new RectangleF(x, y, boxWidth, boxHeight);
-            g.DrawString(displayText, fontSubtitle, textBrush, textRect, format);
+            g.DrawString(sourceLine, fontSubtitle, sourceBrush,
+                new RectangleF(x, y + 4, boxWidth, 28), sf);
+            g.DrawString(actionLine, fontSmall, actionBrush,
+                new RectangleF(x, y + 30, boxWidth, 36), sf);
         }
-        
-        // Request another redraw if still visible (for fade animation)
+
         if (elapsedSeconds < GESTURE_DISPLAY_DURATION)
-        {
             Invalidate();
-        }
     }
 
     private void DrawLoginScreen(Graphics g)
@@ -4590,6 +5145,10 @@ public class TuioDemo : Form, TuioListener
         if (gestureClient != null)
         {
             gestureClient.Dispose();
+        }
+        if (watchGestureClient != null)
+        {
+            watchGestureClient.Dispose();
         }
         
         if (client != null)
