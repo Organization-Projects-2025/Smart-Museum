@@ -15,6 +15,11 @@ public static class AppEnvironment
         get { return string.Equals(Get("skip_auth", "0"), "1", StringComparison.OrdinalIgnoreCase); }
     }
 
+    public static bool DebugMode
+    {
+        get { return string.Equals(Get("DEBUG_MODE", "0"), "1", StringComparison.OrdinalIgnoreCase); }
+    }
+
     public static string SkipUserId
     {
         get
@@ -491,11 +496,6 @@ public class BluetoothService
 
     public bool Verify(string targetMac, out string status)
     {
-        // TEMPORARY: Bluetooth 2FA disabled for testing
-        status = "⚠ Bluetooth 2FA temporarily disabled";
-        return true;
-
-        /* ORIGINAL CODE - UNCOMMENT TO RE-ENABLE BLUETOOTH 2FA
         // MANDATORY Bluetooth verification for users with registered MAC addresses
         // SKIPPED completely for users without MAC addresses (MAC = "0" or empty)
 
@@ -523,7 +523,6 @@ public class BluetoothService
 
             string response = client.recieveMessage();
             client.closeConnection();
-
             if (response == null || response == "")
             {
                 status = "No response from authentication server. Please try again.";
@@ -575,7 +574,6 @@ public class BluetoothService
             status = "✗ Bluetooth verification error: " + FriendlyBluetoothError(ex.Message);
             return false; // BLOCK login - Bluetooth is mandatory
         }
-        */
     }
 
     /// <summary>Registration: discover a nearby BLE device (Python picks best named candidate).</summary>

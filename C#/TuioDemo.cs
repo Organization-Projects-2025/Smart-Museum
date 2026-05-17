@@ -249,6 +249,8 @@ public class TuioDemo : Form, TuioListener
     private long lastPolledGazeSequence = -1;
     private const int GazeValidHoldMs = 900;
     private string liveGazeIssueUserText = "";
+    // Actual rendered pixel bounds of the content (image dest or text panel) — updated every paint
+    private RectangleF _lastRenderedContentBounds = RectangleF.Empty;
     private YoloContextClient yoloContextClient;
     private readonly SessionAnalyticsRecorder analyticsRecorder = new SessionAnalyticsRecorder();
     private AdminAnalyticsPanel adminAnalyticsPanel;
@@ -353,6 +355,7 @@ public class TuioDemo : Form, TuioListener
             fadeAlpha = 1f;
             fadingIn = false;
             slideElapsedMs = 0;
+            _lastRenderedContentBounds = RectangleF.Empty; // Reset so stale bounds don't carry over
             if (slide != null && analyticsRecorder != null && visitorProfile != null)
             {
                 string title = "";
@@ -2178,6 +2181,69 @@ public class TuioDemo : Form, TuioListener
         emotionMusic.Update(slideshowActive, valid, dom);
     }
 
+    /// <summary>
+    /// Updates the slideshow manager with gaze attention data for adaptive timing.
+    /// Determines if user is looking at the content area (image or text).
+    /// </summary>
+    private void UpdateGazeAdaptiveSlideshow()
+    {
+        if (slideShow == null || currentSlide == null) return;
+
+        bool gazeValid;
+        double gx, gy;
+
+        lock (liveGazeLock)
+        {
+            gazeValid = liveGazeValid;
+            gx = liveGazeGx;
+            gy = liveGazeGy;
+        }
+
+        bool gazeOnContent = false;
+
+        if (gazeValid)
+        {
+            // Compute cursor pixel position — same formula as the drawn cursor
+            int px = (int)(Math.Max(0.0, Math.Min(1.0, gx)) * W);
+            int py = (int)(Math.Max(0.0, Math.Min(1.0, gy)) * H);
+
+            // Check if cursor is inside the content bounds
+            RectangleF contentBounds = GetSlideContentBounds(currentSlide);
+            gazeOnContent = contentBounds.Contains(px, py);
+        }
+
+        // Update slideshow manager with gaze attention
+        slideShow.UpdateGazeAttention(gazeValid, gazeOnContent);
+    }
+
+    /// <summary>
+    /// Returns the screen bounds of the content area for the current slide.
+    /// For images: the image display area. For text: the text rendering area.
+    /// </summary>
+    private RectangleF GetSlideContentBounds(ContentSlide slide)
+    {
+        if (slide == null) return RectangleF.Empty;
+
+        // Use the cached bounds written by Draw*Slide on the most recent frame.
+        // This is always the exact rendered rectangle (FitRect output for images,
+        // panel rect for text, etc.) so detection is pixel-perfect.
+        if (!_lastRenderedContentBounds.IsEmpty)
+            return _lastRenderedContentBounds;
+
+        // Fallback before the first paint: compute from layout constants.
+        int headerH = (state == AppState.PairFacing || lockedContext == SlideShowContext.Relationship) ? 105 : 95;
+        int yOff    = (state == AppState.PairFacing || lockedContext == SlideShowContext.Relationship) ? 22 : 20;
+        var area = new Rectangle(50, headerH + yOff, W - 100, H - headerH - 70);
+
+        if (slide.Type == ContentType.Text)
+        {
+            int padX = Math.Min(60, area.Width / 8);
+            return new RectangleF(area.X + padX, area.Y + area.Height / 8f,
+                                  area.Width - padX * 2, area.Height * 6f / 8f);
+        }
+        return area;
+    }
+
     private void UpdateAdminTuio()
     {
         if (adminAnalyticsPanel == null || !adminAnalyticsVisible) return;
@@ -3610,6 +3676,12 @@ public class TuioDemo : Form, TuioListener
 
         PollGazeEmotionClient();
 
+        // Update gaze-based adaptive slideshow timing
+        if (slideShow != null && slideShow.IsRunning && currentSlide != null)
+        {
+            UpdateGazeAdaptiveSlideshow();
+        }
+
         if (slideShow != null && slideShow.IsRunning && currentSlide != null)
         {
             slideElapsedMs += animTimer.Interval;
@@ -3868,6 +3940,7 @@ public class TuioDemo : Form, TuioListener
             DrawLiveGazeEmotionOverlay(g, menuContent);
             DrawProgressDots(g, slideShow.CurrentIndex, slideShow.TotalSlides,
                 W / 2, H - 26, CGoldLight);
+            DrawGazeAttentionIndicator(g, W / 2 - 150, H - 40, 300);
         }
 
         if (circularMenu.IsVisible)
@@ -4505,6 +4578,7 @@ public class TuioDemo : Form, TuioListener
 
         DrawProgressDots(g, slideShow.CurrentIndex, slideShow.TotalSlides,
                          W / 2, H - 26, accent);
+        DrawGazeAttentionIndicator(g, W / 2 - 150, H - 40, 300);
         DrawOuterBorder(g);
     }
 
@@ -4657,6 +4731,7 @@ public class TuioDemo : Form, TuioListener
 
         DrawProgressDots(g, slideShow.CurrentIndex, slideShow.TotalSlides,
                          W / 2, H - 26, CGoldLight);
+        DrawGazeAttentionIndicator(g, W / 2 - 150, H - 40, 300);
         DrawOuterBorder(g);
     }
 
@@ -4703,6 +4778,20 @@ public class TuioDemo : Form, TuioListener
             issueHint = liveGazeIssueUserText;
         }
 
+        // Compute cursor pixel position from normalized gaze
+        double nx = Math.Max(0.0, Math.Min(1.0, gx));
+        double ny = Math.Max(0.0, Math.Min(1.0, gy));
+        int px = (int)(nx * W);
+        int py = (int)(ny * H);
+
+        // Determine if cursor is over content RIGHT NOW by checking pixel position
+        bool gazeOnContent = false;
+        if (valid)
+        {
+            RectangleF contentBounds = GetSlideContentBounds(currentSlide);
+            gazeOnContent = contentBounds.Contains(px, py);
+        }
+
         string emotionLine;
         if (!streamOn)
             emotionLine = "Dominant expression: — (start gaze_emotion_service.py on 127.0.0.1:5002)";
@@ -4712,6 +4801,16 @@ public class TuioDemo : Form, TuioListener
                 : issueHint);
         else
             emotionLine = "Dominant expression: " + FormatDominantEmotionLabel(dom);
+        
+        // Add gaze attention indicator to emotion line
+        if (slideShow.GazeAdaptiveEnabled && valid)
+        {
+            if (gazeOnContent)
+                emotionLine += " 👁 Viewing";
+            else
+                emotionLine += " ⏩ Looking away...";
+        }
+
         var labelRect = new RectangleF(contentArea.X + 10, contentArea.Y + 10,
             Math.Max(40, contentArea.Width - 20), 36);
         using (var bg = new SolidBrush(Color.FromArgb(210, 12, 14, 20)))
@@ -4721,19 +4820,37 @@ public class TuioDemo : Form, TuioListener
 
         if (!valid) return;
 
-        double nx = Math.Max(0.0, Math.Min(1.0, gx));
-        double ny = Math.Max(0.0, Math.Min(1.0, gy));
-        int px = contentArea.X + (int)(nx * contentArea.Width);
-        int py = contentArea.Y + (int)(ny * contentArea.Height);
         const int outerR = 14;
-        using (var ring = new Pen(Color.FromArgb(240, 255, 255, 255), 3f))
+        
+        // Cursor color based on real-time position check — green = on content, red = off content
+        Color ringColor = gazeOnContent 
+            ? Color.FromArgb(240, 80, 255, 80)   // Green when on content
+            : Color.FromArgb(240, 255, 255, 255); // White when off content
+        Color dotColor = gazeOnContent
+            ? Color.FromArgb(230, 60, 255, 60)   // Green dot
+            : Color.FromArgb(230, 255, 60, 60);  // Red dot
+        
+        using (var ring = new Pen(ringColor, 3f))
             g.DrawEllipse(ring, px - outerR, py - outerR, outerR * 2, outerR * 2);
-        using (var fill = new SolidBrush(Color.FromArgb(230, 255, 60, 60)))
+        using (var fill = new SolidBrush(dotColor))
             g.FillEllipse(fill, px - 5, py - 5, 10, 10);
         using (var cross = new Pen(Color.FromArgb(200, 255, 255, 255), 1.5f))
         {
             g.DrawLine(cross, px - 22, py, px + 22, py);
             g.DrawLine(cross, px, py - 22, px, py + 22);
+        }
+        
+        // Draw content bounds outline when gaze adaptive is enabled (for debugging/demo)
+        if (slideShow.GazeAdaptiveEnabled && AppEnvironment.DebugMode)
+        {
+            RectangleF contentBounds = GetSlideContentBounds(currentSlide);
+            using (var boundsPen = new Pen(Color.FromArgb(100, 255, 255, 0), 2f))
+            {
+                boundsPen.DashStyle = System.Drawing.Drawing2D.DashStyle.Dash;
+                g.DrawRectangle(boundsPen, 
+                    contentBounds.X, contentBounds.Y, 
+                    contentBounds.Width, contentBounds.Height);
+            }
         }
     }
 
@@ -4793,6 +4910,8 @@ public class TuioDemo : Form, TuioListener
         if (img != null)
         {
             Rectangle dest = FitRect(img.Width, img.Height, area);
+            // Cache the exact rendered bounds for gaze hit-testing
+            _lastRenderedContentBounds = dest;
             using (var ia = new ImageAttributes())
             {
                 var cm = new ColorMatrix();
@@ -4804,6 +4923,7 @@ public class TuioDemo : Form, TuioListener
         }
         else
         {
+            _lastRenderedContentBounds = area;
             using (var pen = new Pen(Color.FromArgb(alpha, CGoldDim), 2))
                 g.DrawRectangle(pen, area);
             DrawCentered(g,
@@ -4821,6 +4941,9 @@ public class TuioDemo : Form, TuioListener
             area.Y + area.Height / 8,
             area.Width - padX * 2,
             area.Height * 6 / 8);
+
+        // Cache the exact text-panel bounds for gaze hit-testing
+        _lastRenderedContentBounds = panel;
 
         // Solid dark background for maximum contrast
         using (var bg = new SolidBrush(Color.FromArgb(alpha * 230 / 255, 4, 4, 12)))
@@ -5028,6 +5151,77 @@ public class TuioDemo : Form, TuioListener
                 ? color : Color.FromArgb(55, color)))
                 g.FillEllipse(br, startX + i * spacing - dotR,
                               cy - dotR, dotR * 2, dotR * 2);
+        }
+    }
+
+    /// <summary>
+    /// Draws a subtle gaze attention indicator during slideshows.
+    /// Shows a progress bar that fills based on gaze attention.
+    /// </summary>
+    private void DrawGazeAttentionIndicator(Graphics g, int x, int y, int width)
+    {
+        if (slideShow == null || !slideShow.IsRunning) return;
+
+        // Get gaze attention metrics
+        float progress = slideShow.SlideProgress;
+        int gazeAwayMs = slideShow.GazeAwayMs;
+        int gazeOnMs = slideShow.GazeOnContentMs;
+
+        // Determine indicator color based on attention state
+        Color indicatorColor;
+        string statusText;
+
+        bool gazeValid;
+        lock (liveGazeLock)
+        {
+            gazeValid = liveGazeValid;
+        }
+
+        if (!gazeValid)
+        {
+            indicatorColor = Color.FromArgb(120, 120, 120); // Gray - no face detected
+            statusText = "";
+        }
+        else if (gazeAwayMs > 1500)
+        {
+            indicatorColor = Color.FromArgb(200, 100, 100); // Red - looking away
+            statusText = "Look at content to continue";
+        }
+        else if (gazeOnMs > 500)
+        {
+            indicatorColor = Color.FromArgb(100, 200, 120); // Green - engaged
+            statusText = "";
+        }
+        else
+        {
+            indicatorColor = CGold; // Gold - neutral
+            statusText = "";
+        }
+
+        // Draw progress bar background
+        int barHeight = 4;
+        Rectangle barBg = new Rectangle(x, y, width, barHeight);
+        using (var bgBrush = new SolidBrush(Color.FromArgb(40, 40, 40)))
+            g.FillRectangle(bgBrush, barBg);
+
+        // Draw progress bar fill
+        int fillWidth = (int)(width * progress);
+        if (fillWidth > 0)
+        {
+            Rectangle barFill = new Rectangle(x, y, fillWidth, barHeight);
+            using (var fillBrush = new SolidBrush(indicatorColor))
+                g.FillRectangle(fillBrush, barFill);
+        }
+
+        // Draw status text if present
+        if (!string.IsNullOrEmpty(statusText))
+        {
+            using (var textBrush = new SolidBrush(Color.FromArgb(180, indicatorColor)))
+            using (var sf = new StringFormat { Alignment = StringAlignment.Center })
+            {
+                g.DrawString(statusText, fontSmall, textBrush,
+                    new RectangleF(x, y - 22, width, 20), sf);
+            }
         }
     }
 

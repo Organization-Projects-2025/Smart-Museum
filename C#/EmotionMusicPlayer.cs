@@ -61,6 +61,12 @@ public sealed class EmotionMusicPlayer : IDisposable
         string openCmd = string.Format("open \"{0}\" type mpegvideo alias {1}", path, Alias);
         if (Mci(openCmd) != 0)
             return;
+
+        if (string.Equals(mood, "angry", StringComparison.OrdinalIgnoreCase))
+        {
+            Mci("setaudio " + Alias + " volume to 600");
+        }
+
         if (Mci("play " + Alias + " repeat") != 0)
         {
             Mci("close " + Alias);
