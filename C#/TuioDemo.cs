@@ -224,6 +224,7 @@ public class TuioDemo : Form, TuioListener
     private DateTime _watchLastMenuOpenUtc = DateTime.MinValue;
     private DateTime _watchMenuSessionStartUtc = DateTime.MinValue;
     private DateTime _watchMenuProtectedUntilUtc = DateTime.MinValue;
+    private double _watchSecondsSinceClock = -1.0;
     private int _gesturePollRunning = 0;
     private const double WatchMenuOpenCooldownSec = 2.0;
     private const double WatchMenuMinStaySec = 3.0;
@@ -2431,6 +2432,8 @@ public class TuioDemo : Form, TuioListener
             _watchIdleCloseSec = status.IdleCloseSec;
 
         _watchClockPriorityActive = status.ClockPriorityActive;
+        if (status.SecondsSinceClock.HasValue)
+            _watchSecondsSinceClock = status.SecondsSinceClock.Value;
         bool visible = status.ObjectVisible;
         if (visible)
         {
@@ -2582,14 +2585,22 @@ public class TuioDemo : Form, TuioListener
         return (DateTime.UtcNow - _watchLastSeenUtc).TotalSeconds < _watchIdleCloseSec;
     }
 
+    private double GetWatchCooldownElapsedSec()
+    {
+        double local = _watchLastSeenUtc != DateTime.MinValue
+            ? (DateTime.UtcNow - _watchLastSeenUtc).TotalSeconds
+            : 0;
+        if (_watchSecondsSinceClock >= 0)
+            return Math.Max(local, _watchSecondsSinceClock);
+        return local;
+    }
+
     private double GetWatchCooldownRemainingSec()
     {
-        if (_watchCurrentlyVisible || _watchClockPriorityActive)
-            return _watchIdleCloseSec;
-        if (_watchLastSeenUtc == DateTime.MinValue)
-            return 0;
-        double elapsed = (DateTime.UtcNow - _watchLastSeenUtc).TotalSeconds;
-        return Math.Max(0.0, _watchIdleCloseSec - elapsed);
+        double total = Math.Max(1.0, _watchIdleCloseSec);
+        if (_watchCurrentlyVisible)
+            return total;
+        return Math.Max(0.0, total - GetWatchCooldownElapsedSec());
     }
 
     /// <summary>Bottom-left HUD while clock has priority or post-clock hand-gesture cooldown.</summary>
@@ -2599,15 +2610,16 @@ public class TuioDemo : Form, TuioListener
             return;
 
         double totalSec = Math.Max(1.0, _watchIdleCloseSec);
+        bool clockOnTable = _watchCurrentlyVisible;
         double remainingSec = GetWatchCooldownRemainingSec();
-        bool clockOnTable = _watchCurrentlyVisible || _watchClockPriorityActive;
+        double elapsedSec = clockOnTable ? 0 : GetWatchCooldownElapsedSec();
         float progress = clockOnTable
             ? 1f
             : (float)Math.Max(0.0, Math.Min(1.0, remainingSec / totalSec));
 
-        int pad = 20;
-        int boxW = 168;
-        int boxH = 76;
+        int pad = 18;
+        int boxW = 248;
+        int boxH = 98;
         int x = pad;
         int y = H - boxH - pad;
         var box = new Rectangle(x, y, boxW, boxH);
@@ -2615,48 +2627,62 @@ public class TuioDemo : Form, TuioListener
         Color accent = Color.FromArgb(230, 100, 190, 255);
         Color accentDim = Color.FromArgb(120, 60, 110, 140);
 
-        using (var bg = new SolidBrush(Color.FromArgb(210, 14, 16, 28)))
+        using (var bg = new SolidBrush(Color.FromArgb(220, 14, 16, 28)))
             g.FillRectangle(bg, box);
         using (var border = new Pen(accent, 2f))
             g.DrawRectangle(border, box);
 
-        const int ringPad = 10;
-        int ringSize = boxH - ringPad * 2;
-        var ringRect = new Rectangle(x + ringPad, y + ringPad, ringSize, ringSize);
-        using (var trackPen = new Pen(accentDim, 4f))
+        int ringSize = 68;
+        int ringX = x + 12;
+        int ringY = y + 10;
+        var ringRect = new Rectangle(ringX, ringY, ringSize, ringSize);
+        using (var trackPen = new Pen(accentDim, 5f))
             g.DrawArc(trackPen, ringRect, 0, 360);
         float sweep = progress * 360f;
         if (sweep > 0.5f)
         {
-            using (var progPen = new Pen(accent, 4f) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+            using (var progPen = new Pen(accent, 5f) { StartCap = LineCap.Round, EndCap = LineCap.Round })
                 g.DrawArc(progPen, ringRect, -90, -sweep);
         }
 
-        string countText = clockOnTable
-            ? ((int)totalSec).ToString()
-            : Math.Ceiling(remainingSec).ToString("0");
-        string subText = clockOnTable
-            ? "CLOCK · hand off"
-            : "s until hand OK";
+        int displaySec = clockOnTable
+            ? (int)totalSec
+            : Math.Max(0, (int)Math.Floor(remainingSec + 0.001));
+        string countText = displaySec.ToString();
+        string titleText = clockOnTable ? "CLOCK ACTIVE" : "HAND COOLDOWN";
+        string bottomText = clockOnTable
+            ? "Hand gestures paused"
+            : string.Format("{0:0}s / {1:0}s until hand OK", Math.Min(elapsedSec, totalSec), totalSec);
 
         var sfCenter = new StringFormat
         {
             Alignment = StringAlignment.Center,
-            LineAlignment = StringAlignment.Center
+            LineAlignment = StringAlignment.Center,
+            Trimming = StringTrimming.EllipsisCharacter
         };
-        using (var numBrush = new SolidBrush(Color.White))
-        using (var smallBrush = new SolidBrush(accent))
+        var sfLeft = new StringFormat
         {
-            g.DrawString(countText, fontTitle, numBrush,
-                new RectangleF(ringRect.X, ringRect.Y - 2, ringRect.Width, ringRect.Height), sfCenter);
+            Alignment = StringAlignment.Near,
+            LineAlignment = StringAlignment.Center,
+            Trimming = StringTrimming.EllipsisCharacter
+        };
 
-            int textX = ringRect.Right + 6;
-            int textW = box.Right - textX - 8;
-            g.DrawString("CLOCK", fontSmall, smallBrush,
-                new RectangleF(textX, y + 14, textW, 22), StringFormat.GenericDefault);
-            using (var subBrush = new SolidBrush(Color.FromArgb(200, 200, 210, 230)))
-                g.DrawString(subText, fontHint, subBrush,
-                    new RectangleF(textX, y + 36, textW, 28), StringFormat.GenericDefault);
+        int textX = ringRect.Right + 10;
+        int textW = box.Right - textX - 10;
+
+        using (var numBrush = new SolidBrush(Color.White))
+        using (var titleBrush = new SolidBrush(accent))
+        using (var bottomBrush = new SolidBrush(Color.FromArgb(210, 200, 215, 235)))
+        {
+            g.DrawString(countText, fontTitle, numBrush, ringRect, sfCenter);
+            g.DrawString(titleText, fontSmall, titleBrush,
+                new RectangleF(textX, y + 12, textW, 24), sfLeft);
+            g.DrawString(
+                clockOnTable ? "Show clock to control" : countText + " s left",
+                fontHint, titleBrush,
+                new RectangleF(textX, y + 36, textW, 22), sfLeft);
+            g.DrawString(bottomText, fontSmall, bottomBrush,
+                new RectangleF(x + 8, y + boxH - 28, boxW - 16, 22), sfCenter);
         }
     }
 
