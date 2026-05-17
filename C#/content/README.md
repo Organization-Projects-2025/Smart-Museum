@@ -149,12 +149,15 @@ To actually play videos you can extend `TuioDemo.cs`:
 
 | Marker ID | Figure Name   | Accent Colour      |
 | --------- | ------------- | ------------------ |
-| 0         | Cleopatra VII | Gold #D4AF37       |
-| 1         | Nefertiti     | Sky Blue #64BEE6   |
-| 2         | Tutankhamun   | Amber #DAA520      |
-| 3         | Ramesses II   | Crimson #D25032    |
-| 4         | Hatshepsut    | Warm Brown #AF8246 |
-| 5         | Akhenaten     | Orange #FFA032     |
+| 0         | Akhenaten     | Orange #FFA032     |
+| 1         | Cleopatra VII | Gold #D4AF37       |
+| 2         | Nefertiti     | Sky Blue #64BEE6   |
+| 3         | Menu / sign-in | (not a figure)    |
+| 4         | Ramesses II   | Crimson #D25032    |
+| 5         | Hatshepsut    | Warm Brown #AF8246 |
+| 6         | *(unused)*    | —                  |
+
+Tutankhamun is defined in data as ID 3 but blocked at runtime because ID 3 is the menu marker.
 
 Print the corresponding fiducial marker from the reacTIVision symbols sheet and
 attach it under each physical figure with the marker's **north (top) edge

@@ -3,8 +3,8 @@
 /// </summary>
 public static class TuioControlMarker
 {
-    /// <summary>Reserved for future circular menu + login/register; ignored everywhere for now.</summary>
-    public const int ReservedEmptySymbolId = 0;
+    /// <summary>Unused reacTIVision class id — ignored on the table.</summary>
+    public const int ReservedEmptySymbolId = 6;
 
     /// <summary>Circular menu (logged in), login/register auth rings, admin analytics — not a museum figure.</summary>
     public const int MenuAuthSymbolId = 3;

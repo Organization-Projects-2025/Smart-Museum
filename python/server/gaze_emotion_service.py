@@ -225,8 +225,8 @@ class _Loop:
             ys   = [lm.y*h for lm in lms.landmark]
             bbox = (int(min(ys)), int(max(xs)), int(max(ys)), int(min(xs)))
 
-            # Emotion — every 4th frame, always on frame 1
-            if self._fi == 1 or self._fi % 4 == 0:
+            # Emotion — every 2nd frame (faster label updates to C#), always on frame 1
+            if self._fi == 1 or self._fi % 2 == 0:
                 emo = _emotion(frame, bbox)
                 if emo:
                     self._last_emo = emo
@@ -289,7 +289,7 @@ def _handle(conn, addr):
                         streaming = True
                         _loop.start()
                         conn.sendall((json.dumps({"status":"ok"})+"\n").encode())
-                        conn.setblocking(False)
+                        # Stay blocking — non-blocking sendall drops frames on Windows (C# sees only no_face).
                     elif cmd in ("PAUSE","QUIT"):
                         conn.sendall((json.dumps({"status":"ok" if cmd=="PAUSE" else "bye"})+"\n").encode())
                         if cmd == "QUIT": return
@@ -298,18 +298,22 @@ def _handle(conn, addr):
                 if cmd == "__CLOSED__": break
                 if cmd == "PAUSE":
                     streaming = False
-                    conn.setblocking(True)
                     conn.sendall((json.dumps({"status":"ok"})+"\n").encode())
                     continue
                 if cmd == "QUIT":
-                    conn.setblocking(True)
                     conn.sendall((json.dumps({"status":"bye"})+"\n").encode())
                     return
                 with _loop.lock:
-                    snap = dict(_loop.latest) if _loop.latest else {"ok":False,"t_ms":0,"reason":"warmup"}
+                    if _loop.latest:
+                        snap = dict(_loop.latest)
+                        emo = snap.get("emotions")
+                        if isinstance(emo, dict):
+                            snap["emotions"] = dict(emo)
+                    else:
+                        snap = {"ok": False, "t_ms": 0, "reason": "warmup"}
                 try:
-                    conn.sendall((json.dumps(snap)+"\n").encode())
-                except (BrokenPipeError,ConnectionError,OSError):
+                    conn.sendall((json.dumps(snap) + "\n").encode())
+                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                     break
                 time.sleep(0.066)
     except Exception as e:

@@ -23,7 +23,7 @@ The system includes the following Egyptian historical figures:
    - Period: c. 1507 BC - 1458 BC
    - Egypt's Longest-Reigning Female Pharaoh
 
-6. **Akhenaten** (Symbol ID: 6)
+6. **Akhenaten** (Symbol ID: 0)
    - Period: c. 1380 BC - 1336 BC
    - The Heretic Pharaoh
 

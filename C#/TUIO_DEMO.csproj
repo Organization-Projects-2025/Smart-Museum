@@ -70,6 +70,7 @@
     <Compile Include="InputPrioritizer.cs" />
     <Compile Include="GestureClient.cs" />
     <Compile Include="GazeEmotionClient.cs" />
+    <Compile Include="EmotionMusicPlayer.cs" />
     <Compile Include="HandTrackClient.cs" />
     <Compile Include="YoloContextClient.cs" />
     <Compile Include="TUIO\TuioClient.cs" />

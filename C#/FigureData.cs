@@ -6,13 +6,13 @@
  * and the historical relationships between pairs of figures.
  *
  * TUIO Marker Assignments:
- *   ID 0 → Circular Menu Controller
+ *   ID 0 → Akhenaten
  *   ID 1 → Cleopatra VII
  *   ID 2 → Nefertiti
- *   ID 3 → Tutankhamun
+ *   ID 3 → Menu / sign-in (not a figure — see TuioControlMarker)
  *   ID 4 → Ramesses II
  *   ID 5 → Hatshepsut
- *   ID 6 → Akhenaten
+ *   ID 6 → unused
  */
 
 using System.Collections.Generic;
@@ -303,10 +303,10 @@ public static class MuseumData
                 }
             }},
 
-            // ── 6: Akhenaten ─────────────────────────────────────────────────
-            { 6, new FigureDef
+            // ── 0: Akhenaten ─────────────────────────────────────────────────
+            { 0, new FigureDef
             {
-                SymbolId         = 6,
+                SymbolId         = 0,
                 Name             = "Akhenaten",
                 Period           = "c. 1380 BC – 1336 BC",
                 ShortDescription = "The Heretic Pharaoh",
@@ -338,7 +338,7 @@ public static class MuseumData
             new RelationshipDef
             {
                 SymbolIdA       = 2,
-                SymbolIdB       = 6,
+                SymbolIdB       = 0,
                 ConnectionTitle = "Husband & Wife — The Revolutionary Royal Couple",
                 Slides          = new List<ContentSlide>
                 {
@@ -358,7 +358,7 @@ public static class MuseumData
             new RelationshipDef
             {
                 SymbolIdA       = 3,
-                SymbolIdB       = 6,
+                SymbolIdB       = 0,
                 ConnectionTitle = "Father & Son — A Legacy Reversed",
                 Slides          = new List<ContentSlide>
                 {
@@ -463,7 +463,7 @@ public static class MuseumData
             // ── Akhenaten + Hatshepsut  (Rebels Against Tradition) ───────────
             new RelationshipDef
             {
-                SymbolIdA       = 6,
+                SymbolIdA       = 0,
                 SymbolIdB       = 5,
                 ConnectionTitle = "Rebels Against Tradition — Rulers Who Defied Convention",
                 Slides          = new List<ContentSlide>

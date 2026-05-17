@@ -39,9 +39,10 @@ deepface>=0.0.89
 # ── Gesture recognition (port 5001) ──────────────────────────────────────────
 dollarpy>=0.1.0
 
-# ── YOLO object detection (port 5003) ────────────────────────────────────────
-# Set YOLO_CONTEXT_MOCK=1 in start.bat to skip YOLO and use fake tracks instead.
-ultralytics>=8.0.0
+# ── YOLO11 watch/clock detection (port 5005 — yolo_server.py) ────────────────
+# ultralytics loads YOLO11; default weights: yolo11s.pt at repo root (YOLO_MODEL).
+# Set DISABLE_YOLO=1 in .env to skip. YOLO_CONTEXT_MOCK is legacy (port 5003).
+ultralytics>=8.3.0
 
 # ── Notes ─────────────────────────────────────────────────────────────────────
 # DeepFace is used for demographic analysis (age, gender, race) at sign-up.
@@ -53,5 +54,5 @@ ultralytics>=8.0.0
 #   auth_service.py          5000   face ID + bluetooth
 #   gesture_service.py       5001   dollarpy gesture recognition
 #   gaze_emotion_service.py  5002   mediapipe gaze + hsemotion emotions
-#   yolo_service.py          5003   yolov8 object context
+#   yolo_server.py           5005   YOLO11 clock/watch + swipes
 #   hand_service.py          5004   mediapipe hand pose

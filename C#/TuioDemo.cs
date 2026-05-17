@@ -79,6 +79,7 @@ public class TuioDemo : Form, TuioListener
     private TuioObject objA, objB;
 
     private SlideShowManager slideShow;
+    private EmotionMusicPlayer emotionMusic;
     private ContentSlide currentSlide;
     private bool slideshowLocked = false;
     private bool waitForClearAfterLockedShow = false;
@@ -213,6 +214,7 @@ public class TuioDemo : Form, TuioListener
     private bool isGestureActive = false;
     private bool isWatchGestureActive = false;
     private bool _gestureNeedsRearm = false;  // re-sends START_TRACKING after auth releases webcam
+    private bool _slideshowPausedHandGestures;
     private bool _menuNavigatedSinceOpen = false; // true once user swipes after opening menu
     // Watch (YOLO) priority over hand gestures — matches python YOLO_IDLE_CLOSE_SEC (default 10s)
     private DateTime _watchLastSeenUtc = DateTime.MinValue;
@@ -242,6 +244,10 @@ public class TuioDemo : Form, TuioListener
     private bool liveGazeValid;
     private double liveGazeGx = 0.5, liveGazeGy = 0.5;
     private string liveDominantEmotion = "neutral";
+    private int lastGazeOkTick = 0;
+    private long lastAppliedGazeTms = -1;
+    private long lastPolledGazeSequence = -1;
+    private const int GazeValidHoldMs = 900;
     private string liveGazeIssueUserText = "";
     private YoloContextClient yoloContextClient;
     private readonly SessionAnalyticsRecorder analyticsRecorder = new SessionAnalyticsRecorder();
@@ -344,8 +350,8 @@ public class TuioDemo : Form, TuioListener
         slideShow.SlideChanged += slide =>
         {
             currentSlide = slide;
-            fadeAlpha = 0f;
-            fadingIn = true;
+            fadeAlpha = 1f;
+            fadingIn = false;
             slideElapsedMs = 0;
             if (slide != null && analyticsRecorder != null && visitorProfile != null)
             {
@@ -357,6 +363,9 @@ public class TuioDemo : Form, TuioListener
             SafeInvalidate();
         };
         slideShow.SlideShowCompleted += OnSlideShowCompleted;
+
+        string musicDir = Path.Combine(GetWorkspaceRoot(), "C#", "content", "music");
+        emotionMusic = new EmotionMusicPlayer(musicDir);
 
         recognitionTimer = new System.Windows.Forms.Timer { Interval = 50 };
         recognitionTimer.Tick += OnRecognitionTick;
@@ -1941,6 +1950,9 @@ public class TuioDemo : Form, TuioListener
             liveGazeStreamActive = false;
             liveGazeValid = false;
             liveGazeIssueUserText = "";
+            lastGazeOkTick = 0;
+            lastAppliedGazeTms = -1;
+            lastPolledGazeSequence = -1;
         }
 
         // 127.0.0.1: Python services bind IPv4 only; "localhost" can resolve to ::1 and never connect.
@@ -1952,12 +1964,10 @@ public class TuioDemo : Form, TuioListener
             return;
         }
 
-        gazeEmotionClient.FrameReceived += OnGazeFrame;
         bool streamOk = await gazeEmotionClient.StartStreamingAsync();
         if (!streamOk)
         {
             Console.WriteLine("Gaze/emotion STREAM handshake failed.");
-            gazeEmotionClient.FrameReceived -= OnGazeFrame;
             try { gazeEmotionClient.Dispose(); } catch { }
             gazeEmotionClient = null;
             lock (liveGazeLock)
@@ -2057,12 +2067,6 @@ public class TuioDemo : Form, TuioListener
         gazeEmotionClient = null;
         if (client != null)
         {
-            try
-            {
-                client.FrameReceived -= OnGazeFrame;
-            }
-            catch { }
-
             // Never block the WinForms UI thread on gaze TCP teardown — Logout / StartLoginFlow
             // used to freeze here when StopStreamingAsync waited indefinitely.
             _ = Task.Run(async () =>
@@ -2084,32 +2088,94 @@ public class TuioDemo : Form, TuioListener
             liveGazeStreamActive = false;
             liveGazeValid = false;
             liveGazeIssueUserText = "";
+            lastGazeOkTick = 0;
+            lastAppliedGazeTms = -1;
+            lastPolledGazeSequence = -1;
         }
     }
 
-    private void OnGazeFrame(GazeEmotionFrame frame)
+    private void ApplyGazeEmotionFrame(GazeEmotionFrame frame)
     {
         if (frame == null) return;
+
+        bool emotionOrGazeChanged;
         lock (liveGazeLock)
         {
+            if (frame.Tms < lastAppliedGazeTms)
+                return;
+
+            string prevDom = liveDominantEmotion;
+            double prevGx = liveGazeGx, prevGy = liveGazeGy;
+            bool prevValid = liveGazeValid;
+
             if (frame.Ok)
             {
+                lastAppliedGazeTms = frame.Tms;
+                lastGazeOkTick = Environment.TickCount;
                 liveGazeValid = true;
                 liveGazeGx = frame.Gx;
                 liveGazeGy = frame.Gy;
                 liveDominantEmotion = string.IsNullOrEmpty(frame.Dominant) ? "neutral" : frame.Dominant;
                 liveGazeIssueUserText = "";
             }
+            else if (string.Equals(frame.Reason, "no_face", StringComparison.OrdinalIgnoreCase) &&
+                     lastGazeOkTick > 0 &&
+                     Environment.TickCount - lastGazeOkTick < GazeValidHoldMs)
+            {
+                lastAppliedGazeTms = frame.Tms;
+            }
             else
             {
+                lastAppliedGazeTms = frame.Tms;
                 liveGazeValid = false;
                 liveGazeIssueUserText = FormatGazeIssueHint(frame.Reason);
             }
+
+            emotionOrGazeChanged = prevValid != liveGazeValid
+                || prevGx != liveGazeGx || prevGy != liveGazeGy
+                || !string.Equals(prevDom, liveDominantEmotion, StringComparison.OrdinalIgnoreCase);
         }
+
+        if (!emotionOrGazeChanged)
+            return;
         if (frame.Ok && analyticsRecorder != null && slideShow != null && slideShow.IsRunning && currentSlide != null)
             analyticsRecorder.AddSample(frame);
         if (slideShow != null && slideShow.IsRunning && currentSlide != null)
+            SyncEmotionMusic();
+        if (!adminAnalyticsVisible)
             SafeInvalidate();
+    }
+
+    /// <summary>Backup path if BeginInvoke drops frames — polls latest TCP snapshot each anim tick.</summary>
+    private void PollGazeEmotionClient()
+    {
+        if (gazeEmotionClient == null || !gazeEmotionClient.IsConnected) return;
+        GazeEmotionFrame frame;
+        long seq;
+        if (!gazeEmotionClient.TryGetLatestFrame(out frame, out seq)) return;
+        if (seq == lastPolledGazeSequence) return;
+        lastPolledGazeSequence = seq;
+        ApplyGazeEmotionFrame(frame);
+    }
+
+    private void SyncEmotionMusic()
+    {
+        if (emotionMusic == null) return;
+        bool slideshowActive = slideShow != null && slideShow.IsRunning && currentSlide != null;
+        if (!slideshowActive || adminAnalyticsVisible)
+        {
+            emotionMusic.Stop();
+            return;
+        }
+
+        bool valid;
+        string dom;
+        lock (liveGazeLock)
+        {
+            valid = liveGazeValid;
+            dom = liveDominantEmotion;
+        }
+        emotionMusic.Update(slideshowActive, valid, dom);
     }
 
     private void UpdateAdminTuio()
@@ -2364,8 +2430,51 @@ public class TuioDemo : Form, TuioListener
         }
     }
 
+    private bool GesturesBlockedBySlideshow()
+    {
+        return slideshowLocked;
+    }
+
+    private void PauseHandGesturesForSlideshow()
+    {
+        if (_slideshowPausedHandGestures) return;
+        if (gestureClient == null || !gestureClient.IsConnected) return;
+        _slideshowPausedHandGestures = true;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await gestureClient.PauseDetectionAsync().ConfigureAwait(false);
+                await gestureClient.ResetAsync().ConfigureAwait(false);
+                Console.WriteLine("[Gesture] Paused during slideshow");
+            }
+            catch { }
+        });
+    }
+
+    private void ResumeHandGesturesAfterSlideshow()
+    {
+        if (!_slideshowPausedHandGestures) return;
+        _slideshowPausedHandGestures = false;
+        if (HandGesturesBlockedByWatch()) return;
+        if (gestureClient == null || !gestureClient.IsConnected) return;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await gestureClient.ResumeDetectionAsync().ConfigureAwait(false);
+                _gestureNeedsRearm = true;
+                Console.WriteLine("[Gesture] Resumed after slideshow");
+            }
+            catch { }
+        });
+    }
+
     private async System.Threading.Tasks.Task CheckForGesture()
     {
+        if (GesturesBlockedBySlideshow())
+            return;
+
         // ── Watch / clock (YOLO :5005) — runs unconditionally, no TUIO or login gate ──
         // RefreshWatchPriority must run first so HandGesturesBlockedByWatch() is current.
         if (!isWatchGestureActive)
@@ -2745,6 +2854,12 @@ public class TuioDemo : Form, TuioListener
     {
         if (InvokeRequired) { BeginInvoke(new Action(() => HandleGesture(gesture, fromWatch))); return; }
 
+        if (GesturesBlockedBySlideshow())
+        {
+            Console.WriteLine("[Gesture] Ignored during slideshow: " + gesture);
+            return;
+        }
+
         string logTag = fromWatch ? "[WatchYOLO]" : "[Gesture]";
 
         if (!fromWatch && HandGesturesBlockedByWatch())
@@ -3054,10 +3169,12 @@ public class TuioDemo : Form, TuioListener
 
     private void StopAndUnlockSlides()
     {
+        if (emotionMusic != null) emotionMusic.Stop();
         if (analyticsRecorder != null)
             analyticsRecorder.SaveAndRestartVisit();
         slideShow.Stop();
         slideshowLocked = false;
+        ResumeHandGesturesAfterSlideshow();
         waitForClearAfterLockedShow = false;
         lockedContext = SlideShowContext.None;
         activeStoryKey = null;
@@ -3417,15 +3534,20 @@ public class TuioDemo : Form, TuioListener
         lockedContext = context;
         activeStoryKey = storyKey;
         slideElapsedMs = 0;
+        PauseHandGesturesForSlideshow();
+        if (animTimer != null && !animTimer.Enabled)
+            animTimer.Start();
         slideShow.StartSlideShow(slides, true);
     }
 
     private void OnSlideShowCompleted()
     {
+        if (emotionMusic != null) emotionMusic.Stop();
         if (analyticsRecorder != null)
             analyticsRecorder.SaveAndRestartVisit();
 
         slideshowLocked = false;
+        ResumeHandGesturesAfterSlideshow();
         slideElapsedMs = 0;
         currentSlide = null;
         hoverObject = null;
@@ -3433,7 +3555,7 @@ public class TuioDemo : Form, TuioListener
 
         if (lockedContext == SlideShowContext.SingleFigureIntro)
         {
-            if (activeFigureSymbolId > 0)
+            if (activeFigureSymbolId >= 0)
                 recognizedFigureIds.Add(activeFigureSymbolId);
             singleFigureIntroDone = true;
             activeObjectStory = null;
@@ -3486,8 +3608,15 @@ public class TuioDemo : Form, TuioListener
         if (adminAnalyticsVisible && adminAnalyticsPanel != null)
             adminAnalyticsPanel.Tick(animTimer.Interval);
 
+        PollGazeEmotionClient();
+
         if (slideShow != null && slideShow.IsRunning && currentSlide != null)
+        {
             slideElapsedMs += animTimer.Interval;
+            SyncEmotionMusic();
+        }
+        else if (emotionMusic != null)
+            emotionMusic.Stop();
 
         if (state == AppState.SingleFigure)
             UpdateSingleFigureObjectSelection();
@@ -3497,6 +3626,8 @@ public class TuioDemo : Form, TuioListener
             fadeAlpha = Math.Min(1f, fadeAlpha + 0.08f);
             if (fadeAlpha >= 1f) fadingIn = false;
         }
+        else if (slideShow != null && slideShow.IsRunning && currentSlide != null && fadeAlpha < 0.05f)
+            fadeAlpha = 1f;
 
         if (state == AppState.Idle || state == AppState.Recognition ||
             state == AppState.SingleFigure || state == AppState.PairNotFacing || state == AppState.PairFacing ||
@@ -3592,7 +3723,7 @@ public class TuioDemo : Form, TuioListener
 
         TuioObject marker = GetSingleMenuMarker();
 
-        // Open the menu when TUIO menu marker (symbol 3) appears; symbol 0 is reserved and unused for now.
+        // Open the menu when TUIO menu marker (symbol 3) appears; symbol 6 is unused.
         if (!circularMenu.IsVisible && marker != null)
         {
             circularMenu.ShowFavorite = !string.IsNullOrEmpty(GetCurrentFigureStoryKey());
@@ -4100,7 +4231,7 @@ public class TuioDemo : Form, TuioListener
                 ? (authRingItems != null && authRingItems.Count > 1)
                     ? string.Format("TUIO angle {0:0}° (~{1:0}° per choice) — now: {2}", authTuioMarkerAngleDeg, segDeg, sel)
                     : string.Format("TUIO angle {0:0}° — {1}", authTuioMarkerAngleDeg, sel)
-                : "TUIO: place the menu marker (symbol " + TuioControlMarker.MenuAuthSymbolId + ") on the table — symbols 0 and 3 are not museum figures.";
+                : "TUIO: place the menu marker (symbol " + TuioControlMarker.MenuAuthSymbolId + ") on the table — symbol 3 is the menu; symbol 6 is unused.";
             DrawWrappedCentered(g, hint + Environment.NewLine + tuioHud, fontSmall,
                 Color.FromArgb(198, CPapyrus), new RectangleF(40, hintTop, W - 80, hintBlockH));
             DrawAuthTuioRing(g, W / 2, ringCy, ringR, themeSecondary, CGoldDim);
@@ -4540,7 +4671,7 @@ public class TuioDemo : Form, TuioListener
     private static string FormatGazeIssueHint(string reason)
     {
         if (string.IsNullOrWhiteSpace(reason))
-            return "No face — gesture_service.py often locks camera 0; stop it or set GAZE_EMOTION_CAMERA / GESTURE_CAMERA to different indices.";
+            return "Waiting for gaze stream from Python (check port 5002 / rebuild TuioDemo)";
         if (reason == "warmup")
             return "Camera starting…";
         if (reason == "no_face")
@@ -4577,7 +4708,7 @@ public class TuioDemo : Form, TuioListener
             emotionLine = "Dominant expression: — (start gaze_emotion_service.py on 127.0.0.1:5002)";
         else if (!valid)
             emotionLine = "Dominant expression: — " + (string.IsNullOrEmpty(issueHint)
-                ? "No face yet (see gaze_emotion_service console)"
+                ? "No face in frame (Python may still log emotion; check camera is not used only by gesture_service)"
                 : issueHint);
         else
             emotionLine = "Dominant expression: " + FormatDominantEmotionLabel(dom);
@@ -4912,18 +5043,40 @@ public class TuioDemo : Form, TuioListener
 
     private Image TryLoadImage(string relativePath)
     {
+        if (string.IsNullOrEmpty(relativePath)) return null;
+
         Image cached;
         if (imgCache.TryGetValue(relativePath, out cached)) return cached;
 
-        string full = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, relativePath);
+        string full = ResolveContentFilePath(relativePath);
         Image img = null;
-        if (File.Exists(full))
+        if (!string.IsNullOrEmpty(full) && File.Exists(full))
         {
             try { img = Image.FromFile(full); }
             catch { }
         }
         imgCache[relativePath] = img;
         return img;
+    }
+
+    /// <summary>Resolve content/... paths from bin output or repo C#/content.</summary>
+    private string ResolveContentFilePath(string relativePath)
+    {
+        string norm = relativePath.Replace('/', Path.DirectorySeparatorChar);
+        if (Path.IsPathRooted(norm) && File.Exists(norm))
+            return norm;
+
+        string dir = AppDomain.CurrentDomain.BaseDirectory;
+        for (int i = 0; i < 6 && !string.IsNullOrEmpty(dir); i++)
+        {
+            string candidate = Path.Combine(dir, norm);
+            if (File.Exists(candidate))
+                return candidate;
+            dir = Path.GetDirectoryName(dir);
+        }
+
+        string fromWorkspace = Path.Combine(GetWorkspaceRoot(), "C#", norm);
+        return fromWorkspace;
     }
 
     private void DrawWrappedCentered(Graphics g, string text, Font font, Color color, RectangleF bounds)
@@ -5085,14 +5238,17 @@ public class TuioDemo : Form, TuioListener
             recognitionTimer.Start();
         }
         
-        // Resume gaze streaming if it was active
+        // Resume gaze streaming + animation after alt-tab
+        if (animTimer != null && !animTimer.Enabled)
+            animTimer.Start();
         if (isLoggedIn && gazeEmotionClient != null && gazeEmotionClient.IsConnected)
         {
             Task.Run(async () =>
             {
                 try
                 {
-                    await gazeEmotionClient.StartStreamingAsync();
+                    if (!gazeEmotionClient.IsStreaming)
+                        await gazeEmotionClient.StartStreamingAsync();
                 }
                 catch { /* ignore errors on resume */ }
             });
@@ -5161,7 +5317,12 @@ public class TuioDemo : Form, TuioListener
         animTimer.Stop();
         recognitionTimer.Stop();
         slideShow.Stop();
-        
+        if (emotionMusic != null)
+        {
+            emotionMusic.Dispose();
+            emotionMusic = null;
+        }
+
         // Clean up gesture client
         if (gestureCheckTimer != null)
         {
