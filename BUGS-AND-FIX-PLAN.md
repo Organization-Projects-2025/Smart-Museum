@@ -7,19 +7,24 @@ This document validates an external AI bug report against the current repo (May 
 - [x] `run_all.bat`, `start_server.bat`, `python/start_python_server.bat` → `start.bat` / `main.py`
 - [x] Stale `python_server.py` strings in C# and `BUILD_INSTRUCTIONS.md`
 - [x] `auth_service.py` — all responses newline-terminated (`_send_line`)
-- [x] `AuthIntegration` — `NEW:` parse, `leaveOpen`, connect/read timeouts, line I/O
+- [x] `AuthIntegration` — `NEW:` parse, `leaveOpen`, connect/read timeouts, line I/O; `SocketClient` fields private
 - [x] `InputPrioritizer` — lock around shared state
 - [x] `HandTrackClient` — connect timeout + `ConnectAsync` (non-blocking UI)
-- [x] `GestureClient` — bad JSON no longer disconnects
+- [x] `GestureClient` — bad JSON no longer disconnects; ambient fields from STATUS
 - [x] `SlideShowManager` — single advance path in timer
 - [x] `FavoritesUI` — font dispose
-- [x] `TuioDemo` — image cache, `GetWorkspaceRoot`, YOLO context 5003 disabled, auth flow
+- [x] `TuioDemo` — image cache, `GetWorkspaceRoot`, ambient via watch :5005; **removed `YoloContextClient` / port 5003**
+- [x] `mediapipe_compat.py` — shared MediaPipe for `hand_service` + `gesture_service`
 - [x] `gesture_service.py` — `_SERVER_DIR` fix
 - [x] `face_store.py` — thread lock
+- [x] `gaze_emotion_service.py` — `_emotion_lock` on history; no bare `except:`
 - [x] `GazeEmotionClient` — UTF-8 decoder for fragmented reads
-- [x] `yolo_server.py` — prefer `MUSEUM_CAMERA` over `YOLO_CAMERA`
-- [x] `.env.example` — `skip_user=user0` clarity
-- [x] Legacy `hand_tracker.py` port comment
+- [x] `yolo_server.py` — `MUSEUM_CAMERA` first; warmup uses `IMGSZ`; ambient scan in STATUS
+- [x] `.env` aligned with `.env.example` (`skip_auth=0`, `skip_user=user0`)
+- [x] `hand_tracker.py` — default port **5004** (was 5555)
+- [x] `demographics_service.py` — `middle_eastern` race (not mapped to `black`)
+- [x] `CircularMenuController` — documented intentional `"Home"` default
+- [x] `OnSlideShowSlideChanged` — named handler (no slide-changed lambda leak)
 
 **How to run the stack (correct):** `start.bat` → `python/server/main.py`; C# from Visual Studio (`C#/TUIO_CSHARP.sln`).
 

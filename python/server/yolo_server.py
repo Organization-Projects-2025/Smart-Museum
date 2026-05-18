@@ -173,6 +173,8 @@ class _YoloEngine:
         self._vis_miss = 0
         self._hold_box: tuple[int, int, int, int] | None = None
         self._hold_conf = 0.0
+        self._ambient = {"phone": False, "book": False, "large_person": False}
+        self._ambient_scan_tick = 0
 
     def _prep_frame(self, frame: np.ndarray) -> np.ndarray:
         h, w = frame.shape[:2]
@@ -180,6 +182,52 @@ class _YoloEngine:
             return frame
         scale = INFER_MAX_W / w
         return cv2.resize(frame, (INFER_MAX_W, int(h * scale)), interpolation=cv2.INTER_AREA)
+
+    def _scan_ambient(self, frame_bgr: np.ndarray) -> None:
+        """Periodic full-class scan for phone/book/person (replaces legacy port 5003 context stream)."""
+        if self.model is None:
+            return
+        self._ambient_scan_tick += 1
+        if self._ambient_scan_tick % 15 != 0:
+            return
+        infer = self._prep_frame(frame_bgr)
+        fh, fw = frame_bgr.shape[:2]
+        try:
+            results = self.model.predict(
+                infer,
+                verbose=False,
+                conf=0.35,
+                imgsz=IMGSZ,
+                device=self._device,
+                half=self._half,
+            )
+        except Exception as e:
+            print(f"[YOLO] ambient scan error: {e}")
+            return
+        phone = book = large = False
+        res = results[0]
+        if res.boxes is None:
+            with self._lock:
+                self._ambient = {"phone": phone, "book": book, "large_person": large}
+            return
+        names = res.names or {}
+        xyxy = res.boxes.xyxy.cpu().numpy()
+        confs = res.boxes.conf.cpu().numpy()
+        clss = res.boxes.cls.cpu().numpy()
+        for i in range(len(clss)):
+            if float(confs[i]) < 0.35:
+                continue
+            label = str(names.get(int(clss[i]), "")).lower()
+            x1, y1, x2, y2 = xyxy[i]
+            area = ((x2 - x1) / fw) * ((y2 - y1) / fh)
+            if "phone" in label:
+                phone = True
+            if label in ("book", "laptop") or "laptop" in label:
+                book = True
+            if label == "person" and area >= 0.10:
+                large = True
+        with self._lock:
+            self._ambient = {"phone": phone, "book": book, "large_person": large}
 
     def _open_local_camera(self):
         idx = int(os.environ.get("MUSEUM_CAMERA", os.environ.get("YOLO_CAMERA", "0")))
@@ -235,7 +283,8 @@ class _YoloEngine:
         model_path = _resolve_model_path()
         print(f"[YOLO] Loading model: {model_path}")
         self.model = YOLO(model_path)
-        dummy = np.zeros((480, 640, 3), dtype=np.uint8)
+        warm_h = max(64, int(round(IMGSZ * 480 / 640)))
+        dummy = np.zeros((warm_h, IMGSZ, 3), dtype=np.uint8)
         self.model.track(
             dummy, persist=True, verbose=False, conf=TRACK_CONF,
             classes=[CLOCK_CLASS], tracker="bytetrack.yaml",
@@ -364,6 +413,8 @@ class _YoloEngine:
                     self._idle_close_sent = True
                     self._was_visible = False
 
+        self._scan_ambient(frame)
+
     def inference_loop(self):
         print("[YOLO] Hub inference thread started")
         while self.is_tracking:
@@ -447,6 +498,7 @@ class _YoloEngine:
             last_seen = self._last_seen_clock
             q_len = len(self._gesture_queue)
             last_g = self.last_gesture
+            amb = dict(self._ambient)
         since = (now - last_seen) if last_seen > 0 else -1.0
         return {
             "status": "ok",
@@ -454,6 +506,9 @@ class _YoloEngine:
             "object_visible": visible,
             "clock_priority_active": visible or (last_seen > 0 and since < IDLE_CLOSE_SEC),
             "seconds_since_clock": round(since, 2) if since >= 0 else None,
+            "ambient_phone": amb.get("phone", False),
+            "ambient_book": amb.get("book", False),
+            "ambient_large_person": amb.get("large_person", False),
             "gesture_queue_len": q_len,
             "last_gesture": last_g,
             "infer_fps": round(self._infer_fps, 1),

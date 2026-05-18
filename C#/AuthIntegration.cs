@@ -436,7 +436,7 @@ public class VisitorProfile
 
         // --- Race rubric → language + subtle accent tint (still readable on dark bg) ---
         string r = (Race ?? string.Empty).Trim().ToLowerInvariant();
-        if (r == "black") Language = "Arabic";
+        if (r == "black" || r == "middle_eastern") Language = "Arabic";
         else if (r == "indian") Language = "Hindi";
         else if (r == "latino") Language = "Spanish";
         else if (r == "asian") Language = "English";
@@ -444,7 +444,7 @@ public class VisitorProfile
 
         Color raceWarm = Color.FromArgb(230, 200, 140);
         Color raceCool = Color.FromArgb(120, 170, 210);
-        if (r == "latino" || r == "black")
+        if (r == "latino" || r == "black" || r == "middle_eastern")
             TertiaryColor = BlendRgb(TertiaryColor, raceWarm, 0.12f);
         else if (r == "asian" || r == "indian")
             TertiaryColor = BlendRgb(TertiaryColor, raceCool, 0.10f);

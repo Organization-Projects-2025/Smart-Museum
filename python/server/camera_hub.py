@@ -22,7 +22,8 @@ def _open_cap(index: int) -> cv2.VideoCapture:
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             return cap
         try: cap.release()
-        except: pass
+        except Exception:
+            pass
     cap = cv2.VideoCapture(index)
     if cap.isOpened():
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)

@@ -20,10 +20,9 @@ import time
 
 import cv2
 
-# ── MediaPipe ─────────────────────────────────────────────────────────────────
+# ── MediaPipe (shared module — no import from gesture_service) ───────────────
 try:
-    # Use the inline wrapper from gesture_service
-    from gesture_service import mp
+    from mediapipe_compat import mp
     _HANDS = mp.hands
     _MP_OK = True
 except Exception as e:
@@ -59,7 +58,8 @@ def _handle(conn, addr):
     print(f"[Hand] Client: {addr}")
     if not _MP_OK:
         try: conn.sendall((json.dumps({"error":"mediapipe_unavailable"})+"\n").encode())
-        except: pass
+        except Exception:
+            pass
         conn.close()
         return
 
@@ -100,9 +100,11 @@ def _handle(conn, addr):
         print(f"[Hand] Error {addr}: {e}")
     finally:
         try: hands.close()
-        except: pass
+        except Exception:
+            pass
         try: conn.close()
-        except: pass
+        except Exception:
+            pass
         print(f"[Hand] Disconnected: {addr}")
 
 def start(host="127.0.0.1", port=None):

@@ -211,7 +211,10 @@ public class GestureClient : IDisposable
                     ObjectVisible = response["object_visible"]?.ToObject<bool>() ?? false,
                     ClockPriorityActive = response["clock_priority_active"]?.ToObject<bool>() ?? false,
                     IdleCloseSec = response["idle_close_sec"]?.ToObject<double>() ?? 10.0,
-                    SecondsSinceClock = response["seconds_since_clock"]?.ToObject<double?>()
+                    SecondsSinceClock = response["seconds_since_clock"]?.ToObject<double?>(),
+                    AmbientPhone = response["ambient_phone"]?.ToObject<bool>() ?? false,
+                    AmbientBook = response["ambient_book"]?.ToObject<bool>() ?? false,
+                    AmbientLargePerson = response["ambient_large_person"]?.ToObject<bool>() ?? false,
                 };
             }
 
@@ -327,6 +330,10 @@ public class GestureClient : IDisposable
         public double IdleCloseSec { get; set; }
         /// <summary>YOLO: seconds since last stable clock detection (null if never seen).</summary>
         public double? SecondsSinceClock { get; set; }
+        /// <summary>YOLO ambient scan: phone/cell device in frame (port 5005 STATUS).</summary>
+        public bool AmbientPhone { get; set; }
+        public bool AmbientBook { get; set; }
+        public bool AmbientLargePerson { get; set; }
     }
 
     /// <summary>

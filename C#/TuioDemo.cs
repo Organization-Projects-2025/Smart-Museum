@@ -251,7 +251,6 @@ public class TuioDemo : Form, TuioListener
     private string liveGazeIssueUserText = "";
     // Actual rendered pixel bounds of the content (image dest or text panel) — updated every paint
     private RectangleF _lastRenderedContentBounds = RectangleF.Empty;
-    private YoloContextClient yoloContextClient;
     private readonly SessionAnalyticsRecorder analyticsRecorder = new SessionAnalyticsRecorder();
     private AdminAnalyticsPanel adminAnalyticsPanel;
     private bool adminAnalyticsVisible;
@@ -349,22 +348,7 @@ public class TuioDemo : Form, TuioListener
         this.Deactivate += OnWindowDeactivated;
 
         slideShow = new SlideShowManager();
-        slideShow.SlideChanged += slide =>
-        {
-            currentSlide = slide;
-            fadeAlpha = 1f;
-            fadingIn = false;
-            slideElapsedMs = 0;
-            _lastRenderedContentBounds = RectangleF.Empty; // Reset so stale bounds don't carry over
-            if (slide != null && analyticsRecorder != null && visitorProfile != null)
-            {
-                string title = "";
-                if (!string.IsNullOrEmpty(activeStoryKey) && storyTitleByKey.ContainsKey(activeStoryKey))
-                    title = storyTitleByKey[activeStoryKey];
-                analyticsRecorder.NotifySlideChanged(activeStoryKey, title, slideShow.CurrentIndex, slide);
-            }
-            SafeInvalidate();
-        };
+        slideShow.SlideChanged += OnSlideShowSlideChanged;
         slideShow.SlideShowCompleted += OnSlideShowCompleted;
 
         string musicDir = Path.Combine(GetWorkspaceRoot(), "C#", "content", "music");
@@ -869,7 +853,6 @@ public class TuioDemo : Form, TuioListener
                         pendingLoginBluetoothFromDuplicate = false;
                         Transition(AppState.Idle, null, null, null, null);
                         InitializeGazeAnalytics();
-                        InitializeYoloContext();
                         RearmGestureTracking();
                         Invalidate();
                     }));
@@ -948,7 +931,6 @@ public class TuioDemo : Form, TuioListener
         authStatus = "You are visiting as a guest — enjoy the table experience.";
         Transition(AppState.Idle, null, null, null, null);
         InitializeGazeAnalytics();
-        InitializeYoloContext();
         Invalidate();
     }
 
@@ -980,7 +962,6 @@ public class TuioDemo : Form, TuioListener
         authStatus = "Authentication skipped by .env skip_auth=1. Logged in as " + visitorProfile.FullName + ".";
         Transition(AppState.Idle, null, null, null, null);
         InitializeGazeAnalytics();
-        InitializeYoloContext();
         Invalidate();
     }
 
@@ -1067,7 +1048,6 @@ public class TuioDemo : Form, TuioListener
                             pendingDuplicateUserId = null;
                         Transition(AppState.Idle, null, null, null, null);
                         InitializeGazeAnalytics();
-                        InitializeYoloContext();
                         RearmGestureTracking();
                         Invalidate();
                     }));
@@ -1167,7 +1147,6 @@ public class TuioDemo : Form, TuioListener
                         nameEntryBuffer = "";
                         Transition(AppState.Idle, null, null, null, null);
                         InitializeGazeAnalytics();
-                        InitializeYoloContext();
                         Invalidate();
                     }));
                 }
@@ -1691,7 +1670,6 @@ public class TuioDemo : Form, TuioListener
         authStatus = "Welcome back, " + visitorProfile.FullName + ".";
         Transition(AppState.Idle, null, null, null, null);
         InitializeGazeAnalytics();
-        InitializeYoloContext();
         Console.WriteLine("[Auth] Re-logged in as " + visitorProfile.FaceUserId + " (close gesture)");
         Invalidate();
         return true;
@@ -1978,51 +1956,33 @@ public class TuioDemo : Form, TuioListener
         }
     }
 
-    private void InitializeYoloContext()
+    /// <summary>Phone/book/person context from yolo_server STATUS (port 5005, same as watch).</summary>
+    private void ApplyWatchAmbientContext(ServiceStatus status)
     {
-        // Legacy port 5003 (yolo_context_service) removed. Phone/book ambient banner uses
-        // yolo_server on 5005 when extended; watch/clock menu already uses watchGestureClient.
-        TeardownYoloContext();
-    }
-
-    private void TeardownYoloContext()
-    {
-        if (yoloContextClient != null)
-        {
-            yoloContextClient.FrameReceived -= OnYoloFrame;
-            try
-            {
-                yoloContextClient.StopStreamingAsync().GetAwaiter().GetResult();
-            }
-            catch { }
-            yoloContextClient.Dispose();
-            yoloContextClient = null;
-        }
-        _yoloPhonePresenceCounter = 0;
-        SetMuseumAppPhoneBannerVisible(false);
-    }
-
-    private void OnYoloFrame(YoloContextFrame frame)
-    {
-        if (visitorProfile == null || frame == null || !frame.Ok) return;
-        bool phone = false;
-        bool book = false;
-        bool large = false;
-        for (int i = 0; i < frame.Tracks.Count; i++)
-        {
-            YoloTrack t = frame.Tracks[i];
-            if (t.Conf < 0.35) continue;
-            string c = (t.ClassName ?? string.Empty).Trim().ToLowerInvariant();
-            if (c.IndexOf("phone", StringComparison.Ordinal) >= 0) phone = true;
-            if (c == "book" || c.IndexOf("laptop", StringComparison.Ordinal) >= 0) book = true;
-            if (c == "person" && t.W * t.H >= 0.10) large = true;
-        }
-        UpdateMuseumAppPhoneBanner(phone);
-        if (visitorProfile.SetCameraAmbientContext(phone, book, large))
+        if (visitorProfile == null || status == null) return;
+        UpdateMuseumAppPhoneBanner(status.AmbientPhone);
+        if (visitorProfile.SetCameraAmbientContext(status.AmbientPhone, status.AmbientBook, status.AmbientLargePerson))
         {
             ApplyVisitorTheme();
             Invalidate();
         }
+    }
+
+    private void OnSlideShowSlideChanged(ContentSlide slide)
+    {
+        currentSlide = slide;
+        fadeAlpha = 1f;
+        fadingIn = false;
+        slideElapsedMs = 0;
+        _lastRenderedContentBounds = RectangleF.Empty;
+        if (slide != null && analyticsRecorder != null && visitorProfile != null)
+        {
+            string title = "";
+            if (!string.IsNullOrEmpty(activeStoryKey) && storyTitleByKey.ContainsKey(activeStoryKey))
+                title = storyTitleByKey[activeStoryKey];
+            analyticsRecorder.NotifySlideChanged(activeStoryKey, title, slideShow.CurrentIndex, slide);
+        }
+        SafeInvalidate();
     }
 
     private void UpdateMuseumAppPhoneBanner(bool phoneInFrame)
@@ -2044,7 +2004,10 @@ public class TuioDemo : Form, TuioListener
 
     private void TeardownGazeAnalytics()
     {
-        TeardownYoloContext();
+        _yoloPhonePresenceCounter = 0;
+        SetMuseumAppPhoneBannerVisible(false);
+        if (visitorProfile != null)
+            visitorProfile.ClearCameraAmbientContext();
         GazeEmotionClient client = gazeEmotionClient;
         gazeEmotionClient = null;
         if (client != null)
@@ -2591,6 +2554,8 @@ public class TuioDemo : Form, TuioListener
         _watchClockPriorityActive = status.ClockPriorityActive;
         if (status.SecondsSinceClock.HasValue)
             _watchSecondsSinceClock = status.SecondsSinceClock.Value;
+        if (isLoggedIn)
+            ApplyWatchAmbientContext(status);
         bool visible = status.ObjectVisible;
         if (visible)
         {
@@ -5431,19 +5396,6 @@ public class TuioDemo : Form, TuioListener
                 catch { /* ignore errors on resume */ }
             });
         }
-        
-        // Resume YOLO streaming if it was active
-        if (isLoggedIn && yoloContextClient != null && yoloContextClient.IsConnected)
-        {
-            Task.Run(async () =>
-            {
-                try
-                {
-                    await yoloContextClient.StartStreamingAsync();
-                }
-                catch { /* ignore errors on resume */ }
-            });
-        }
     }
 
     private void OnWindowDeactivated(object sender, EventArgs e)
@@ -5466,19 +5418,6 @@ public class TuioDemo : Form, TuioListener
                 try
                 {
                     await gazeEmotionClient.StopStreamingAsync();
-                }
-                catch { /* ignore errors on pause */ }
-            });
-        }
-        
-        // Stop YOLO streaming to reduce CPU usage when window is inactive
-        if (yoloContextClient != null && yoloContextClient.IsConnected)
-        {
-            Task.Run(async () =>
-            {
-                try
-                {
-                    await yoloContextClient.StopStreamingAsync();
                 }
                 catch { /* ignore errors on pause */ }
             });

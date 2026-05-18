@@ -107,7 +107,7 @@ def _normalise_race(raw: str) -> str:
         "indian":          "indian",
         "black":           "black",
         "white":           "white",
-        "middle eastern":  "black",     # closest match in CSV schema
+        "middle eastern":  "middle_eastern",
         "latino hispanic": "latino",
     }
     return mapping.get(r, "white")

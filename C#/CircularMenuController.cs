@@ -94,8 +94,8 @@ public class CircularMenuController
         SelectedFavoriteTitle = null;
         _lastAngle = 0f;
         _suppressAngleDrivenTopNavUntilUtc = DateTime.MinValue;
-        // Default highlight to Home (outer ring) — not Favorite at index 0, which caused
-        // immediate Favorite actions when TUIO flick confirm fired right after opening.
+        // Intentional: default outer-ring highlight is "Home" (not index 0 / Favorites) so a
+        // TUIO confirm right after open does not trigger Favorite. Requires "Home" in TopItems.
         int homeIdx = items.IndexOf("Home");
         TopIndex = homeIdx >= 0 ? homeIdx : 0;
 

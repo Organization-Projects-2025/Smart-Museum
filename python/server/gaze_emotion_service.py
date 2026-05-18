@@ -62,6 +62,7 @@ _EMOTIONS = ("angry","disgust","fear","happy","sad","surprise","neutral")
 # Temporal smoothing for emotion
 _SMOOTH_WINDOW   = 6
 _emotion_history: list = []
+_emotion_lock = threading.Lock()
 
 # ── Landmark indices ──────────────────────────────────────────────────────────
 _LE_OUT, _LE_IN  = 33,  133
@@ -135,11 +136,12 @@ def _emotion(frame_bgr, face_bbox):
         t = sum(emo.values()) or 1.0
         emo = {k: v/t for k, v in emo.items()}
 
-        _emotion_history.append(emo)
-        if len(_emotion_history) > _SMOOTH_WINDOW:
-            _emotion_history.pop(0)
-        smoothed = {k: float(sum(e[k] for e in _emotion_history) / len(_emotion_history))
-                    for k in _EMOTIONS}
+        with _emotion_lock:
+            _emotion_history.append(emo)
+            if len(_emotion_history) > _SMOOTH_WINDOW:
+                _emotion_history.pop(0)
+            hist = list(_emotion_history)
+        smoothed = {k: float(sum(e[k] for e in hist) / len(hist)) for k in _EMOTIONS}
         t2 = sum(smoothed.values()) or 1.0
         smoothed = {k: float(v/t2) for k, v in smoothed.items()}
         return {"dominant": max(smoothed, key=smoothed.get), "emotions": smoothed}
@@ -248,7 +250,8 @@ class _Loop:
 
         if self._det:
             try: self._det.close()
-            except: pass
+            except Exception:
+                pass
 
 _loop = _Loop()
 
@@ -320,7 +323,8 @@ def _handle(conn, addr):
         print(f"[GazeEmotion] Error {addr}: {e}")
     finally:
         try: conn.close()
-        except: pass
+        except Exception:
+            pass
         print(f"[GazeEmotion] Disconnected: {addr}")
 
 def start(host="127.0.0.1", port=5002):
