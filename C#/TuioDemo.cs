@@ -231,6 +231,19 @@ public class TuioDemo : Form, TuioListener
     private const double WatchMenuOpenCooldownSec = 2.0;
     private const double WatchMenuMinStaySec = 3.0;
 
+    // Laser rating client (port 5006)
+    private LaserRatingClient laserRatingClient;
+    private bool _showRatingPage = false;
+    private int _currentRating = 0;
+    private float _ratingHoldProgress = 0f;
+    private int _confirmedRating = 0;
+    private bool _ratingLockedIn = false;
+    private bool _gesturesBlockedForRating = false;
+    private DateTime _ratingPageStartTime;
+    private SlideShowContext _postRatingContext = SlideShowContext.None;
+    private string _postRatingStoryKey = null;
+    private SceneObject _postRatingObjectStory = null;
+
     // Input prioritization: blocks gestures when TUIOs present or during cooldown
     private InputPrioritizer inputPrioritizer = new InputPrioritizer();
 
@@ -377,6 +390,7 @@ public class TuioDemo : Form, TuioListener
         InitializeGestureClient();
         InitializeWatchGestureClient();
         InitializeHandTracker();
+        InitializeLaserRatingClient();
         StartLoginFlow();
     }
 
@@ -2409,6 +2423,140 @@ public class TuioDemo : Form, TuioListener
         }
     }
 
+    private async void InitializeLaserRatingClient()
+    {
+        try
+        {
+            laserRatingClient = new LaserRatingClient();
+            laserRatingClient.RatingUpdate += OnLaserRatingUpdate;
+            laserRatingClient.RatingConfirmed += OnLaserRatingConfirmed;
+            laserRatingClient.StatusChanged += (s, status) =>
+            {
+                if (status.Contains("Connected") || status.Contains("failed"))
+                    Console.WriteLine($"[LaserRating] {status}");
+            };
+
+            bool connected = await laserRatingClient.ConnectAsync();
+            if (connected)
+                Console.WriteLine("[LaserRating] Connected to laser server on :5006");
+            else
+                Console.WriteLine("[LaserRating] Laser server not available on :5006");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[LaserRating] Init failed: {ex.Message}");
+        }
+    }
+
+    private void OnLaserRatingUpdate(object sender, RatingUpdateEventArgs e)
+    {
+        if (InvokeRequired)
+        {
+            BeginInvoke(new Action(() => OnLaserRatingUpdate(sender, e)));
+            return;
+        }
+        _currentRating = e.Rating;
+        _ratingHoldProgress = e.HoldProgress;
+        if (_showRatingPage)
+            Invalidate();
+    }
+
+    private void OnLaserRatingConfirmed(object sender, RatingConfirmedEventArgs e)
+    {
+        if (InvokeRequired)
+        {
+            BeginInvoke(new Action(() => OnLaserRatingConfirmed(sender, e)));
+            return;
+        }
+        _confirmedRating = e.Rating;
+        _ratingLockedIn = true;
+
+        string userId = visitorProfile?.FaceUserId ?? "guest";
+        string workspaceRoot = GetWorkspaceRoot();
+        var tuioIds = ExtractTuioSymbolIds(_postRatingStoryKey);
+        foreach (int id in tuioIds)
+        {
+            RatingsManager.SaveRating(workspaceRoot, userId, id, _confirmedRating);
+        }
+        if (tuioIds.Count > 0)
+            Console.WriteLine($"[Rating] Saved rating {_confirmedRating}/5 for user={userId} tuio=[{string.Join(",", tuioIds)}]");
+
+        _showRatingPage = false;
+        _ratingLockedIn = false;
+        _currentRating = 0;
+        _ratingHoldProgress = 0f;
+
+        _gesturesBlockedForRating = false;
+        ResumeHandGesturesAfterSlideshow();
+
+        CompletePostRatingTransition();
+
+        Invalidate();
+    }
+
+    private List<int> ExtractTuioSymbolIds(string storyKey)
+    {
+        var ids = new List<int>();
+        if (string.IsNullOrEmpty(storyKey)) return ids;
+
+        if (storyKey.StartsWith("figure:"))
+        {
+            string numPart = storyKey.Substring("figure:".Length);
+            if (int.TryParse(numPart, out int id))
+                ids.Add(id);
+        }
+        else if (storyKey.StartsWith("relationship:"))
+        {
+            string nums = storyKey.Substring("relationship:".Length);
+            string[] parts = nums.Split('_');
+            foreach (var p in parts)
+            {
+                if (int.TryParse(p, out int id))
+                    ids.Add(id);
+            }
+        }
+        else if (storyKey.StartsWith("object:"))
+        {
+            string[] parts = storyKey.Split(':');
+            if (parts.Length >= 2 && int.TryParse(parts[1], out int id))
+                ids.Add(id);
+        }
+
+        return ids;
+    }
+
+    private void CompletePostRatingTransition()
+    {
+        if (_postRatingContext == SlideShowContext.SingleFigureIntro)
+        {
+            if (activeFigureSymbolId >= 0)
+                recognizedFigureIds.Add(activeFigureSymbolId);
+            singleFigureIntroDone = true;
+            activeObjectStory = null;
+        }
+        else if (_postRatingContext == SlideShowContext.SceneObjectStory)
+        {
+            activeObjectStory = null;
+        }
+        else if (_postRatingContext == SlideShowContext.MenuStory)
+        {
+            activeStoryKey = null;
+            Transition(AppState.Idle, null, null, null, null);
+            return;
+        }
+        else
+        {
+            waitForClearAfterLockedShow = true;
+            activeStoryKey = null;
+            activeObjectStory = null;
+            Transition(AppState.Idle, null, null, null, null);
+            return;
+        }
+
+        _postRatingContext = SlideShowContext.None;
+        Invalidate();
+    }
+
     /// <summary>Face sign-in / recovery must not compete with gesture_service for the same USB webcam.</summary>
     private bool LoginFlowBlocksGestureWebcam()    {
         if (isLoggedIn) return false;
@@ -2484,6 +2632,9 @@ public class TuioDemo : Form, TuioListener
     private async System.Threading.Tasks.Task CheckForGesture()
     {
         if (GesturesBlockedBySlideshow())
+            return;
+
+        if (_showRatingPage || _gesturesBlockedForRating)
             return;
 
         // ── Watch / clock (YOLO :5005) — runs unconditionally, no TUIO or login gate ──
@@ -2873,6 +3024,12 @@ public class TuioDemo : Form, TuioListener
             return;
         }
 
+        if (_gesturesBlockedForRating || _showRatingPage)
+        {
+            Console.WriteLine("[Gesture] Ignored during rating page");
+            return;
+        }
+
         string logTag = fromWatch ? "[WatchYOLO]" : "[Gesture]";
 
         if (!fromWatch && HandGesturesBlockedByWatch())
@@ -3244,6 +3401,7 @@ public class TuioDemo : Form, TuioListener
         if (!isLoggedIn || authInProgress) return;
         if (adminAnalyticsVisible) return;
         if (circularMenu.IsVisible) return;
+        if (_showRatingPage) return;
 
         List<TuioObject> onTable;
         lock (objectList) onTable = new List<TuioObject>(objectList.Values);
@@ -3556,52 +3714,50 @@ public class TuioDemo : Form, TuioListener
     private void OnSlideShowCompleted()
     {
         if (emotionMusic != null) emotionMusic.Stop();
-        if (analyticsRecorder != null)
-            analyticsRecorder.SaveAndRestartVisit();
+
+        analyticsRecorder?.SaveAndRestartVisit();
+
+        // Store post-slideshow context for after rating
+        _postRatingContext = lockedContext;
+        _postRatingStoryKey = activeStoryKey;
+        _postRatingObjectStory = activeObjectStory;
 
         slideshowLocked = false;
-        ResumeHandGesturesAfterSlideshow();
         slideElapsedMs = 0;
         currentSlide = null;
         hoverObject = null;
         objectHoldProgress = 0f;
 
-        if (lockedContext == SlideShowContext.SingleFigureIntro)
-        {
-            if (activeFigureSymbolId >= 0)
-                recognizedFigureIds.Add(activeFigureSymbolId);
-            singleFigureIntroDone = true;
-            activeObjectStory = null;
-            lockedContext = SlideShowContext.None;
-            // Stay in SingleFigure so static object scene is shown next.
-            Invalidate();
-            return;
-        }
-
-        if (lockedContext == SlideShowContext.SceneObjectStory)
-        {
-            activeObjectStory = null;
-            lockedContext = SlideShowContext.None;
-            // Return to object selection scene in same figure mode.
-            Invalidate();
-            return;
-        }
-
-        if (lockedContext == SlideShowContext.MenuStory)
-        {
-            lockedContext = SlideShowContext.None;
-            activeStoryKey = null;
-            Transition(AppState.Idle, null, null, null, null);
-            Invalidate();
-            return;
-        }
-
-        // Relationship: keep previous behavior (finish then require clear once).
-        waitForClearAfterLockedShow = true;
         lockedContext = SlideShowContext.None;
-        activeStoryKey = null;
-        activeObjectStory = null;
-        Transition(AppState.Idle, null, null, null, null);
+
+        // Show rating page
+        _showRatingPage = true;
+        _currentRating = 0;
+        _ratingHoldProgress = 0f;
+        _confirmedRating = 0;
+        _ratingLockedIn = false;
+        _gesturesBlockedForRating = true;
+        _ratingPageStartTime = DateTime.UtcNow;
+
+        // Start laser tracking if server is available
+        bool laserAvailable = laserRatingClient != null && laserRatingClient.IsConnected;
+        if (laserAvailable)
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await laserRatingClient.StartRatingAsync();
+                }
+                catch { }
+            });
+        }
+        else
+        {
+            Console.WriteLine("[LaserRating] Laser server not available — rating page shown without laser");
+        }
+
+        Invalidate();
     }
 
     // Animation timer
@@ -3622,6 +3778,23 @@ public class TuioDemo : Form, TuioListener
             adminAnalyticsPanel.Tick(animTimer.Interval);
 
         PollGazeEmotionClient();
+
+        // Auto-dismiss rating page after timeout with no confirmation
+        if (_showRatingPage && !_ratingLockedIn)
+        {
+            bool laserOk = laserRatingClient != null && laserRatingClient.IsConnected;
+            double timeoutSec = laserOk ? 60.0 : 10.0;
+            if ((DateTime.UtcNow - _ratingPageStartTime).TotalSeconds > timeoutSec)
+            {
+                Console.WriteLine("[LaserRating] Rating page timed out — dismissing");
+                _showRatingPage = false;
+                _gesturesBlockedForRating = false;
+                _ = Task.Run(async () => { try { if (laserRatingClient != null) await laserRatingClient.StopRatingAsync(); } catch { } });
+                ResumeHandGesturesAfterSlideshow();
+                CompletePostRatingTransition();
+                Invalidate();
+            }
+        }
 
         // Update gaze-based adaptive slideshow timing
         if (slideShow != null && slideShow.IsRunning && currentSlide != null)
@@ -3733,6 +3906,7 @@ public class TuioDemo : Form, TuioListener
     private void UpdateCircularMenuInput()
     {
         if (!isLoggedIn || authInProgress) return;
+        if (_showRatingPage) return;
 
         if (adminAnalyticsVisible)
         {
@@ -3879,6 +4053,11 @@ public class TuioDemo : Form, TuioListener
             case AppState.PairFacing: DrawPairFacing(g); break;
         }
 
+        if (_showRatingPage)
+        {
+            DrawRatingPage(g);
+        }
+
         if (slideshowLocked && slideShow != null && slideShow.IsRunning && currentSlide != null &&
             state == AppState.Idle && lockedContext == SlideShowContext.MenuStory)
         {
@@ -3896,6 +4075,132 @@ public class TuioDemo : Form, TuioListener
         DrawMuseumAppPhoneDownloadBanner(g);
         DrawWatchClockCooldown(g);
         DrawGestureOverlay(g);
+    }
+
+    private void DrawRatingPage(Graphics g)
+    {
+        int panelW = 420;
+        int panelX = (W - panelW) / 2;
+        int panelY = (H - 420) / 2;
+        int panelH = 420;
+
+        using (var bg = new SolidBrush(Color.FromArgb(235, 10, 10, 12)))
+            g.FillRectangle(bg, panelX, panelY, panelW, panelH);
+        using (var border = new Pen(Color.FromArgb(200, themeSecondary), 2))
+            g.DrawRectangle(border, panelX, panelY, panelW, panelH);
+
+        int cy = panelY + 50;
+        string title = _ratingLockedIn ? "RATING SAVED" : "RATE YOUR EXPERIENCE";
+        using (var titleBrush = new SolidBrush(themeSecondary))
+            g.DrawString(title, fontSubtitle, titleBrush,
+                new RectangleF(panelX, panelY + 15, panelW, 36),
+                new StringFormat { Alignment = StringAlignment.Center });
+
+        int starCount = 5;
+        int pad = 30;
+        int spacing = (panelW - 2 * pad) / starCount;
+        int outerR = Math.Min(spacing / 3, 38);
+        int innerR = outerR / 2;
+
+        int starsCy = panelY + 140;
+
+        for (int i = 0; i < starCount; i++)
+        {
+            int cx = panelX + pad + i * spacing + spacing / 2;
+
+            if (i < _currentRating)
+                DrawStar(g, cx, starsCy, outerR, innerR, CGold);
+            else if (_confirmedRating > 0 && i < _confirmedRating)
+                DrawStarOutline(g, cx, starsCy, outerR, innerR, CGold);
+            else
+                DrawStar(g, cx, starsCy, outerR, innerR, Color.FromArgb(50, 50, 50));
+        }
+
+        string ratingText = $"{_currentRating} / 5";
+        using (var brush = new SolidBrush(themeSecondary))
+        using (var sf = new StringFormat { Alignment = StringAlignment.Center })
+            g.DrawString(ratingText, fontSubtitle, brush,
+                panelX + panelW / 2, panelY + 200, sf);
+
+        if (_currentRating > 0 && !_ratingLockedIn)
+        {
+            int barX = panelX + 50;
+            int barY = panelY + 250;
+            int barW = panelW - 100;
+            int barH = 14;
+
+            int fillW = (int)(barW * _ratingHoldProgress);
+            using (var fill = new SolidBrush(themeSecondary))
+                g.FillRectangle(fill, barX, barY, fillW, barH);
+            using (var outline = new Pen(Color.FromArgb(120, 120, 120), 1))
+                g.DrawRectangle(outline, barX, barY, barW, barH);
+
+            float remain = 5.0f * (1.0f - _ratingHoldProgress);
+            string timerText = $"Hold {remain:F1}s";
+            using (var brush = new SolidBrush(Color.FromArgb(200, 200, 200)))
+            using (var sf = new StringFormat { Alignment = StringAlignment.Center })
+                g.DrawString(timerText, fontSmall, brush,
+                    panelX + panelW / 2, barY - 24, sf);
+        }
+        else if (_currentRating == 0 && !_ratingLockedIn)
+        {
+            bool laserOk = laserRatingClient != null && laserRatingClient.IsConnected;
+            string hint = laserOk
+                ? "Point the laser at the camera"
+                : "Laser server not available";
+            using (var brush = new SolidBrush(Color.FromArgb(160, 160, 160)))
+            using (var sf = new StringFormat { Alignment = StringAlignment.Center })
+                g.DrawString(hint, fontSmall, brush,
+                    panelX + panelW / 2, panelY + 250, sf);
+        }
+
+        if (_ratingLockedIn)
+        {
+            string savedLabel = $"SAVED: {_confirmedRating} / 5";
+            using (var brush = new SolidBrush(Color.FromArgb(100, 220, 100)))
+            using (var sf = new StringFormat { Alignment = StringAlignment.Center })
+                g.DrawString(savedLabel, fontSubtitle, brush,
+                    panelX + panelW / 2, panelY + 300, sf);
+        }
+
+        if (_ratingLockedIn)
+        {
+            string autoMsg = "Returning to main...";
+            using (var brush = new SolidBrush(Color.FromArgb(160, 160, 160)))
+            using (var sf = new StringFormat { Alignment = StringAlignment.Center })
+                g.DrawString(autoMsg, fontSmall, brush,
+                    panelX + panelW / 2, panelY + panelH - 40, sf);
+        }
+    }
+
+    private void DrawStar(Graphics g, int cx, int cy, int outerR, int innerR, Color color)
+    {
+        var pts = new Point[10];
+        for (int i = 0; i < 10; i++)
+        {
+            double angle = -90 + i * 36;
+            double r = (i % 2 == 0) ? outerR : innerR;
+            pts[i] = new Point(
+                cx + (int)(r * Math.Cos(angle * Math.PI / 180.0)),
+                cy + (int)(r * Math.Sin(angle * Math.PI / 180.0)));
+        }
+        using (var brush = new SolidBrush(color))
+            g.FillPolygon(brush, pts);
+    }
+
+    private void DrawStarOutline(Graphics g, int cx, int cy, int outerR, int innerR, Color color)
+    {
+        var pts = new Point[10];
+        for (int i = 0; i < 10; i++)
+        {
+            double angle = -90 + i * 36;
+            double r = (i % 2 == 0) ? outerR : innerR;
+            pts[i] = new Point(
+                cx + (int)(r * Math.Cos(angle * Math.PI / 180.0)),
+                cy + (int)(r * Math.Sin(angle * Math.PI / 180.0)));
+        }
+        using (var pen = new Pen(color, 2))
+            g.DrawPolygon(pen, pts);
     }
 
     /// <summary>YOLO detected a phone in frame — prompt visitor to install the companion app (URLs are constants above).</summary>
@@ -5347,6 +5652,16 @@ public class TuioDemo : Form, TuioListener
         }
         else if (e.KeyCode == Keys.Escape || e.KeyCode == Keys.Q)
         {
+            if (_showRatingPage)
+            {
+                _showRatingPage = false;
+                _gesturesBlockedForRating = false;
+                _ = Task.Run(async () => { try { if (laserRatingClient != null) await laserRatingClient.StopRatingAsync(); } catch { } });
+                ResumeHandGesturesAfterSlideshow();
+                CompletePostRatingTransition();
+                Invalidate();
+                return;
+            }
             this.Close();
         }
         else if (e.KeyCode == Keys.L)
@@ -5453,6 +5768,10 @@ public class TuioDemo : Form, TuioListener
         if (watchGestureClient != null)
         {
             watchGestureClient.Dispose();
+        }
+        if (laserRatingClient != null)
+        {
+            laserRatingClient.Dispose();
         }
         
         if (client != null)

@@ -72,6 +72,8 @@
     <Compile Include="GazeEmotionClient.cs" />
     <Compile Include="EmotionMusicPlayer.cs" />
     <Compile Include="HandTrackClient.cs" />
+    <Compile Include="LaserRatingClient.cs" />
+    <Compile Include="RatingsManager.cs" />
     <Compile Include="TUIO\TuioClient.cs" />
     <Compile Include="TUIO\TuioContainer.cs" />
     <Compile Include="TUIO\TuioCursor.cs" />

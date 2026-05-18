@@ -87,6 +87,7 @@ import demographics_service
 import gaze_emotion_service
 import yolo_server
 import hand_service
+import laser_server
 
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -135,6 +136,9 @@ def main():
         _run("YOLO", _start_yolo)
     _run("HAND",       hand_service.start)
 
+    if os.environ.get("DISABLE_LASER", "").strip() not in ("1", "true", "yes"):
+        _run("LASER", lambda: laser_server.start(hub))
+
     # 4. Pre-download DeepFace models in background (first-time only)
     _run("DEMOGRAPHICS", demographics_service.warmup)
 
@@ -155,6 +159,7 @@ def main():
     _log("SERVER", "  Gaze+Emotion: 127.0.0.1:5002")
     _log("SERVER", "  YOLO Watch:   127.0.0.1:5005")
     _log("SERVER", "  Hand Track:   127.0.0.1:5004")
+    _log("SERVER", "  Laser Rating: 127.0.0.1:5006")
     _log("SERVER", "Press Ctrl+C to stop.")
 
     try:
