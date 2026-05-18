@@ -1,4 +1,4 @@
 @echo off
-echo Starting Python Socket Server...
-"C:\Users\user\AppData\Local\Programs\Python\Python311\python.exe" python_server.py
-pause
+REM Deprecated: use start.bat from repo root. This wrapper forwards to the same entry point.
+cd /d "%~dp0"
+call start.bat

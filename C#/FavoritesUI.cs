@@ -26,6 +26,7 @@ public class FavoriteButton : Button
     private bool _isFavorited;
     private Color _favoritedColor = Color.Gold;
     private Color _unfavoritedColor = Color.Gray;
+    private Font _starFont;
 
     public event EventHandler FavoriteToggled;
 
@@ -72,7 +73,21 @@ public class FavoriteButton : Button
         this.BackColor = Color.Transparent;
         this.Cursor = Cursors.Hand;
         this.Click += FavoriteButton_Click;
+        _starFont = new Font("Segoe UI", 18f, FontStyle.Regular);
         UpdateAppearance();
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            if (_starFont != null)
+            {
+                _starFont.Dispose();
+                _starFont = null;
+            }
+        }
+        base.Dispose(disposing);
     }
 
     private void FavoriteButton_Click(object sender, EventArgs e)
@@ -86,7 +101,8 @@ public class FavoriteButton : Button
         // Use Unicode star characters
         this.Text = _isFavorited ? "★" : "☆";
         this.ForeColor = _isFavorited ? _favoritedColor : _unfavoritedColor;
-        this.Font = new Font("Segoe UI", 18f, FontStyle.Regular);
+        if (_starFont != null)
+            this.Font = _starFont;
     }
 
     protected override void OnPaint(PaintEventArgs e)

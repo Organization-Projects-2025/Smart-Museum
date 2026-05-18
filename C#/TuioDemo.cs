@@ -547,7 +547,8 @@ public class TuioDemo : Form, TuioListener
                     }
                 };
 
-                bool ok = faceService.AuthLobbyScan(out outcome, out uid, out st, onProgress);
+                NewFaceDemographics newDemo;
+                bool ok = faceService.AuthLobbyScan(out outcome, out uid, out st, out newDemo, onProgress);
                 
                 if (IsHandleCreated) {
                     BeginInvoke(new Action(() => {
@@ -559,7 +560,7 @@ public class TuioDemo : Form, TuioListener
                 if (!ok && outcome == FaceRegisterScanResult.Error)
                 {
                     ShowAuthCameraIssueRecovery(string.IsNullOrEmpty(st)
-                        ? "Check that python_server.py is running on this PC, then try again."
+                        ? "Check that start.bat is running (python/server/main.py on port 5000), then try again."
                         : st);
                     return;
                 }
@@ -602,53 +603,34 @@ public class TuioDemo : Form, TuioListener
 
                 if (outcome == FaceRegisterScanResult.NewUserCreated)
                 {
-                    pendingNewFaceUserId = uid; // This actually contains the raw string with colons if DeepFace worked
+                    pendingNewFaceUserId = uid;
+                    pendingDuplicateUserId = uid;
 
-                    if (NewFaceDemographics.TryParseNewResponse("NEW:" + uid, out var demo))
+                    VisitorProfile profile = new VisitorProfile
                     {
-                        pendingNewFaceUserId = demo.UserId;
-                        pendingDuplicateUserId = demo.UserId; // This allows the auto-continue to bluetooth step to work seamlessly
+                        FaceUserId = newDemo.UserId,
+                        FirstName = "Visitor",
+                        LastName = newDemo.UserId.Replace("user", ""),
+                        Age = newDemo.Age,
+                        Gender = newDemo.Gender,
+                        Race = newDemo.Race,
+                        Role = "visitor",
+                        BluetoothMacAddress = "0",
+                        FaceImagePath = $"python/data/faces/{newDemo.UserId}.jpg"
+                    };
+                    string csvPath = Path.Combine(GetWorkspaceRoot(), "C#", "content", "auth", "users.csv");
+                    AuthCsvStore.AppendUser(csvPath, profile);
 
-                        // Create profile instantly
-                        VisitorProfile profile = new VisitorProfile
-                        {
-                            FaceUserId = demo.UserId,
-                            FirstName = "Visitor",
-                            LastName = demo.UserId.Replace("user", ""),
-                            Age = demo.Age,
-                            Gender = demo.Gender,
-                            Race = demo.Race,
-                            Role = "visitor",
-                            BluetoothMacAddress = "0",
-                            FaceImagePath = $"python/data/faces/{demo.UserId}.jpg"
-                        };
-                        string csvPath = Path.Combine(GetWorkspaceRoot(), "C#", "content", "auth", "users.csv");
-                        AuthCsvStore.AppendUser(csvPath, profile);
-
-                        if (IsHandleCreated)
-                        {
-                            BeginInvoke(new Action(() =>
-                            {
-                                authInProgress = false;
-                                authLobbyProfilePreview = profile;
-                                loginPhase = LoginAuthPhase.ProfileWelcome;
-                                profileWelcomeAutoContinueUtc = DateTime.UtcNow.AddSeconds(4);
-                                authStatus = "Welcome to the museum! Your profile has been automatically generated.";
-                                Invalidate();
-                            }));
-                        }
-                        return;
-                    }
-
-                    // Fallback if demographics failed to parse for some reason
                     if (IsHandleCreated)
                     {
                         BeginInvoke(new Action(() =>
                         {
                             authInProgress = false;
-                            authStatus = "Almost there — we’ll look for your phone or watch on Bluetooth to finish creating your account.";
+                            authLobbyProfilePreview = profile;
+                            loginPhase = LoginAuthPhase.ProfileWelcome;
+                            profileWelcomeAutoContinueUtc = DateTime.UtcNow.AddSeconds(4);
+                            authStatus = "Welcome to the museum! Your profile has been automatically generated.";
                             Invalidate();
-                            StartBluetoothPickForRegistration();
                         }));
                     }
                     return;
@@ -1753,9 +1735,16 @@ public class TuioDemo : Form, TuioListener
     private string GetWorkspaceRoot()
     {
         DirectoryInfo d = new DirectoryInfo(AppDomain.CurrentDomain.BaseDirectory);
-        if (d.Parent != null) d = d.Parent;
-        if (d.Parent != null) d = d.Parent;
-        if (d.Parent != null) d = d.Parent;
+        while (d != null)
+        {
+            if (File.Exists(Path.Combine(d.FullName, ".env")) ||
+                Directory.Exists(Path.Combine(d.FullName, "C#", "content")))
+                return d.FullName;
+            d = d.Parent;
+        }
+        d = new DirectoryInfo(AppDomain.CurrentDomain.BaseDirectory);
+        for (int i = 0; i < 3 && d.Parent != null; i++)
+            d = d.Parent;
         return d.FullName;
     }
 
@@ -1989,21 +1978,11 @@ public class TuioDemo : Form, TuioListener
         }
     }
 
-    private async void InitializeYoloContext()
+    private void InitializeYoloContext()
     {
-        if (visitorProfile == null) return;
+        // Legacy port 5003 (yolo_context_service) removed. Phone/book ambient banner uses
+        // yolo_server on 5005 when extended; watch/clock menu already uses watchGestureClient.
         TeardownYoloContext();
-        yoloContextClient = new YoloContextClient("127.0.0.1", 5003);
-        bool ok = await yoloContextClient.ConnectAsync();
-        if (!ok)
-        {
-            Console.WriteLine("YOLO context service not available (start python/server/yolo_context_service.py on port 5003).");
-            return;
-        }
-        yoloContextClient.FrameReceived += OnYoloFrame;
-        bool streamOk = await yoloContextClient.StartStreamingAsync();
-        if (!streamOk)
-            Console.WriteLine("YOLO context STREAM handshake failed.");
     }
 
     private void TeardownYoloContext()
@@ -2452,15 +2431,18 @@ public class TuioDemo : Form, TuioListener
     {
         try
         {
-            // Hand tracker is separate from museum_vision_server (which uses 5002 for gaze).
-            // Default port in python/server/hand_tracker_service.py is 5004.
             handTrackClient = new HandTrackClient(5004);
-            handTrackClient.Connect();
-            Console.WriteLine("[3D] Hand tracker connected on port 5004");
+            handTrackClient.ConnectAsync(ok =>
+            {
+                if (ok)
+                    Console.WriteLine("[3D] Hand tracker connected on port 5004");
+                else
+                    Console.WriteLine("[3D] Hand tracker not available (hand_service on port 5004)");
+            });
         }
         catch (Exception ex)
         {
-            Console.WriteLine("[3D] Hand tracker not available (start hand_tracker_service.py): " + ex.Message);
+            Console.WriteLine("[3D] Hand tracker init failed: " + ex.Message);
         }
     }
 
@@ -5240,7 +5222,8 @@ public class TuioDemo : Form, TuioListener
         if (string.IsNullOrEmpty(relativePath)) return null;
 
         Image cached;
-        if (imgCache.TryGetValue(relativePath, out cached)) return cached;
+        if (imgCache.TryGetValue(relativePath, out cached))
+            return cached;
 
         string full = ResolveContentFilePath(relativePath);
         Image img = null;
@@ -5249,7 +5232,8 @@ public class TuioDemo : Form, TuioListener
             try { img = Image.FromFile(full); }
             catch { }
         }
-        imgCache[relativePath] = img;
+        if (img != null)
+            imgCache[relativePath] = img;
         return img;
     }
 

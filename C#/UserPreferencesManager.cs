@@ -21,6 +21,8 @@ public class UserPreferencesManager
     private void EnsureDirectoryExists()
     {
         string dir = Path.GetDirectoryName(_csvPath);
+        if (string.IsNullOrEmpty(dir))
+            return;
         if (!Directory.Exists(dir))
             Directory.CreateDirectory(dir);
     }

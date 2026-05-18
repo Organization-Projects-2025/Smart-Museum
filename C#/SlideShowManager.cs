@@ -135,12 +135,7 @@ public class SlideShowManager
             // User is looking elsewhere on screen OR no face detected
             gazeAwayMs += 50;
 
-            // Early advance if user looks away for too long
-            if (gazeAwayMs >= GazeAwayThreshold && slideElapsedMs >= currentSlideBaselineDuration * 0.5f)
-            {
-                // Only skip if we're at least halfway through the baseline duration
-                AdvanceSlide();
-            }
+            // Advance timing is handled only in OnTimerTick to avoid double-advance.
         }
     }
 
@@ -190,7 +185,12 @@ public class SlideShowManager
             {
                 shouldAdvance = true;
             }
-            // Or if we've reached baseline and user is looking away
+            // Early skip: halfway through baseline and looked away for GazeAwayThreshold
+            else if (slideElapsedMs >= currentSlideBaselineDuration * 0.5f && gazeAwayMs >= GazeAwayThreshold)
+            {
+                shouldAdvance = true;
+            }
+            // Or full baseline elapsed with brief look-away
             else if (slideElapsedMs >= currentSlideBaselineDuration && gazeAwayMs > 1000)
             {
                 shouldAdvance = true;

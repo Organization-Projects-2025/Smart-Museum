@@ -116,7 +116,8 @@ using System.Threading.Tasks;
    ```powershell
    cd <repo-root>
    .\.venv\Scripts\Activate.ps1
-   python python\server\python_server.py
+   start.bat
+   REM or: python python\server\main.py
    ```
 
 3. **Run TuioDemo:**

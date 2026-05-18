@@ -240,6 +240,11 @@ def _face_lobby(progress_cb=None) -> str:
     return "NOT_FOUND"
 
 # ── TCP server ────────────────────────────────────────────────────────────────
+def _send_line(conn, text: str) -> None:
+    """Send one newline-terminated response (C# StreamReader.ReadLine)."""
+    conn.send(text.encode("utf-8") + b"\n")
+
+
 def _handle(conn, addr):
     print(f"[Auth] Client: {addr}")
     buf = ""
@@ -256,23 +261,23 @@ def _handle(conn, addr):
                     continue
                 parts = cmd.split()
                 if parts[0] == "bluetooth_scan" and len(parts) >= 2:
-                    conn.send(_bt_scan(parts[1]).encode())
+                    _send_line(conn, _bt_scan(parts[1]))
                 elif parts[0] == "bluetooth_register_pick":
-                    conn.send(_bt_pick().encode())
+                    _send_line(conn, _bt_pick())
                 elif parts[0] == "face_id_scan":
-                    conn.send(_face_scan_and_match().encode())
+                    _send_line(conn, _face_scan_and_match())
                 elif parts[0] == "face_register_scan":
-                    conn.send(_face_register_scan().encode())
+                    _send_line(conn, _face_register_scan())
                 elif parts[0] == "face_auth_lobby":
                     def progress_cb(msg):
                         try:
-                            conn.send(f"PROGRESS:{msg}\n".encode("utf-8"))
-                        except:
+                            _send_line(conn, f"PROGRESS:{msg}")
+                        except Exception:
                             pass
                     result = _face_lobby(progress_cb)
-                    conn.send(result.encode("utf-8") + b"\n")
+                    _send_line(conn, result)
                 elif parts[0] == "exit":
-                    conn.send(b"BYE")
+                    _send_line(conn, "BYE")
                     return
     except Exception as e:
         print(f"[Auth] Error: {e}")

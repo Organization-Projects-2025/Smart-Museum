@@ -136,7 +136,7 @@ mp = Solutions()
 # ── CameraHub (same camera as main.py server) ────────────────────────────────
 # Import from python/server/camera_hub.py so standalone runs use the same
 # camera index (MUSEUM_CAMERA env var) and DSHOW logic as the full server.
-_SERVER_DIR = os.path.join(os.path.dirname(SCRIPT_DIR), "python", "server")
+_SERVER_DIR = SCRIPT_DIR
 if _SERVER_DIR not in sys.path:
     sys.path.insert(0, _SERVER_DIR)
 

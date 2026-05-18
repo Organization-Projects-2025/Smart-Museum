@@ -91,19 +91,35 @@ public static class AppEnvironment
 
 public class SocketClient
 {
-    public NetworkStream stream;
-    public TcpClient client;
+    private NetworkStream stream;
+    private TcpClient client;
+    private const int ConnectTimeoutMs = 5000;
+    private const int ReadTimeoutMs = 60000;
 
     public bool connectToSocket(string host, int portNumber)
     {
         try
         {
-            client = new TcpClient(host, portNumber);
+            client = new TcpClient();
+            var connectTask = client.ConnectAsync(host, portNumber);
+            if (!connectTask.Wait(ConnectTimeoutMs))
+            {
+                try { client.Close(); } catch { }
+                client = null;
+                Console.WriteLine("Connection Failed: timed out connecting to " + host + ":" + portNumber);
+                return false;
+            }
             stream = client.GetStream();
+            stream.ReadTimeout = ReadTimeoutMs;
             Console.WriteLine("Connection made with " + host);
             return true;
         }
         catch (System.Net.Sockets.SocketException e)
+        {
+            Console.WriteLine("Connection Failed: " + e.Message);
+            return false;
+        }
+        catch (Exception e)
         {
             Console.WriteLine("Connection Failed: " + e.Message);
             return false;
@@ -129,13 +145,21 @@ public class SocketClient
 
     public string recieveMessage()
     {
+        return ReadResponseLine();
+    }
+
+    private string ReadResponseLine()
+    {
         try
         {
-            byte[] receiveBuffer = new byte[1024];
-            int bytesReceived = stream.Read(receiveBuffer, 0, 1024);
-            string data = Encoding.UTF8.GetString(receiveBuffer, 0, bytesReceived);
-            Console.WriteLine("Received: " + data);
-            return data;
+            if (stream == null) return null;
+            using (var reader = new StreamReader(stream, Encoding.UTF8, false, 1024, leaveOpen: true))
+            {
+                string line = reader.ReadLine();
+                if (line != null)
+                    Console.WriteLine("Received: " + line);
+                return line != null ? line.Trim() : null;
+            }
         }
         catch (Exception e)
         {
@@ -177,20 +201,20 @@ public class SocketClient
         try
         {
             sendMessage(cmd);
-            using (var reader = new System.IO.StreamReader(stream, Encoding.UTF8))
+            using (var reader = new StreamReader(stream, Encoding.UTF8, false, 1024, leaveOpen: true))
             {
                 while (true)
                 {
                     string line = reader.ReadLine();
                     if (line == null) return null;
                     line = line.Trim();
-                    if (line.StartsWith("PROGRESS:"))
+                    if (line.StartsWith("PROGRESS:", StringComparison.OrdinalIgnoreCase))
                     {
                         onProgress?.Invoke(line.Substring(9));
                     }
                     else
                     {
-                        return line; // Final result (e.g. FOUND:..., NEW:...)
+                        return line;
                     }
                 }
             }
@@ -593,7 +617,7 @@ public class BluetoothService
             SocketClient client = new SocketClient();
             if (!client.connectToSocket("127.0.0.1", 5000))
             {
-                status = "Cannot connect to the Python server (port 5000). Start python_server.py and try again.";
+                status = "Cannot connect to the Python server (port 5000). Run start.bat (python/server/main.py) and try again.";
                 return false;
             }
 
@@ -653,10 +677,11 @@ public enum FaceRegisterScanResult
 public class FaceRecognitionService
 {
     /// <summary>Registration: capture face; FOUND existing user or NEW id with image saved by Python.</summary>
-    public bool RegisterFaceScan(out FaceRegisterScanResult result, out string userId, out string status)
+    public bool RegisterFaceScan(out FaceRegisterScanResult result, out string userId, out string status, out NewFaceDemographics newUserDemo)
     {
         result = FaceRegisterScanResult.Error;
         userId = string.Empty;
+        newUserDemo = default;
         status = "Starting face capture for registration...";
 
         try
@@ -687,7 +712,12 @@ public class FaceRecognitionService
 
             if (response.StartsWith("NEW:", StringComparison.OrdinalIgnoreCase))
             {
-                userId = response.Substring(4).Trim();
+                if (!NewFaceDemographics.TryParseNewResponse(response, out newUserDemo))
+                {
+                    status = "Invalid NEW response from server.";
+                    return false;
+                }
+                userId = newUserDemo.UserId;
                 result = FaceRegisterScanResult.NewUserCreated;
                 status = "New face saved as " + userId + ". Continue with Bluetooth.";
                 return true;
@@ -720,10 +750,11 @@ public class FaceRecognitionService
     /// OpenCV lobby on Python (oval guide, centering, hold-still, countdown for new users).
     /// Same wire protocol as RegisterFaceScan: FOUND:userId, NEW:userId, NOT_FOUND, ERROR:, plus CANCELLED.
     /// </summary>
-    public bool AuthLobbyScan(out FaceRegisterScanResult result, out string userId, out string status, Action<string> onProgress = null)
+    public bool AuthLobbyScan(out FaceRegisterScanResult result, out string userId, out string status, out NewFaceDemographics newUserDemo, Action<string> onProgress = null)
     {
         result = FaceRegisterScanResult.Error;
         userId = string.Empty;
+        newUserDemo = default;
         status = "Warming up camera...";
 
         try
@@ -763,7 +794,12 @@ public class FaceRecognitionService
 
             if (response.StartsWith("NEW:", StringComparison.OrdinalIgnoreCase))
             {
-                userId = response.Substring(4).Trim();
+                if (!NewFaceDemographics.TryParseNewResponse(response, out newUserDemo))
+                {
+                    status = "Invalid NEW response from server.";
+                    return false;
+                }
+                userId = newUserDemo.UserId;
                 result = FaceRegisterScanResult.NewUserCreated;
                 status = "Your photo was saved. Next we will pair Bluetooth for your account.";
                 return true;

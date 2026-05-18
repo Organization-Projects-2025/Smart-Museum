@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 
 /// <summary>
 /// Manages input prioritization between TUIO markers and hand gesture recognition.
@@ -8,6 +7,7 @@ using System.Collections.Generic;
 /// </summary>
 public class InputPrioritizer
 {
+    private readonly object _sync = new object();
     private bool tuioPresent = false;
     private DateTime tuioClearedTime = DateTime.MinValue;
     private const int CooldownMs = 5000; // 5 seconds
@@ -20,18 +20,20 @@ public class InputPrioritizer
     {
         get
         {
-            if (tuioPresent)
-                return false;
-
-            // Check cooldown: if TUIOs were recently cleared, still block gestures
-            if (tuioClearedTime != DateTime.MinValue)
+            lock (_sync)
             {
-                int elapsedMs = (int)(DateTime.UtcNow - tuioClearedTime).TotalMilliseconds;
-                if (elapsedMs < CooldownMs)
+                if (tuioPresent)
                     return false;
-            }
 
-            return true;
+                if (tuioClearedTime != DateTime.MinValue)
+                {
+                    int elapsedMs = (int)(DateTime.UtcNow - tuioClearedTime).TotalMilliseconds;
+                    if (elapsedMs < CooldownMs)
+                        return false;
+                }
+
+                return true;
+            }
         }
     }
 
@@ -41,17 +43,20 @@ public class InputPrioritizer
     /// </summary>
     public int GetCooldownRemainingMs()
     {
-        if (tuioPresent)
-            return CooldownMs; // Treat as full cooldown while TUIOs present
-
-        if (tuioClearedTime != DateTime.MinValue)
+        lock (_sync)
         {
-            int elapsedMs = (int)(DateTime.UtcNow - tuioClearedTime).TotalMilliseconds;
-            int remaining = CooldownMs - elapsedMs;
-            return remaining > 0 ? remaining : 0;
-        }
+            if (tuioPresent)
+                return CooldownMs;
 
-        return 0;
+            if (tuioClearedTime != DateTime.MinValue)
+            {
+                int elapsedMs = (int)(DateTime.UtcNow - tuioClearedTime).TotalMilliseconds;
+                int remaining = CooldownMs - elapsedMs;
+                return remaining > 0 ? remaining : 0;
+            }
+
+            return 0;
+        }
     }
 
     /// <summary>
@@ -59,21 +64,22 @@ public class InputPrioritizer
     /// </summary>
     public void SetTuioPresent(bool present)
     {
-        bool wasPresent = tuioPresent;
-        tuioPresent = present;
-
-        // Transition from present to not present: start cooldown
-        if (wasPresent && !present)
+        lock (_sync)
         {
-            tuioClearedTime = DateTime.UtcNow;
-            Console.WriteLine($"[InputPrioritizer] TUIOs cleared. Starting 5s cooldown...");
-        }
+            bool wasPresent = tuioPresent;
+            tuioPresent = present;
 
-        // Transition from not present to present: reset cooldown
-        if (!wasPresent && present)
-        {
-            tuioClearedTime = DateTime.MinValue;
-            Console.WriteLine($"[InputPrioritizer] TUIO detected. Gesture recognition blocked.");
+            if (wasPresent && !present)
+            {
+                tuioClearedTime = DateTime.UtcNow;
+                Console.WriteLine("[InputPrioritizer] TUIOs cleared. Starting 5s cooldown...");
+            }
+
+            if (!wasPresent && present)
+            {
+                tuioClearedTime = DateTime.MinValue;
+                Console.WriteLine("[InputPrioritizer] TUIO detected. Gesture recognition blocked.");
+            }
         }
     }
 
@@ -82,9 +88,12 @@ public class InputPrioritizer
     /// </summary>
     public string GetDebugInfo()
     {
-        string state = tuioPresent ? "TUIO_PRESENT" : "TUIO_CLEAR";
-        int cooldownRemaining = GetCooldownRemainingMs();
-        return $"[InputPrioritizer] State={state}, GesturesAllowed={CanAcceptGestures}, CooldownMs={cooldownRemaining}";
+        lock (_sync)
+        {
+            string state = tuioPresent ? "TUIO_PRESENT" : "TUIO_CLEAR";
+            int cooldownRemaining = GetCooldownRemainingMs();
+            return $"[InputPrioritizer] State={state}, GesturesAllowed={CanAcceptGestures}, CooldownMs={cooldownRemaining}";
+        }
     }
 
     /// <summary>
@@ -92,7 +101,10 @@ public class InputPrioritizer
     /// </summary>
     public void Reset()
     {
-        tuioPresent = false;
-        tuioClearedTime = DateTime.MinValue;
+        lock (_sync)
+        {
+            tuioPresent = false;
+            tuioClearedTime = DateTime.MinValue;
+        }
     }
 }

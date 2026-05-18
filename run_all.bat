@@ -1,12 +1,7 @@
 @echo off
-REM Smart Museum - Complete Startup Script
-REM Starts Python server and C# application together
-
+REM Smart Museum - Start Python server + C# app (use start.bat for server only)
 setlocal enabledelayedexpansion
-
-REM Get the directory where this script is located
-set SCRIPT_DIR=%~dp0
-cd /d "%SCRIPT_DIR%"
+cd /d "%~dp0"
 
 echo.
 echo ========================================
@@ -14,28 +9,31 @@ echo Smart Museum - Complete Startup
 echo ========================================
 echo.
 
-REM Start Python server in a new window
-echo Starting Python Socket Server...
-start "Python Server" cmd /k "python python_server.py"
+REM Python server (same venv resolution as start.bat)
+set "VENV_NAME=.venv"
+if exist .env (
+    for /f "usebackq tokens=1* delims==" %%a in (".env") do (
+        if /i "%%a"=="venv_name" set "VENV_NAME=%%~b"
+    )
+)
+set "PYTHON=%~dp0%VENV_NAME%\Scripts\python.exe"
+if not exist "%PYTHON%" set "PYTHON=python"
 
-REM Give Python server time to start
-timeout /t 2 /nobreak
+echo Starting Python server...
+start "Smart Museum Server" cmd /k "cd /d "%~dp0" && "%PYTHON%" -u python\server\main.py"
+timeout /t 3 /nobreak >nul
 
-REM Start C# application
-echo Starting C# Application...
-cd /d "%SCRIPT_DIR%C#\bin\Debug"
+REM Find TUIO_DEMO.exe (Debug / x86 / x64)
+set "EXE="
+for %%D in ("%~dp0C#\bin\Debug" "%~dp0C#\bin\x64\Debug" "%~dp0C#\bin\x86\Debug") do (
+    if exist "%%~D\TUIO_DEMO.exe" set "EXE=%%~D\TUIO_DEMO.exe"
+)
 
-if exist "TUIO_DEMO.exe" (
-    start "Smart Museum App" TUIO_DEMO.exe
-    echo.
-    echo ========================================
-    echo Both services started successfully!
-    echo Python Server: Running in separate window
-    echo C# App: Running in separate window
-    echo ========================================
-    echo.
+if defined EXE (
+    echo Starting C# app: !EXE!
+    start "Smart Museum App" "!EXE!"
+    echo Both services started.
 ) else (
-    echo ERROR: TUIO_DEMO.exe not found in C#\bin\Debug
-    echo Please build the C# project first.
+    echo ERROR: TUIO_DEMO.exe not found. Build C#\TUIO_CSHARP.sln in Visual Studio first.
     pause
 )

@@ -182,7 +182,7 @@ class _YoloEngine:
         return cv2.resize(frame, (INFER_MAX_W, int(h * scale)), interpolation=cv2.INTER_AREA)
 
     def _open_local_camera(self):
-        idx = int(os.environ.get("YOLO_CAMERA", os.environ.get("MUSEUM_CAMERA", "0")))
+        idx = int(os.environ.get("MUSEUM_CAMERA", os.environ.get("YOLO_CAMERA", "0")))
         self.cap = cv2.VideoCapture(idx)
         if not self.cap.isOpened() and sys.platform == "win32":
             self.cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)

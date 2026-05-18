@@ -64,9 +64,11 @@ public class HandTrackClient : IDisposable
         Port = port;
     }
 
+    private const int ConnectTimeoutMs = 3000;
+
     /// <summary>
     /// Establishes the TCP connection and starts the background reader thread.
-    /// Returns false immediately if the service is not reachable.
+    /// Returns false if the service is not reachable within <see cref="ConnectTimeoutMs"/>.
     /// </summary>
     public bool Connect()
     {
@@ -75,11 +77,16 @@ public class HandTrackClient : IDisposable
         {
             _tcp = new TcpClient();
             _tcp.ReceiveTimeout = 2000;
-            _tcp.Connect("127.0.0.1", Port);
+            var task = _tcp.ConnectAsync("127.0.0.1", Port);
+            if (!task.Wait(ConnectTimeoutMs))
+            {
+                try { _tcp.Close(); } catch { }
+                _tcp = null;
+                return false;
+            }
             _connected = true;
 
             var ns = _tcp.GetStream();
-            // Tell the service to start streaming frames.
             var startBytes = Encoding.UTF8.GetBytes("START\n");
             ns.Write(startBytes, 0, startBytes.Length);
 
@@ -96,6 +103,21 @@ public class HandTrackClient : IDisposable
             _connected = false;
             return false;
         }
+    }
+
+    /// <summary>Connect on a thread-pool thread so the UI thread is not blocked.</summary>
+    public void ConnectAsync(Action<bool> onComplete = null)
+    {
+        if (_connected || _disposed)
+        {
+            onComplete?.Invoke(_connected);
+            return;
+        }
+        ThreadPool.QueueUserWorkItem(_ =>
+        {
+            bool ok = Connect();
+            onComplete?.Invoke(ok);
+        });
     }
 
     // -----------------------------------------------------------------------

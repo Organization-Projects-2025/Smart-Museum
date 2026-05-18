@@ -256,13 +256,27 @@ public class GestureClient : IDisposable
                     return null;
                 }
 
-                return JObject.Parse(line.Trim());
+                try
+                {
+                    return JObject.Parse(line.Trim());
+                }
+                catch (Newtonsoft.Json.JsonException jex)
+                {
+                    Console.WriteLine($"[GestureClient:{port}] Bad JSON (ignored): {jex.Message} | line={line}");
+                    return null;
+                }
+            }
+            catch (System.IO.IOException ex)
+            {
+                isConnected = false;
+                StatusChanged?.Invoke(this, "Server closed connection");
+                Console.WriteLine($"[GestureClient:{port}] IO error ({command}): {ex.Message}");
+                return null;
             }
             catch (Exception ex)
             {
                 StatusChanged?.Invoke(this, $"Communication error: {ex.Message}");
                 Console.WriteLine($"[GestureClient:{port}] SendCommandAsync error ({command}): {ex.GetType().Name}: {ex.Message}");
-                isConnected = false;
                 return null;
             }
             finally

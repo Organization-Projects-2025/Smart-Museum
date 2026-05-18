@@ -8,6 +8,7 @@ and the face lobby UI.
 import csv
 import os
 import re
+import threading
 from typing import List, Optional, Tuple
 
 import cv2
@@ -25,6 +26,7 @@ TOLERANCE  = 0.60
 
 _names:     List[str]       = []
 _encodings: List[np.ndarray] = []
+_lock = threading.Lock()
 
 
 def ensure_faces_dir():
@@ -34,8 +36,11 @@ def ensure_faces_dir():
 def load():
     """Load all known face encodings from users.csv into memory."""
     global _names, _encodings
-    _names, _encodings = [], []
+    names: List[str] = []
+    encodings: List[np.ndarray] = []
     if not os.path.isfile(USERS_CSV):
+        with _lock:
+            _names, _encodings = names, encodings
         return
     try:
         with open(USERS_CSV, "r", encoding="utf-8") as f:
@@ -51,23 +56,28 @@ def load():
                     img  = face_recognition.load_image_file(abs_path)
                     encs = face_recognition.face_encodings(img)
                     if encs:
-                        _encodings.append(encs[0])
-                        _names.append(uid)
+                        encodings.append(encs[0])
+                        names.append(uid)
                 except Exception as e:
                     print(f"[FaceStore] Error loading {uid}: {e}")
     except Exception as e:
         print(f"[FaceStore] CSV error: {e}")
-    print(f"[FaceStore] Loaded {len(_names)} faces")
+    with _lock:
+        _names, _encodings = names, encodings
+    print(f"[FaceStore] Loaded {len(names)} faces")
 
 
 def match(encoding: np.ndarray) -> Optional[str]:
     """Return user_id if encoding matches a known face, else None."""
-    if not _encodings:
+    with _lock:
+        names = list(_names)
+        encodings = list(_encodings)
+    if not encodings:
         return None
-    matches   = face_recognition.compare_faces(_encodings, encoding, tolerance=TOLERANCE)
-    distances = face_recognition.face_distance(_encodings, encoding)
+    matches   = face_recognition.compare_faces(encodings, encoding, tolerance=TOLERANCE)
+    distances = face_recognition.face_distance(encodings, encoding)
     best      = int(np.argmin(distances))
-    return _names[best] if matches[best] else None
+    return names[best] if matches[best] else None
 
 
 def next_user_id() -> str:

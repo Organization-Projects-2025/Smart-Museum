@@ -16,6 +16,7 @@ MODEL_PATH = os.path.join(SCRIPT_DIR, "hand_landmarker.task")
 
 # ── Socket config ─────────────────────────────────────────────────────────────
 SOCKET_HOST = "127.0.0.1"
+# Legacy standalone port; production stack uses python/server/hand_service.py on 5004.
 SOCKET_PORT = 5555
 
 FINGER_NAMES = ["thumb", "index", "middle", "ring", "pinky"]

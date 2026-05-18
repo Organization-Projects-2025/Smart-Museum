@@ -25,6 +25,7 @@ public class GazeEmotionClient : IDisposable
     private Control invokeTarget;
 
     private readonly object latestLock = new object();
+    private readonly Decoder utf8Decoder = Encoding.UTF8.GetDecoder();
     private GazeEmotionFrame latestFrame;
     private bool hasLatestFrame;
     private long latestSequence;
@@ -134,11 +135,13 @@ public class GazeEmotionClient : IDisposable
     {
         var sb = new StringBuilder();
         var buf = new byte[256];
+        var chars = new char[512];
         while (!disposed && netStream != null)
         {
             int n = await netStream.ReadAsync(buf, 0, buf.Length).ConfigureAwait(false);
             if (n <= 0) return null;
-            sb.Append(Encoding.UTF8.GetString(buf, 0, n));
+            int charCount = utf8Decoder.GetChars(buf, 0, n, chars, 0);
+            sb.Append(chars, 0, charCount);
             int nl = sb.ToString().IndexOf('\n');
             if (nl < 0) continue;
             string line = sb.ToString(0, nl).Trim();
@@ -150,6 +153,7 @@ public class GazeEmotionClient : IDisposable
     private void ReadLoop()
     {
         var buf = new byte[4096];
+        var chars = new char[8192];
         var line = new StringBuilder();
 
         try
@@ -168,7 +172,8 @@ public class GazeEmotionClient : IDisposable
 
                 if (n <= 0) break;
 
-                line.Append(Encoding.UTF8.GetString(buf, 0, n));
+                int charCount = utf8Decoder.GetChars(buf, 0, n, chars, 0);
+                line.Append(chars, 0, charCount);
 
                 int nl;
                 while ((nl = IndexOfNewline(line)) >= 0)
