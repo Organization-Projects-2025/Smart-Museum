@@ -1,0 +1,413 @@
+{
+  "visitId": "5b5b6613ecf840bca378f99be175dbf6",
+  "faceUserId": "user3",
+  "displayName": "Youssef Khalaf",
+  "startedUtc": "2026-05-19T01:42:39.8589155Z",
+  "endedUtc": "2026-05-19T01:43:03.5231164Z",
+  "segments": [
+    {
+      "storyKey": "figure:0",
+      "storyTitle": "Figure: Akhenaten",
+      "slideIndex": 0,
+      "contentSummary": "Image:content/figures/6_akhenaten/marker_akhenaten.png",
+      "startedOffsetMs": 13796,
+      "endedOffsetMs": 17550,
+      "samples": []
+    },
+    {
+      "storyKey": "figure:0",
+      "storyTitle": "Figure: Akhenaten",
+      "slideIndex": 1,
+      "contentSummary": "Text:Akhenaten — born Amenhotep IV — overturned thousands of years of Egyptian polytheism. He declared the sun disk Aten to be the sole true god, closed the temples of other gods, and redirected all religious and state resources to Aten worship.",
+      "startedOffsetMs": 17550,
+      "endedOffsetMs": 23192,
+      "samples": [
+        {
+          "tRelMs": 1745,
+          "gx": 1.0,
+          "gy": 0.0,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.6529140127519385,
+            "angry": 0.1074803670616314,
+            "sad": 0.098612064010375158,
+            "disgust": 0.071364098561334785,
+            "happy": 0.044289559423235231,
+            "surprise": 0.02314961575073099,
+            "fear": 0.0021902824407539602
+          }
+        },
+        {
+          "tRelMs": 2247,
+          "gx": 1.0,
+          "gy": 0.54060524078797134,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.45569346815889961,
+            "angry": 0.17422708747851937,
+            "disgust": 0.16487238058962214,
+            "happy": 0.096864623660140689,
+            "sad": 0.064826573349568387,
+            "surprise": 0.037138144379938114,
+            "fear": 0.0063777223833116582
+          }
+        },
+        {
+          "tRelMs": 2373,
+          "gx": 1.0,
+          "gy": 0.39210485852836519,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.5200449725394598,
+            "angry": 0.17636716966792029,
+            "disgust": 0.12217267662259158,
+            "happy": 0.083741924511980828,
+            "sad": 0.074790629545449239,
+            "surprise": 0.017863516786433307,
+            "fear": 0.00501911032616488
+          }
+        },
+        {
+          "tRelMs": 2563,
+          "gx": 1.0,
+          "gy": 0.51983304814461806,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.59215386873936271,
+            "angry": 0.22194753736422204,
+            "sad": 0.078730120778562909,
+            "disgust": 0.061836450566586043,
+            "happy": 0.032134466502343258,
+            "surprise": 0.007704818695249617,
+            "fear": 0.0054927373536734492
+          }
+        },
+        {
+          "tRelMs": 2690,
+          "gx": 1.0,
+          "gy": 0.7575057254068297,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.59202402652581088,
+            "angry": 0.240075896907874,
+            "sad": 0.077444353791180962,
+            "disgust": 0.053772151058871322,
+            "happy": 0.021872158765753155,
+            "fear": 0.0078241173703310889,
+            "surprise": 0.0069872955801785217
+          }
+        },
+        {
+          "tRelMs": 2808,
+          "gx": 1.0,
+          "gy": 0.87842018975501579,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.59211760009859549,
+            "angry": 0.25731404545245773,
+            "sad": 0.07549581610513828,
+            "disgust": 0.040825467804169145,
+            "happy": 0.020117291669184596,
+            "fear": 0.0080770249765631276,
+            "surprise": 0.0060527538938916926
+          }
+        },
+        {
+          "tRelMs": 2942,
+          "gx": 1.0,
+          "gy": 0.74481877894616122,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.63349171953861794,
+            "angry": 0.21694322515253484,
+            "sad": 0.07822288959798436,
+            "disgust": 0.035463824599559775,
+            "happy": 0.02626634420266305,
+            "surprise": 0.0048651559461550323,
+            "fear": 0.0047468409624850131
+          }
+        },
+        {
+          "tRelMs": 3069,
+          "gx": 1.0,
+          "gy": 0.010812373850358159,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.64365885529202338,
+            "angry": 0.20920317632446189,
+            "sad": 0.078335514289677832,
+            "disgust": 0.033138869048172787,
+            "happy": 0.026632547208090943,
+            "surprise": 0.0046975311846715016,
+            "fear": 0.0043335066529017526
+          }
+        },
+        {
+          "tRelMs": 3208,
+          "gx": 1.0,
+          "gy": 0.34517434974109629,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.68600655177596115,
+            "angry": 0.16509403383810314,
+            "sad": 0.0745380281568904,
+            "disgust": 0.034015233931603071,
+            "happy": 0.033320332257526925,
+            "surprise": 0.0045858744162062355,
+            "fear": 0.0024399456237090664
+          }
+        },
+        {
+          "tRelMs": 3325,
+          "gx": 1.0,
+          "gy": 1.0,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.6403930729271341,
+            "angry": 0.20025162140106131,
+            "sad": 0.071203614571768256,
+            "disgust": 0.0393728440070747,
+            "happy": 0.028819848465687237,
+            "surprise": 0.010543609210771951,
+            "fear": 0.0094153894165023861
+          }
+        },
+        {
+          "tRelMs": 3455,
+          "gx": 1.0,
+          "gy": 0.67986618503189533,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.60614453291773762,
+            "angry": 0.21930409996566339,
+            "sad": 0.068065650385616641,
+            "disgust": 0.054201628389809242,
+            "happy": 0.024198920498320706,
+            "surprise": 0.016315319324753087,
+            "fear": 0.011769848518099266
+          }
+        },
+        {
+          "tRelMs": 3581,
+          "gx": 1.0,
+          "gy": 0.40007430392988375,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.60027878781641875,
+            "angry": 0.22286110415496976,
+            "sad": 0.0640978064801302,
+            "disgust": 0.059364711362892515,
+            "happy": 0.027820796143051472,
+            "surprise": 0.015713198645315007,
+            "fear": 0.0098635953972222457
+          }
+        },
+        {
+          "tRelMs": 3766,
+          "gx": 1.0,
+          "gy": 0.52542909167205121,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.56335542313520015,
+            "angry": 0.27189871695434237,
+            "disgust": 0.062038684021346789,
+            "sad": 0.053479935721570331,
+            "happy": 0.032787051770984788,
+            "surprise": 0.010717701099869829,
+            "fear": 0.0057224872966859007
+          }
+        },
+        {
+          "tRelMs": 4069,
+          "gx": 1.0,
+          "gy": 0.71200394565608827,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.54426626010582846,
+            "angry": 0.2727602965953449,
+            "disgust": 0.071878984857397646,
+            "happy": 0.05309440355152855,
+            "sad": 0.047630753882104047,
+            "surprise": 0.0089171167367614063,
+            "fear": 0.001452184271035048
+          }
+        },
+        {
+          "tRelMs": 4196,
+          "gx": 1.0,
+          "gy": 0.10233251692935075,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.58776328488531138,
+            "angry": 0.2298150980528777,
+            "disgust": 0.071457158767004689,
+            "happy": 0.053558195789914831,
+            "sad": 0.049648443634633582,
+            "surprise": 0.006456576335247593,
+            "fear": 0.0013012425350102345
+          }
+        },
+        {
+          "tRelMs": 4332,
+          "gx": 1.0,
+          "gy": 0.70184714350086408,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.63363918215412984,
+            "angry": 0.19761074005493226,
+            "disgust": 0.06012560463042213,
+            "sad": 0.053527866602759711,
+            "happy": 0.047986298767849329,
+            "surprise": 0.0056058811908765473,
+            "fear": 0.0015044265990302151
+          }
+        },
+        {
+          "tRelMs": 4755,
+          "gx": 1.0,
+          "gy": 1.0,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.72060300453382264,
+            "angry": 0.10507537914990042,
+            "happy": 0.078114160077375844,
+            "sad": 0.044770207719419884,
+            "disgust": 0.043901577049055437,
+            "surprise": 0.0059006494653607742,
+            "fear": 0.0016350220050649642
+          }
+        },
+        {
+          "tRelMs": 4946,
+          "gx": 1.0,
+          "gy": 0.15766108688157332,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.770290986931217,
+            "happy": 0.0792975669644772,
+            "angry": 0.073565221906420133,
+            "sad": 0.046731738895236907,
+            "disgust": 0.026155359103518353,
+            "surprise": 0.0030452431756989792,
+            "fear": 0.00091388302343146683
+          }
+        },
+        {
+          "tRelMs": 5072,
+          "gx": 1.0,
+          "gy": 0.0,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.78305365174018482,
+            "angry": 0.088098605005704364,
+            "sad": 0.063370990584752721,
+            "happy": 0.038282051205519481,
+            "disgust": 0.023683685996026868,
+            "surprise": 0.0027110173288397883,
+            "fear": 0.0007999981389719699
+          }
+        },
+        {
+          "tRelMs": 5205,
+          "gx": 1.0,
+          "gy": 1.0,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.75582503453210859,
+            "angry": 0.09780558555362702,
+            "sad": 0.075276974772552047,
+            "disgust": 0.033076155534382833,
+            "happy": 0.030495986170345307,
+            "surprise": 0.00549803199750561,
+            "fear": 0.0020222314394785076
+          }
+        },
+        {
+          "tRelMs": 5329,
+          "gx": 1.0,
+          "gy": 0.7072165480177991,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.71662135611517142,
+            "angry": 0.13370710710753486,
+            "sad": 0.069006254363552108,
+            "disgust": 0.041887851527347662,
+            "happy": 0.027440477570967018,
+            "surprise": 0.0087872068270702323,
+            "fear": 0.002549746488356795
+          }
+        },
+        {
+          "tRelMs": 5455,
+          "gx": 1.0,
+          "gy": 0.43609013738088187,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.67887243757191584,
+            "angry": 0.1595368758696864,
+            "sad": 0.064848978556671336,
+            "disgust": 0.050556188908470079,
+            "happy": 0.032132219347164322,
+            "surprise": 0.011195441850802844,
+            "fear": 0.002857857895289266
+          }
+        }
+      ]
+    },
+    {
+      "storyKey": "figure:0",
+      "storyTitle": "Figure: Akhenaten",
+      "slideIndex": 2,
+      "contentSummary": "Text:He built a brand new capital city, Akhetaten (modern Amarna), in the desert. His reign produced a distinctive artistic style that depicted the royal family with elongated heads, wide hips, and in intimate domestic scenes — a radical departure from traditional Egyptian art.",
+      "startedOffsetMs": 23192,
+      "endedOffsetMs": 23664,
+      "samples": [
+        {
+          "tRelMs": 11,
+          "gx": 1.0,
+          "gy": 0.0,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.6783117262009849,
+            "angry": 0.1659356453667554,
+            "sad": 0.072709140066854958,
+            "disgust": 0.0450890983611029,
+            "happy": 0.031349413653562343,
+            "surprise": 0.00576105450827543,
+            "fear": 0.000843921842464098
+          }
+        },
+        {
+          "tRelMs": 188,
+          "gx": 1.0,
+          "gy": 0.1301639593528483,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.51823153933733035,
+            "angry": 0.32688616771176265,
+            "disgust": 0.073458060115629151,
+            "sad": 0.054020146372205584,
+            "happy": 0.022234762677085379,
+            "surprise": 0.0042749420018255444,
+            "fear": 0.000894381784161334
+          }
+        },
+        {
+          "tRelMs": 312,
+          "gx": 1.0,
+          "gy": 0.027469551779753854,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.53520691355908423,
+            "angry": 0.30119032694584363,
+            "disgust": 0.078061305505963227,
+            "sad": 0.039451171316875151,
+            "happy": 0.035973943442510675,
+            "surprise": 0.0086974880040126424,
+            "fear": 0.0014188512257104415
+          }
+        }
+      ]
+    }
+  ]
+}

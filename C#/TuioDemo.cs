@@ -284,6 +284,11 @@ public class TuioDemo : Form, TuioListener
     private DateTime gestureDisplayTime = DateTime.MinValue;
     private const double GESTURE_DISPLAY_DURATION = 2.0; // seconds
 
+    // Centered notice when Favorites / Watched lists are empty
+    private string _menuNoticeText;
+    private DateTime _menuNoticeShownUtc = DateTime.MinValue;
+    private const double MenuNoticeDurationSec = 3.5;
+
     private System.Windows.Forms.Timer recognitionTimer;
     private float recognitionProgress = 0f;   // 0..1
     private const int RecognitionMs = 3000; // ms before slideshow starts
@@ -415,7 +420,9 @@ public class TuioDemo : Form, TuioListener
         ResetAuthPickerToMainPicker();
         authInProgress = false;
         profileWelcomeAutoContinueUtc = null;
-        authStatus = "You’ve been signed out. Choose how to sign in below.";
+        authStatus = AppEnvironment.SkipAuth && !string.IsNullOrEmpty(_lastLoggedInUserId)
+            ? "Signed out. Press L on this window to sign back in as the same user."
+            : "You’ve been signed out. Choose how to sign in below.";
         SafeInvalidate();
         inputPrioritizer.Reset();
         System.Threading.ThreadPool.QueueUserWorkItem(_ => TryReleaseGestureWebcamBlocking());
@@ -497,6 +504,9 @@ public class TuioDemo : Form, TuioListener
 
         if (launchFaceLobbyScan && AppEnvironment.SkipAuth)
         {
+            // After logout, restore the user who just left (not only skip_user from .env).
+            if (TryReloginLastUser())
+                return;
             LoginSkipAuthUserAndEnter();
             return;
         }
@@ -948,9 +958,18 @@ public class TuioDemo : Form, TuioListener
         Invalidate();
     }
 
+    /// <summary>User id for skip_auth login: last signed-out user, else skip_user from .env.</summary>
+    private string ResolveSkipAuthUserId()
+    {
+        if (!string.IsNullOrEmpty(_lastLoggedInUserId) &&
+            !string.Equals(_lastLoggedInUserId, "guest", StringComparison.OrdinalIgnoreCase))
+            return _lastLoggedInUserId;
+        return AppEnvironment.SkipUserId;
+    }
+
     private void LoginSkipAuthUserAndEnter()
     {
-        string skipUserId = AppEnvironment.SkipUserId;
+        string skipUserId = ResolveSkipAuthUserId();
         VisitorProfile profile;
         if (!TryLoadVisitorProfile(skipUserId, out profile))
         {
@@ -963,6 +982,7 @@ public class TuioDemo : Form, TuioListener
         RememberLoggedInUser();
         ApplyVisitorTheme();
         ConfigureCircularMenuForUser();
+        LoadUserPreferences();
         authInProgress = false;
         loginPhase = LoginAuthPhase.MainPicker;
         isLoggedIn = true;
@@ -1852,45 +1872,138 @@ public class TuioDemo : Form, TuioListener
             circularMenu.TopItems.Insert(3, "Analytics");
     }
 
+    /// <summary>Map a CSV token (story key or menu title) to the label shown in the circular menu.</summary>
+    private string ResolveStoredPreferenceLabel(string stored)
+    {
+        if (string.IsNullOrWhiteSpace(stored)) return null;
+        string s = stored.Trim();
+
+        if (storyTitleByKey.TryGetValue(s, out string titleFromKey))
+            return titleFromKey;
+
+        if (storyKeyByTitle.ContainsKey(s))
+            return s;
+
+        foreach (var kv in storyTitleByKey)
+        {
+            if (string.Equals(kv.Key, s, StringComparison.OrdinalIgnoreCase))
+                return kv.Value;
+            if (string.Equals(kv.Value, s, StringComparison.OrdinalIgnoreCase))
+                return kv.Value;
+        }
+
+        return s;
+    }
+
+    private static void AddResolvedPreference(List<string> target, string label)
+    {
+        if (string.IsNullOrEmpty(label)) return;
+        if (!target.Contains(label))
+            target.Add(label);
+    }
+
+    /// <summary>Story key for CSV when available; otherwise the menu label.</summary>
+    private string PreferenceStorageToken(string menuLabel)
+    {
+        if (string.IsNullOrWhiteSpace(menuLabel)) return null;
+        string key;
+        if (storyKeyByTitle.TryGetValue(menuLabel.Trim(), out key))
+            return key;
+        return menuLabel.Trim();
+    }
+
+    private static List<string> MenuListToStorageTokens(List<string> menuLabels, Func<string, string> toToken)
+    {
+        var tokens = new List<string>();
+        if (menuLabels == null) return tokens;
+        foreach (string label in menuLabels)
+        {
+            string token = toToken(label);
+            if (string.IsNullOrEmpty(token)) continue;
+            bool exists = false;
+            foreach (string t in tokens)
+            {
+                if (string.Equals(t, token, StringComparison.OrdinalIgnoreCase))
+                {
+                    exists = true;
+                    break;
+                }
+            }
+            if (!exists)
+                tokens.Add(token);
+        }
+        return tokens;
+    }
+
+    /// <summary>Remove a favorite by menu title or CSV story key (case-insensitive).</summary>
+    private bool RemoveFavoriteFromMenu(string labelOrKey)
+    {
+        string target = ResolveStoredPreferenceLabel(labelOrKey);
+        if (string.IsNullOrEmpty(target))
+            target = labelOrKey != null ? labelOrKey.Trim() : null;
+        if (string.IsNullOrEmpty(target)) return false;
+
+        bool removed = false;
+        for (int i = circularMenu.Favorites.Count - 1; i >= 0; i--)
+        {
+            string existing = circularMenu.Favorites[i];
+            string resolved = ResolveStoredPreferenceLabel(existing) ?? existing;
+            if (string.Equals(existing, target, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(resolved, target, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(PreferenceStorageToken(existing), PreferenceStorageToken(target),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                circularMenu.Favorites.RemoveAt(i);
+                removed = true;
+            }
+        }
+        return removed;
+    }
+
     private void LoadUserPreferences()
     {
         if (visitorProfile == null || preferencesManager == null) return;
-        
+
         try
         {
             var prefs = preferencesManager.Load(visitorProfile.FaceUserId);
-            if (prefs != null)
+            circularMenu.Favorites.Clear();
+            circularMenu.Watched.Clear();
+
+            if (prefs == null)
             {
-                // Clear existing lists
-                circularMenu.Favorites.Clear();
-                circularMenu.Watched.Clear();
-                
-                // Load favorites
-                if (prefs.Favorites != null)
+                Console.WriteLine(
+                    $"[Preferences] No row in user_preferences.csv for {visitorProfile.FaceUserId}");
+                return;
+            }
+
+            int favCount = 0;
+            if (prefs.Favorites != null)
+            {
+                foreach (var stored in prefs.Favorites)
                 {
-                    foreach (var title in prefs.Favorites)
-                    {
-                        if (!string.IsNullOrEmpty(title))
-                            circularMenu.Favorites.Add(title);
-                    }
-                    Console.WriteLine($"[Preferences] Loaded {prefs.Favorites.Count} favorites for {visitorProfile.FaceUserId}");
-                }
-                
-                // Load watched
-                if (prefs.Watched != null)
-                {
-                    foreach (var title in prefs.Watched)
-                    {
-                        if (!string.IsNullOrEmpty(title))
-                            circularMenu.Watched.Add(title);
-                    }
-                    Console.WriteLine($"[Preferences] Loaded {prefs.Watched.Count} watched items for {visitorProfile.FaceUserId}");
+                    string label = ResolveStoredPreferenceLabel(stored);
+                    if (string.IsNullOrEmpty(label)) continue;
+                    AddResolvedPreference(circularMenu.Favorites, label);
+                    favCount++;
                 }
             }
-            else
+
+            int watchedCount = 0;
+            if (prefs.Watched != null)
             {
-                Console.WriteLine($"[Preferences] No saved preferences found for {visitorProfile.FaceUserId}");
+                foreach (var stored in prefs.Watched)
+                {
+                    string label = ResolveStoredPreferenceLabel(stored);
+                    if (string.IsNullOrEmpty(label)) continue;
+                    AddResolvedPreference(circularMenu.Watched, label);
+                    watchedCount++;
+                }
             }
+
+            Console.WriteLine(
+                $"[Preferences] Loaded from user_preferences.csv for {visitorProfile.FaceUserId}: " +
+                $"{favCount} favorite(s), {watchedCount} watched");
         }
         catch (Exception ex)
         {
@@ -1898,21 +2011,31 @@ public class TuioDemo : Form, TuioListener
         }
     }
 
+    /// <summary>Reload CSV preferences whenever the circular menu is opened.</summary>
+    private void PrepareCircularMenuFromPreferences()
+    {
+        if (!isLoggedIn || visitorProfile == null) return;
+        LoadUserPreferences();
+        circularMenu.ShowFavorite = !string.IsNullOrEmpty(GetCurrentFigureStoryKey());
+    }
+
     private void SaveUserPreferences()
     {
         if (visitorProfile == null || preferencesManager == null) return;
-        
+
         try
         {
             var prefs = new UserPreferences
             {
                 UserId = visitorProfile.FaceUserId,
-                Favorites = new List<string>(circularMenu.Favorites),
-                Watched = new List<string>(circularMenu.Watched)
+                Favorites = MenuListToStorageTokens(circularMenu.Favorites, PreferenceStorageToken),
+                Watched = MenuListToStorageTokens(circularMenu.Watched, PreferenceStorageToken)
             };
-            
+
             preferencesManager.Save(prefs);
-            Console.WriteLine($"[Preferences] Saved {prefs.Favorites.Count} favorites and {prefs.Watched.Count} watched items for {visitorProfile.FaceUserId}");
+            Console.WriteLine(
+                $"[Preferences] Wrote user_preferences.csv for {visitorProfile.FaceUserId}: " +
+                $"{prefs.Favorites.Count} favorite(s), {prefs.Watched.Count} watched");
         }
         catch (Exception ex)
         {
@@ -2829,7 +2952,7 @@ public class TuioDemo : Form, TuioListener
             && (DateTime.UtcNow - _watchLastMenuOpenUtc).TotalSeconds < WatchMenuOpenCooldownSec)
             return;
 
-        circularMenu.ShowFavorite = !string.IsNullOrEmpty(GetCurrentFigureStoryKey());
+        PrepareCircularMenuFromPreferences();
         if (circularMenu.Show())
         {
             menuOpenedByGesture = true;
@@ -3080,8 +3203,7 @@ public class TuioDemo : Form, TuioListener
             case "close":
                 if (!circularMenu.IsVisible)
                 {
-                    // Match TUIO path: ShowFavorite must be set before Show() so default slot is correct.
-                    circularMenu.ShowFavorite = !string.IsNullOrEmpty(GetCurrentFigureStoryKey());
+                    PrepareCircularMenuFromPreferences();
                     if (circularMenu.Show())
                     {
                         menuOpenedByGesture = true;
@@ -3202,8 +3324,78 @@ public class TuioDemo : Form, TuioListener
         }
     }
 
+    private void ShowMenuEmptyListNotice(string listLabel)
+    {
+        string body = string.Equals(listLabel, "Watched", StringComparison.OrdinalIgnoreCase)
+            ? "You don't have any watched exhibits yet."
+            : "You don't have any favorites yet.";
+        _menuNoticeText = body + "\r\nSelection returned to Home.";
+        _menuNoticeShownUtc = DateTime.UtcNow;
+        circularMenu.SelectHomeTopLevel();
+        Invalidate();
+    }
+
+    private void DrawMenuEmptyListNotice(Graphics g)
+    {
+        if (string.IsNullOrEmpty(_menuNoticeText)) return;
+        if (!circularMenu.IsVisible)
+        {
+            _menuNoticeText = null;
+            return;
+        }
+
+        double elapsed = (DateTime.UtcNow - _menuNoticeShownUtc).TotalSeconds;
+        if (elapsed > MenuNoticeDurationSec)
+        {
+            _menuNoticeText = null;
+            return;
+        }
+
+        int alpha = 255;
+        if (elapsed > MenuNoticeDurationSec - 0.6)
+            alpha = (int)(255 * (MenuNoticeDurationSec - elapsed) / 0.6);
+
+        using (var veil = new SolidBrush(Color.FromArgb(alpha * 140 / 255, 0, 0, 0)))
+            g.FillRectangle(veil, 0, 0, W, H);
+
+        int boxW = Math.Min(520, W - 80);
+        int boxH = 120;
+        int boxX = (W - boxW) / 2;
+        int boxY = (H - boxH) / 2;
+
+        using (var bg = new SolidBrush(Color.FromArgb(alpha * 235 / 255, 28, 31, 35)))
+            g.FillRectangle(bg, boxX, boxY, boxW, boxH);
+        using (var edge = new Pen(Color.FromArgb(alpha, themeSecondary), 2.5f))
+            g.DrawRectangle(edge, boxX, boxY, boxW, boxH);
+
+        var sf = new StringFormat
+        {
+            Alignment = StringAlignment.Center,
+            LineAlignment = StringAlignment.Center
+        };
+        using (var titleBrush = new SolidBrush(Color.FromArgb(alpha, themeTertiary)))
+        using (var bodyBrush = new SolidBrush(Color.FromArgb(alpha, Color.White)))
+        {
+            g.DrawString("Nothing here yet", fontSubtitle, titleBrush,
+                new RectangleF(boxX + 16, boxY + 12, boxW - 32, 32), sf);
+            g.DrawString(_menuNoticeText, fontSmall, bodyBrush,
+                new RectangleF(boxX + 20, boxY + 44, boxW - 40, boxH - 52), sf);
+        }
+
+        if (elapsed < MenuNoticeDurationSec)
+            Invalidate();
+    }
+
     private void HandleMenuAction(string action, string payload)
     {
+        if (action == "FavoritesEmpty" || action == "WatchedEmpty")
+        {
+            string listLabel = action == "WatchedEmpty" ? "Watched" : "Favorites";
+            ShowMenuEmptyListNotice(listLabel);
+            Console.WriteLine($"[Menu] {listLabel} is empty — notice shown, Home selected");
+            return;
+        }
+
         if (action == "Analytics")
         {
             if (visitorProfile == null || !visitorProfile.IsAdmin) return;
@@ -3288,9 +3480,17 @@ public class TuioDemo : Form, TuioListener
 
         if (action == "FavoritesUnfavorite" && !string.IsNullOrEmpty(payload))
         {
-            circularMenu.Favorites.Remove(payload);
-            authStatus = "Removed from favorites: " + payload;
-            SaveUserPreferences(); // Save immediately
+            if (RemoveFavoriteFromMenu(payload))
+            {
+                SaveUserPreferences();
+                authStatus = "Removed from favorites: " + payload;
+                Console.WriteLine($"[Preferences] Unfavorited '{payload}' — saved to user_preferences.csv");
+            }
+            else
+            {
+                authStatus = "Favorite not found in your list.";
+                Console.WriteLine($"[Preferences] Unfavorite failed — '{payload}' not in menu list");
+            }
             circularMenu.MoveDownAction();
             return;
         }
@@ -3352,6 +3552,53 @@ public class TuioDemo : Form, TuioListener
         slideElapsedMs = 0;
         activeObjectStory = null;
         objectHoldProgress = 0f;
+    }
+
+    private bool IsSlideshowOrRatingActive()
+    {
+        return _showRatingPage
+            || slideshowLocked
+            || (slideShow != null && slideShow.IsRunning);
+    }
+
+    /// <summary>Stop slideshow and rating (if any) and return to the idle home table.</summary>
+    private void SkipSlideshowRatingAndGoHome()
+    {
+        if (_showRatingPage)
+        {
+            _showRatingPage = false;
+            _gesturesBlockedForRating = false;
+            _ratingLockedIn = false;
+            _currentRating = 0;
+            _ratingHoldProgress = 0f;
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    if (laserRatingClient != null)
+                        await laserRatingClient.StopRatingAsync();
+                }
+                catch { }
+            });
+        }
+
+        if (recognitionTimer != null && recognitionTimer.Enabled)
+            recognitionTimer.Stop();
+        recognitionProgress = 0f;
+
+        circularMenu.Hide();
+        menuOpenedByGesture = false;
+        menuOpenedByWatch = false;
+
+        StopAndUnlockSlides();
+        _postRatingContext = SlideShowContext.None;
+        _postRatingStoryKey = null;
+        _postRatingObjectStory = null;
+        waitForClearAfterLockedShow = false;
+
+        Transition(AppState.Idle, null, null, null, null);
+        Console.WriteLine("[Input] M — skipped slideshow/rating, returned to home");
+        Invalidate();
     }
 
     // TuioListener
@@ -3919,7 +4166,7 @@ public class TuioDemo : Form, TuioListener
         // Open the menu when TUIO menu marker (symbol 3) appears; symbol 6 is unused.
         if (!circularMenu.IsVisible && marker != null)
         {
-            circularMenu.ShowFavorite = !string.IsNullOrEmpty(GetCurrentFigureStoryKey());
+            PrepareCircularMenuFromPreferences();
             if (!circularMenu.Show())
                 return;
             menuOpenedByGesture = false;
@@ -4070,7 +4317,10 @@ public class TuioDemo : Form, TuioListener
         }
 
         if (circularMenu.IsVisible)
+        {
             circularMenu.Draw(g, W, H, themeSecondary, themeTertiary, fontSubtitle, fontSmall);
+            DrawMenuEmptyListNotice(g);
+        }
 
         DrawMuseumAppPhoneDownloadBanner(g);
         DrawWatchClockCooldown(g);
@@ -5666,20 +5916,27 @@ public class TuioDemo : Form, TuioListener
         }
         else if (e.KeyCode == Keys.L)
         {
-            // L key restarts login flow - works during all login/2FA phases, but not after reaching home
+            // L restarts sign-in while logged out (skip_auth: same user as before logout).
             if (!isLoggedIn)
+            {
+                if (AppEnvironment.SkipAuth && TryReloginLastUser())
+                    return;
                 StartLoginFlow();
+            }
         }
         else if (e.KeyCode == Keys.M)
         {
-            if (isLoggedIn)
+            if (!isLoggedIn) return;
+            if (IsSlideshowOrRatingActive())
             {
-                if (circularMenu.IsVisible) circularMenu.Hide();
-                else
-                {
-                    circularMenu.ShowFavorite = !string.IsNullOrEmpty(GetCurrentFigureStoryKey());
-                    circularMenu.Show();
-                }
+                SkipSlideshowRatingAndGoHome();
+                return;
+            }
+            if (circularMenu.IsVisible) circularMenu.Hide();
+            else
+            {
+                PrepareCircularMenuFromPreferences();
+                circularMenu.Show();
             }
         }
     }

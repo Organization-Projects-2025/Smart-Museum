@@ -42,36 +42,25 @@ public class UserPreferencesManager
             foreach (var line in lines)
             {
                 if (string.IsNullOrWhiteSpace(line)) continue;
+                if (line.TrimStart().StartsWith("#", StringComparison.Ordinal)) continue;
 
                 var parts = CsvParse(line);
-                if (parts.Count < 3) continue;
+                if (parts.Count < 2) continue;
 
-                string storedUserId = parts[0];
+                string storedUserId = parts[0].Trim();
+                if (storedUserId.Length == 0) continue;
+                if (string.Equals(storedUserId, "face_user_id", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(storedUserId, "user_id", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
                 if (!string.Equals(storedUserId, userId, StringComparison.OrdinalIgnoreCase))
                     continue;
 
                 // Found the user
                 var prefs = new UserPreferences { UserId = userId };
 
-                // Parse favorites (comma-separated, pipe-delimited from main CSV)
-                if (parts.Count > 1 && !string.IsNullOrEmpty(parts[1]))
-                {
-                    prefs.Favorites = parts[1]
-                        .Split(new[] { '|' }, StringSplitOptions.RemoveEmptyEntries)
-                        .Select(s => s.Trim())
-                        .Where(s => !string.IsNullOrEmpty(s))
-                        .ToList();
-                }
-
-                // Parse watched
-                if (parts.Count > 2 && !string.IsNullOrEmpty(parts[2]))
-                {
-                    prefs.Watched = parts[2]
-                        .Split(new[] { '|' }, StringSplitOptions.RemoveEmptyEntries)
-                        .Select(s => s.Trim())
-                        .Where(s => !string.IsNullOrEmpty(s))
-                        .ToList();
-                }
+                prefs.Favorites = ParsePreferenceList(parts.Count > 1 ? parts[1] : null);
+                prefs.Watched = ParsePreferenceList(parts.Count > 2 ? parts[2] : null);
 
                 return prefs;
             }
@@ -103,8 +92,14 @@ public class UserPreferencesManager
                 foreach (var line in existingLines)
                 {
                     if (string.IsNullOrWhiteSpace(line)) continue;
+                    if (line.TrimStart().StartsWith("#", StringComparison.Ordinal)) continue;
                     var parts = CsvParse(line);
-                    if (parts.Count > 0 && !string.Equals(parts[0], prefs.UserId, StringComparison.OrdinalIgnoreCase))
+                    if (parts.Count == 0) continue;
+                    string rowUserId = parts[0].Trim();
+                    if (string.Equals(rowUserId, "face_user_id", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(rowUserId, "user_id", StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    if (!string.Equals(rowUserId, prefs.UserId, StringComparison.OrdinalIgnoreCase))
                         lines.Add(line);
                 }
             }
@@ -122,6 +117,30 @@ public class UserPreferencesManager
         {
             Console.WriteLine($"[UserPreferencesManager] Error saving preferences: {ex.Message}");
         }
+    }
+
+    private static List<string> ParsePreferenceList(string field)
+    {
+        field = NormalizeCsvField(field);
+        if (string.IsNullOrEmpty(field))
+            return new List<string>();
+        return field
+            .Split(new[] { '|' }, StringSplitOptions.RemoveEmptyEntries)
+            .Select(s => s.Trim())
+            .Where(s => !string.IsNullOrEmpty(s))
+            .ToList();
+    }
+
+    private static string NormalizeCsvField(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return string.Empty;
+        value = value.Trim();
+        if (value == "\"\"")
+            return string.Empty;
+        if (value.Length >= 2 && value[0] == '"' && value[value.Length - 1] == '"')
+            return value.Substring(1, value.Length - 2).Replace("\"\"", "\"");
+        return value;
     }
 
     private static List<string> CsvParse(string line)

@@ -1,0 +1,109 @@
+{
+  "visitId": "cc092c92d5f7447ca9653dfb2a0334e9",
+  "faceUserId": "user3",
+  "displayName": "Youssef Khalaf",
+  "startedUtc": "2026-05-19T01:46:48.0335954Z",
+  "endedUtc": "2026-05-19T01:47:08.5442335Z",
+  "segments": [
+    {
+      "storyKey": "figure:0",
+      "storyTitle": "Figure: Akhenaten",
+      "slideIndex": 0,
+      "contentSummary": "Image:content/figures/6_akhenaten/marker_akhenaten.png",
+      "startedOffsetMs": 16539,
+      "endedOffsetMs": 20510,
+      "samples": [
+        {
+          "tRelMs": 2225,
+          "gx": 1.0,
+          "gy": 1.0,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.47435333599223567,
+            "angry": 0.38715446091439604,
+            "disgust": 0.063043511549947792,
+            "sad": 0.052706315093821184,
+            "happy": 0.015782084103835432,
+            "surprise": 0.003823381321030541,
+            "fear": 0.0031369110247332975
+          }
+        },
+        {
+          "tRelMs": 3231,
+          "gx": 1.0,
+          "gy": 0.0,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.602267925202057,
+            "angry": 0.19083635924939391,
+            "sad": 0.12815770587553424,
+            "disgust": 0.056955274276592971,
+            "happy": 0.013299750909240645,
+            "surprise": 0.0055319881105564935,
+            "fear": 0.0029509963766248381
+          }
+        },
+        {
+          "tRelMs": 3484,
+          "gx": 1.0,
+          "gy": 0.28726812270773722,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.56819780312789459,
+            "angry": 0.21640814428493849,
+            "disgust": 0.116225274861295,
+            "sad": 0.056040260942522013,
+            "happy": 0.022506406742002844,
+            "surprise": 0.0165431728759032,
+            "fear": 0.0040789371654439185
+          }
+        },
+        {
+          "tRelMs": 3674,
+          "gx": 1.0,
+          "gy": 1.0,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.64886441250382143,
+            "angry": 0.11716600164159023,
+            "disgust": 0.095318305101077638,
+            "sad": 0.070622020830094751,
+            "happy": 0.048247856426340462,
+            "surprise": 0.016972574962776939,
+            "fear": 0.0028088285342985492
+          }
+        },
+        {
+          "tRelMs": 3800,
+          "gx": 1.0,
+          "gy": 0.55882217234642884,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.58515007262649277,
+            "disgust": 0.12945355721332119,
+            "angry": 0.12208688961947876,
+            "sad": 0.076202668222059233,
+            "happy": 0.067546977756930041,
+            "surprise": 0.017764367620722848,
+            "fear": 0.0017954669409951012
+          }
+        },
+        {
+          "tRelMs": 3927,
+          "gx": 1.0,
+          "gy": 0.96705210761291416,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.51095485074295066,
+            "disgust": 0.16838300605619341,
+            "angry": 0.14979516741974405,
+            "sad": 0.086958249823464936,
+            "happy": 0.0639161412725295,
+            "surprise": 0.01768758514650666,
+            "fear": 0.0023049995386107314
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,453 @@
+{
+  "visitId": "f01e263508094156ac3d11fd0b734635",
+  "faceUserId": "user3",
+  "displayName": "Youssef Khalaf",
+  "startedUtc": "2026-05-19T01:33:43.5520313Z",
+  "endedUtc": "2026-05-19T01:35:20.3968225Z",
+  "segments": [
+    {
+      "storyKey": "figure:0",
+      "storyTitle": "Figure: Akhenaten",
+      "slideIndex": 0,
+      "contentSummary": "Image:content/figures/6_akhenaten/marker_akhenaten.png",
+      "startedOffsetMs": 58489,
+      "endedOffsetMs": 62340,
+      "samples": [
+        {
+          "tRelMs": 897,
+          "gx": 1.0,
+          "gy": 0.0,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.41916685379605084,
+            "angry": 0.4073197504114649,
+            "sad": 0.10104366285069664,
+            "disgust": 0.059757753471570731,
+            "surprise": 0.0070023996120626422,
+            "fear": 0.00289052632603839,
+            "happy": 0.0028190535321158347
+          }
+        },
+        {
+          "tRelMs": 1138,
+          "gx": 1.0,
+          "gy": 0.0,
+          "dominant": "angry",
+          "emotions": {
+            "angry": 0.46220618499640703,
+            "neutral": 0.37695352310896407,
+            "sad": 0.094659949181891787,
+            "disgust": 0.0524014535777045,
+            "surprise": 0.0080529341180110674,
+            "fear": 0.0031863762622307071,
+            "happy": 0.0025395787547908017
+          }
+        },
+        {
+          "tRelMs": 1464,
+          "gx": 1.0,
+          "gy": 0.0,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.41526666812146656,
+            "angry": 0.31966829850944034,
+            "sad": 0.11682106231664344,
+            "disgust": 0.11548904345148116,
+            "surprise": 0.019764162869237975,
+            "fear": 0.00764494128497985,
+            "happy": 0.00534582344675057
+          }
+        },
+        {
+          "tRelMs": 2292,
+          "gx": 0.86432734756317275,
+          "gy": 0.0,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.40082192828526653,
+            "angry": 0.31122350729556586,
+            "sad": 0.18063050694303096,
+            "disgust": 0.094918169772910954,
+            "surprise": 0.0058074827195695134,
+            "happy": 0.0039171327584871787,
+            "fear": 0.0026812722251689561
+          }
+        },
+        {
+          "tRelMs": 2403,
+          "gx": 0.84087315987503919,
+          "gy": 0.0,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.48733518481065397,
+            "angry": 0.24574952328235969,
+            "sad": 0.16499160226808415,
+            "disgust": 0.089263283969508112,
+            "happy": 0.0064521752787463429,
+            "surprise": 0.0043637371072958644,
+            "fear": 0.0018444932833518925
+          }
+        },
+        {
+          "tRelMs": 3220,
+          "gx": 0.0,
+          "gy": 1.0,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.60714608743522047,
+            "angry": 0.17237319457525371,
+            "sad": 0.1377244070034401,
+            "disgust": 0.063412599099836445,
+            "happy": 0.010877993168720684,
+            "surprise": 0.006472020956268921,
+            "fear": 0.00199369776125968
+          }
+        },
+        {
+          "tRelMs": 3598,
+          "gx": 1.0,
+          "gy": 0.0,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.47205944669904154,
+            "angry": 0.11510241072997039,
+            "happy": 0.09129661785680783,
+            "sad": 0.090230855600595183,
+            "disgust": 0.0855432195481885,
+            "fear": 0.081546379754457624,
+            "surprise": 0.064221069810938933
+          }
+        }
+      ]
+    },
+    {
+      "storyKey": "figure:0",
+      "storyTitle": "Figure: Akhenaten",
+      "slideIndex": 1,
+      "contentSummary": "Text:Akhenaten — born Amenhotep IV — overturned thousands of years of Egyptian polytheism. He declared the sun disk Aten to be the sole true god, closed the temples of other gods, and redirected all religious and state resources to Aten worship.",
+      "startedOffsetMs": 62340,
+      "endedOffsetMs": 67987,
+      "samples": [
+        {
+          "tRelMs": 435,
+          "gx": 1.0,
+          "gy": 0.542791073901616,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.37545157783401534,
+            "happy": 0.13056752192630658,
+            "disgust": 0.10958857086482947,
+            "fear": 0.10182764589831593,
+            "surprise": 0.098685833368071227,
+            "sad": 0.09538803737716306,
+            "angry": 0.088490812731298385
+          }
+        },
+        {
+          "tRelMs": 562,
+          "gx": 1.0,
+          "gy": 0.61229645892456763,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.35417121326274886,
+            "sad": 0.14119030553954357,
+            "happy": 0.12810000993893719,
+            "disgust": 0.11920216392897647,
+            "surprise": 0.10836991626603454,
+            "angry": 0.092020351929433919,
+            "fear": 0.05694603913432536
+          }
+        },
+        {
+          "tRelMs": 689,
+          "gx": 1.0,
+          "gy": 0.0,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.35529641056041927,
+            "sad": 0.21500860556565415,
+            "angry": 0.11451930153131402,
+            "disgust": 0.09461813126498797,
+            "surprise": 0.090295320611589944,
+            "happy": 0.083365252576598159,
+            "fear": 0.046896977889436454
+          }
+        },
+        {
+          "tRelMs": 812,
+          "gx": 1.0,
+          "gy": 0.0,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.41471309889566116,
+            "sad": 0.23544723439637991,
+            "angry": 0.19506431361781926,
+            "disgust": 0.064273551627704942,
+            "surprise": 0.041596323906443113,
+            "happy": 0.028118779757278164,
+            "fear": 0.020786697798713408
+          }
+        },
+        {
+          "tRelMs": 938,
+          "gx": 1.0,
+          "gy": 0.0,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.42863386797920483,
+            "angry": 0.38041521314226995,
+            "sad": 0.12597222717249737,
+            "disgust": 0.053305189136032716,
+            "surprise": 0.0065671370773808689,
+            "happy": 0.0034828919882960094,
+            "fear": 0.0016234735043183042
+          }
+        },
+        {
+          "tRelMs": 1127,
+          "gx": 1.0,
+          "gy": 0.073676394205565154,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.4331760545994745,
+            "angry": 0.37653538957394078,
+            "sad": 0.12862041258024984,
+            "disgust": 0.050345073008312612,
+            "surprise": 0.0062825670500270053,
+            "happy": 0.0032964500143225065,
+            "fear": 0.0017440531736727762
+          }
+        },
+        {
+          "tRelMs": 1253,
+          "gx": 1.0,
+          "gy": 1.0,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.40767184718208521,
+            "angry": 0.3017211756697829,
+            "sad": 0.1740116470778291,
+            "disgust": 0.058730468167647876,
+            "surprise": 0.025365137266998239,
+            "happy": 0.023248644126098634,
+            "fear": 0.0092510805095580087
+          }
+        },
+        {
+          "tRelMs": 1426,
+          "gx": 1.0,
+          "gy": 0.29631806155274432,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.4560689192087693,
+            "angry": 0.19828055500928346,
+            "sad": 0.1804683357776059,
+            "disgust": 0.058672078138304266,
+            "surprise": 0.045571567137036272,
+            "happy": 0.045080728553197474,
+            "fear": 0.015857816175803358
+          }
+        },
+        {
+          "tRelMs": 2196,
+          "gx": 0.79732855798538571,
+          "gy": 0.0,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.55937855948914139,
+            "angry": 0.2456480699069479,
+            "sad": 0.092473693983152971,
+            "disgust": 0.0862557614357825,
+            "surprise": 0.0099085938860554463,
+            "happy": 0.0038770509287152054,
+            "fear": 0.0024582703702046688
+          }
+        },
+        {
+          "tRelMs": 2389,
+          "gx": 1.0,
+          "gy": 0.0,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.470934802811741,
+            "angry": 0.3230005079406284,
+            "sad": 0.10345926209142564,
+            "disgust": 0.089347375150781214,
+            "surprise": 0.0091805758191670847,
+            "happy": 0.0026480149516776683,
+            "fear": 0.0014294612345790367
+          }
+        },
+        {
+          "tRelMs": 2643,
+          "gx": 1.0,
+          "gy": 0.656649938662557,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.52883922515823734,
+            "angry": 0.24560278943803729,
+            "sad": 0.085711052092919363,
+            "disgust": 0.074590595180986471,
+            "surprise": 0.041984754545121156,
+            "happy": 0.014544742905613738,
+            "fear": 0.0087268406790847481
+          }
+        },
+        {
+          "tRelMs": 3710,
+          "gx": 1.0,
+          "gy": 0.31897393121609074,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.48541535280906439,
+            "angry": 0.18261259617669215,
+            "sad": 0.11297178225291549,
+            "surprise": 0.083245176422293746,
+            "disgust": 0.078969120507143567,
+            "happy": 0.033415497351211909,
+            "fear": 0.023370474480678739
+          }
+        },
+        {
+          "tRelMs": 3836,
+          "gx": 1.0,
+          "gy": 0.0,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.43054030368054685,
+            "sad": 0.1751146278251591,
+            "angry": 0.1481266269948199,
+            "surprise": 0.094100834519310825,
+            "disgust": 0.076175280317226049,
+            "happy": 0.0436082219168633,
+            "fear": 0.032334104746073906
+          }
+        },
+        {
+          "tRelMs": 4971,
+          "gx": 1.0,
+          "gy": 0.086089010968868451,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.43722573115571883,
+            "angry": 0.37588398903837078,
+            "disgust": 0.090637880788558653,
+            "sad": 0.081360641130402631,
+            "happy": 0.0092339754398959376,
+            "surprise": 0.00431604812042959,
+            "fear": 0.0013417343266235572
+          }
+        },
+        {
+          "tRelMs": 5097,
+          "gx": 1.0,
+          "gy": 0.49644263329029226,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.49799259243234378,
+            "angry": 0.31132022955282562,
+            "sad": 0.086254583861688869,
+            "disgust": 0.085483012354523047,
+            "happy": 0.013409059266067834,
+            "surprise": 0.0036825214562499213,
+            "fear": 0.0018580010763009235
+          }
+        },
+        {
+          "tRelMs": 5271,
+          "gx": 0.60935283102524185,
+          "gy": 0.0,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.57260732829743655,
+            "angry": 0.22609502882751756,
+            "sad": 0.0934206271796723,
+            "disgust": 0.079565294894049357,
+            "happy": 0.020827287896807864,
+            "surprise": 0.00494829756342051,
+            "fear": 0.0025361353410958791
+          }
+        }
+      ]
+    },
+    {
+      "storyKey": "figure:0",
+      "storyTitle": "Figure: Akhenaten",
+      "slideIndex": 2,
+      "contentSummary": "Text:He built a brand new capital city, Akhetaten (modern Amarna), in the desert. His reign produced a distinctive artistic style that depicted the royal family with elongated heads, wide hips, and in intimate domestic scenes — a radical departure from traditional Egyptian art.",
+      "startedOffsetMs": 67987,
+      "endedOffsetMs": 79246,
+      "samples": [
+        {
+          "tRelMs": 690,
+          "gx": 1.0,
+          "gy": 0.055755505872089217,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.7048550993912216,
+            "angry": 0.15773497440180534,
+            "sad": 0.069284030865437149,
+            "disgust": 0.032570682048662862,
+            "happy": 0.030542614401363497,
+            "surprise": 0.0034447597525607242,
+            "fear": 0.00156783913894886
+          }
+        },
+        {
+          "tRelMs": 813,
+          "gx": 1.0,
+          "gy": 0.0,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.71640612557902561,
+            "angry": 0.15846158351581657,
+            "sad": 0.051271253556798027,
+            "disgust": 0.036812834369905553,
+            "happy": 0.031916694174982191,
+            "surprise": 0.003777573685168342,
+            "fear": 0.001353935118303761
+          }
+        },
+        {
+          "tRelMs": 1130,
+          "gx": 1.0,
+          "gy": 0.783931063794537,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.56166639034463539,
+            "angry": 0.28440158820230343,
+            "sad": 0.052809545829291676,
+            "happy": 0.048959736386634339,
+            "disgust": 0.047211089318405723,
+            "surprise": 0.003681128819995716,
+            "fear": 0.0012705210987337043
+          }
+        },
+        {
+          "tRelMs": 1256,
+          "gx": 1.0,
+          "gy": 0.88553925207604256,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.58353060900632248,
+            "angry": 0.17395068019989479,
+            "happy": 0.13614087109398554,
+            "disgust": 0.058336088482738836,
+            "sad": 0.043358499841683051,
+            "surprise": 0.0037939995931551757,
+            "fear": 0.0008892517822201647
+          }
+        }
+      ]
+    },
+    {
+      "storyKey": "figure:0",
+      "storyTitle": "Figure: Akhenaten",
+      "slideIndex": 3,
+      "contentSummary": "Text:After his death, subsequent pharaohs — including his own son Tutankhamun — dismantled everything Akhenaten had built. His name was struck from official records; he was referred to only as \"the enemy\" or \"the criminal of Amarna.\"",
+      "startedOffsetMs": 79246,
+      "endedOffsetMs": 96844,
+      "samples": []
+    }
+  ]
+}

@@ -1,0 +1,67 @@
+{
+  "visitId": "fda44cb01bbb49db8dc06e68e9f0ee14",
+  "faceUserId": "user3",
+  "displayName": "Youssef Khalaf",
+  "startedUtc": "2026-05-19T01:20:48.6383450Z",
+  "endedUtc": "2026-05-19T01:21:13.0596894Z",
+  "segments": [
+    {
+      "storyKey": "figure:0",
+      "storyTitle": "Figure: Akhenaten",
+      "slideIndex": 0,
+      "contentSummary": "Image:content/figures/6_akhenaten/marker_akhenaten.png",
+      "startedOffsetMs": 7025,
+      "endedOffsetMs": 10859,
+      "samples": [
+        {
+          "tRelMs": 737,
+          "gx": 1.0,
+          "gy": 0.010887372924348937,
+          "dominant": "angry",
+          "emotions": {
+            "angry": 0.30307531642812657,
+            "neutral": 0.25398472603252503,
+            "surprise": 0.12615254617877736,
+            "disgust": 0.11367383023602572,
+            "sad": 0.084549400978252073,
+            "fear": 0.062872000729164615,
+            "happy": 0.055692179417128639
+          }
+        },
+        {
+          "tRelMs": 907,
+          "gx": 1.0,
+          "gy": 0.0,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.50357206922136111,
+            "angry": 0.19609240073490727,
+            "sad": 0.12235713512064324,
+            "disgust": 0.08115580892408894,
+            "surprise": 0.059787528098351576,
+            "happy": 0.029755423161959213,
+            "fear": 0.00727963473868875
+          }
+        }
+      ]
+    },
+    {
+      "storyKey": "figure:0",
+      "storyTitle": "Figure: Akhenaten",
+      "slideIndex": 1,
+      "contentSummary": "Text:Akhenaten — born Amenhotep IV — overturned thousands of years of Egyptian polytheism. He declared the sun disk Aten to be the sole true god, closed the temples of other gods, and redirected all religious and state resources to Aten worship.",
+      "startedOffsetMs": 10859,
+      "endedOffsetMs": 16473,
+      "samples": []
+    },
+    {
+      "storyKey": "figure:0",
+      "storyTitle": "Figure: Akhenaten",
+      "slideIndex": 2,
+      "contentSummary": "Text:He built a brand new capital city, Akhetaten (modern Amarna), in the desert. His reign produced a distinctive artistic style that depicted the royal family with elongated heads, wide hips, and in intimate domestic scenes — a radical departure from traditional Egyptian art.",
+      "startedOffsetMs": 16473,
+      "endedOffsetMs": 24421,
+      "samples": []
+    }
+  ]
+}

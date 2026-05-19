@@ -121,6 +121,23 @@ public class CircularMenuController
         _suppressAngleDrivenTopNavUntilUtc = DateTime.MinValue;
     }
 
+    /// <summary>Leave submenu tiers and highlight the Home wedge on the outer ring.</summary>
+    public void SelectHomeTopLevel()
+    {
+        IsInSecondLevel = false;
+        IsInThirdLevel = false;
+        SecondIndex = 0;
+        ThirdIndex = 0;
+        SelectedFavoriteTitle = null;
+
+        var items = GetTopLevelItems();
+        int homeIdx = items.IndexOf("Home");
+        TopIndex = homeIdx >= 0 ? homeIdx : 0;
+        _suppressAngleDrivenTopNavUntilUtc =
+            DateTime.UtcNow.AddMilliseconds(AngleTopNavSuppressionAfterGestureMs);
+        SyncSelectionTexts();
+    }
+
     public void UpdateRotation(float angleRadians)
     {
         if (!IsVisible) return;

@@ -1,0 +1,182 @@
+{
+  "visitId": "e66bf62bad5e4862a959d3443c861b0d",
+  "faceUserId": "user3",
+  "displayName": "Youssef Khalaf",
+  "startedUtc": "2026-05-19T01:41:21.4124935Z",
+  "endedUtc": "2026-05-19T01:42:13.9972158Z",
+  "segments": [
+    {
+      "storyKey": "figure:0",
+      "storyTitle": "Figure: Akhenaten",
+      "slideIndex": 0,
+      "contentSummary": "Image:content/figures/6_akhenaten/marker_akhenaten.png",
+      "startedOffsetMs": 9790,
+      "endedOffsetMs": 15503,
+      "samples": []
+    },
+    {
+      "storyKey": "figure:0",
+      "storyTitle": "Figure: Akhenaten",
+      "slideIndex": 1,
+      "contentSummary": "Text:Akhenaten — born Amenhotep IV — overturned thousands of years of Egyptian polytheism. He declared the sun disk Aten to be the sole true god, closed the temples of other gods, and redirected all religious and state resources to Aten worship.",
+      "startedOffsetMs": 15503,
+      "endedOffsetMs": 21383,
+      "samples": [
+        {
+          "tRelMs": 855,
+          "gx": 1.0,
+          "gy": 0.098722345625973762,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.32574357030780504,
+            "angry": 0.2231902777243592,
+            "disgust": 0.15203270369900238,
+            "happy": 0.10808711010916523,
+            "sad": 0.1001560489108108,
+            "surprise": 0.0558166133453234,
+            "fear": 0.034973675903533917
+          }
+        },
+        {
+          "tRelMs": 997,
+          "gx": 1.0,
+          "gy": 0.55905836126109187,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.34227898232653881,
+            "angry": 0.25329117133979145,
+            "sad": 0.18404149133088621,
+            "disgust": 0.080171614799946528,
+            "happy": 0.054065128405672229,
+            "surprise": 0.049191679400666856,
+            "fear": 0.0369599323964979
+          }
+        },
+        {
+          "tRelMs": 1108,
+          "gx": 1.0,
+          "gy": 0.54031039745273257,
+          "dominant": "angry",
+          "emotions": {
+            "angry": 0.44604722124325785,
+            "neutral": 0.3200523348293231,
+            "sad": 0.13549981619551618,
+            "disgust": 0.076037002603102755,
+            "surprise": 0.010839640838218293,
+            "fear": 0.0068203494086071861,
+            "happy": 0.0047036348819745723
+          }
+        },
+        {
+          "tRelMs": 1801,
+          "gx": 1.0,
+          "gy": 0.0,
+          "dominant": "angry",
+          "emotions": {
+            "angry": 0.50367257495367646,
+            "neutral": 0.32017764530573173,
+            "sad": 0.082366220640643958,
+            "disgust": 0.076569014818197334,
+            "surprise": 0.0081436245248081521,
+            "happy": 0.0049665652078501434,
+            "fear": 0.0041043545490922909
+          }
+        },
+        {
+          "tRelMs": 2116,
+          "gx": 1.0,
+          "gy": 0.047433953459481426,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.4786139833047382,
+            "angry": 0.33553064004925431,
+            "disgust": 0.085883827592787079,
+            "sad": 0.0753725463221571,
+            "happy": 0.0093347035510128618,
+            "surprise": 0.0091989297878732126,
+            "fear": 0.006065369392177289
+          }
+        },
+        {
+          "tRelMs": 2807,
+          "gx": 1.0,
+          "gy": 0.3087706024811655,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.59465323935280512,
+            "angry": 0.24907540419960514,
+            "sad": 0.095159887560558223,
+            "disgust": 0.046848649318955916,
+            "happy": 0.0062052819621945905,
+            "surprise": 0.0057650203255776395,
+            "fear": 0.0022925172803034371
+          }
+        },
+        {
+          "tRelMs": 3673,
+          "gx": 1.0,
+          "gy": 0.0,
+          "dominant": "angry",
+          "emotions": {
+            "angry": 0.42792774980782938,
+            "neutral": 0.41598160409973373,
+            "sad": 0.087649579892739679,
+            "disgust": 0.055427356862537747,
+            "happy": 0.0075917339309280211,
+            "surprise": 0.0037037673465399787,
+            "fear": 0.0017182080596914557
+          }
+        },
+        {
+          "tRelMs": 3765,
+          "gx": 1.0,
+          "gy": 0.0,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.443739782857237,
+            "angry": 0.40003412884058842,
+            "sad": 0.091713054096084323,
+            "disgust": 0.051729293130010505,
+            "happy": 0.0069047059109712955,
+            "surprise": 0.0041587029977362879,
+            "fear": 0.0017203321673721686
+          }
+        }
+      ]
+    },
+    {
+      "storyKey": "figure:0",
+      "storyTitle": "Figure: Akhenaten",
+      "slideIndex": 2,
+      "contentSummary": "Text:He built a brand new capital city, Akhetaten (modern Amarna), in the desert. His reign produced a distinctive artistic style that depicted the royal family with elongated heads, wide hips, and in intimate domestic scenes — a radical departure from traditional Egyptian art.",
+      "startedOffsetMs": 21383,
+      "endedOffsetMs": 38922,
+      "samples": []
+    },
+    {
+      "storyKey": "figure:0",
+      "storyTitle": "Figure: Akhenaten",
+      "slideIndex": 3,
+      "contentSummary": "Text:After his death, subsequent pharaohs — including his own son Tutankhamun — dismantled everything Akhenaten had built. His name was struck from official records; he was referred to only as \"the enemy\" or \"the criminal of Amarna.\"",
+      "startedOffsetMs": 38922,
+      "endedOffsetMs": 52583,
+      "samples": [
+        {
+          "tRelMs": 12503,
+          "gx": 1.0,
+          "gy": 0.0075950927598658347,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.45145876336202967,
+            "angry": 0.30540297636056385,
+            "sad": 0.14053130394519506,
+            "disgust": 0.0711398964243374,
+            "surprise": 0.014929867238883806,
+            "fear": 0.01284517374992517,
+            "happy": 0.0036920189190650979
+          }
+        }
+      ]
+    }
+  ]
+}
