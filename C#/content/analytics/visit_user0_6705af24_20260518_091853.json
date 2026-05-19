@@ -1,0 +1,61 @@
+{
+  "visitId": "6705af24762049e088b75bd2f519c7bb",
+  "faceUserId": "user0",
+  "displayName": "Ahmed ElSherif",
+  "startedUtc": "2026-05-18T09:18:53.4097567Z",
+  "endedUtc": "2026-05-18T09:19:24.0897336Z",
+  "segments": [
+    {
+      "storyKey": "figure:4",
+      "storyTitle": "Figure: Ramesses II",
+      "slideIndex": 0,
+      "contentSummary": "Image:content/figures/3_ramesses/marker_ramesses_ii.png",
+      "startedOffsetMs": 9688,
+      "endedOffsetMs": 14334,
+      "samples": [
+        {
+          "tRelMs": 57,
+          "gx": 0.3924630651645461,
+          "gy": 0.9403714943308944,
+          "dominant": "neutral",
+          "emotions": {
+            "neutral": 0.55762818538998138,
+            "sad": 0.1934100198474642,
+            "disgust": 0.128740246171848,
+            "angry": 0.0999419345338951,
+            "surprise": 0.0078349638275311724,
+            "happy": 0.0077336199827143723,
+            "fear": 0.0047110302465657268
+          }
+        }
+      ]
+    },
+    {
+      "storyKey": "figure:4",
+      "storyTitle": "Figure: Ramesses II",
+      "slideIndex": 1,
+      "contentSummary": "Text:Ramesses II — known as Ramesses the Great — is often regarded as the most powerful pharaoh of the Egyptian Empire. He reigned for 66 years and fathered over 100 children, outliving many of his heirs.",
+      "startedOffsetMs": 14334,
+      "endedOffsetMs": 19367,
+      "samples": []
+    },
+    {
+      "storyKey": "figure:4",
+      "storyTitle": "Figure: Ramesses II",
+      "slideIndex": 2,
+      "contentSummary": "Text:This marker image reflects Ramesses II's monumental legacy. He led the Egyptian army at the Battle of Kadesh against the Hittite Empire — the earliest recorded major battle in detail. Although the battle was inconclusive, Ramesses portrayed it as a great victory in temple reliefs across Egypt.",
+      "startedOffsetMs": 19367,
+      "endedOffsetMs": 25041,
+      "samples": []
+    },
+    {
+      "storyKey": "figure:4",
+      "storyTitle": "Figure: Ramesses II",
+      "slideIndex": 3,
+      "contentSummary": "Text:Ramesses II signed the first known international peace treaty in history — the Treaty of Kadesh with the Hittite King Hattusili III around 1259 BC. A copy is displayed at the United Nations headquarters in New York.",
+      "startedOffsetMs": 25041,
+      "endedOffsetMs": 30678,
+      "samples": []
+    }
+  ]
+}

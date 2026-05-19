@@ -21,6 +21,7 @@ Env overrides:
     DISABLE_GESTURE=1       Skip gesture service
     DISABLE_YOLO=1          Skip YOLO service
     DISABLE_HAND=1          Skip hand tracking service
+    YOLO_MENU_OBJECT=clock  Menu trigger: clock | spoon | cell phone
     YOLO_CONTEXT_MOCK=1     Use fake YOLO tracks (no GPU needed)
 """
 

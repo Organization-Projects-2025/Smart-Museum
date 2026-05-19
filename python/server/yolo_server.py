@@ -1,12 +1,15 @@
 """
-yolo_server.py — Smart Museum watch/clock control for the circular menu.
+yolo_server.py — Smart Museum object control for the circular menu.
 
 TCP protocol matches gesture_service.py (port 5005, newline JSON).
 Uses the shared CameraHub from main.py (same frames as gaze / hand services).
 
+Env:
+  YOLO_MENU_OBJECT   clock | spoon | cell phone  (aliases: watch, phone, cell_phone)
+
 Gestures:
-  close        — clock appeared → open menu
-  close_menu   — no clock for IDLE_CLOSE_SEC → hide menu
+  close        — tracked object appeared → open menu
+  close_menu   — object gone for IDLE_CLOSE_SEC → hide menu
   swipe_right / swipe_left / swipe_up / swipe_down
 """
 
@@ -44,12 +47,65 @@ try:
 except ImportError:
     _HUB_OK = False
 
+
+def _load_dotenv_if_present() -> None:
+    """Load repo-root .env when yolo_server is imported or run standalone."""
+    env_path = os.path.join(PROJECT_ROOT, ".env")
+    if not os.path.isfile(env_path):
+        return
+    with open(env_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip()
+            val = val.strip().strip('"').strip("'")
+            if key:
+                os.environ.setdefault(key, val)
+
+
+_load_dotenv_if_present()
+
+# COCO class presets (yolo11s.pt) — name is the ultralytics label string
+_MENU_OBJECT_ALIASES: dict[str, tuple[str, int]] = {
+    "clock": ("clock", 74),
+    "watch": ("clock", 74),
+    "spoon": ("spoon", 44),
+    "cell phone": ("cell phone", 67),
+    "phone": ("cell phone", 67),
+    "cellphone": ("cell phone", 67),
+}
+
+
+def _normalize_menu_object_key(raw: str) -> str:
+    return " ".join(raw.strip().lower().replace("_", " ").split())
+
+
+def _menu_object_from_env() -> tuple[str, int]:
+    key = _normalize_menu_object_key(os.environ.get("YOLO_MENU_OBJECT", "clock"))
+    if key not in _MENU_OBJECT_ALIASES:
+        known = ", ".join(sorted({name for name, _ in _MENU_OBJECT_ALIASES.values()}))
+        print(f"[YOLO] WARNING: unknown YOLO_MENU_OBJECT={key!r} — using clock. Options: {known}")
+        key = "clock"
+    return _MENU_OBJECT_ALIASES[key]
+
+
+def _class_id_from_model_names(names: dict, label: str, fallback: int) -> int:
+    target = label.lower()
+    for cid, name in names.items():
+        if str(name).lower() == target:
+            return int(cid)
+    return fallback
+
+
+MENU_OBJECT_NAME, MENU_OBJECT_CLASS = _menu_object_from_env()
+
 HOST = os.environ.get("YOLO_SERVER_HOST", "127.0.0.1")
 PORT = int(os.environ.get("YOLO_SERVER_PORT", "5005"))
 MODEL = os.environ.get("YOLO_MODEL", "yolo11s.pt")
 IMGSZ = int(os.environ.get("YOLO_IMGSZ", "416"))
 INFER_MAX_W = int(os.environ.get("YOLO_INFER_WIDTH", "640"))
-CLOCK_CLASS = 74
 TRACK_CONF = 0.12
 SWIPE_MIN_CONF = 0.10
 VIS_HITS_ON = 1
@@ -173,6 +229,7 @@ class _YoloEngine:
         self._vis_miss = 0
         self._hold_box: tuple[int, int, int, int] | None = None
         self._hold_conf = 0.0
+        self._track_class_id = MENU_OBJECT_CLASS
         self._ambient = {"phone": False, "book": False, "large_person": False}
         self._ambient_scan_tick = 0
 
@@ -283,14 +340,20 @@ class _YoloEngine:
         model_path = _resolve_model_path()
         print(f"[YOLO] Loading model: {model_path}")
         self.model = YOLO(model_path)
+        self._track_class_id = _class_id_from_model_names(
+            self.model.names or {}, MENU_OBJECT_NAME, MENU_OBJECT_CLASS,
+        )
         warm_h = max(64, int(round(IMGSZ * 480 / 640)))
         dummy = np.zeros((warm_h, IMGSZ, 3), dtype=np.uint8)
         self.model.track(
             dummy, persist=True, verbose=False, conf=TRACK_CONF,
-            classes=[CLOCK_CLASS], tracker="bytetrack.yaml",
+            classes=[self._track_class_id], tracker="bytetrack.yaml",
             imgsz=IMGSZ, device=self._device, half=self._half,
         )
-        print(f"[YOLO] Model {MODEL} ready ({'GPU' if self._half else 'CPU'}) imgsz={IMGSZ}")
+        print(
+            f"[YOLO] Model {MODEL} ready ({'GPU' if self._half else 'CPU'}) "
+            f"imgsz={IMGSZ}  menu_object={MENU_OBJECT_NAME}  class={self._track_class_id}"
+        )
 
     def _queue_gesture(self, name: str, score: float = 1.0, detail: str = ""):
         with self._lock:
@@ -323,7 +386,7 @@ class _YoloEngine:
                 persist=True,
                 verbose=False,
                 conf=TRACK_CONF,
-                classes=[CLOCK_CLASS],
+                classes=[self._track_class_id],
                 tracker="bytetrack.yaml",
                 imgsz=IMGSZ,
                 device=self._device,
@@ -379,7 +442,7 @@ class _YoloEngine:
 
         opened_this_frame = False
         if self.object_visible and not was_stable:
-            print(f"[YOLO] clock detected  conf={conf:.2f}")
+            print(f"[YOLO] {MENU_OBJECT_NAME} detected  conf={conf:.2f}")
             if (now - self._last_open_menu_time) >= OPEN_MENU_COOLDOWN:
                 self._queue_gesture("close", conf, "open menu")
                 self._last_open_menu_time = now
@@ -403,7 +466,7 @@ class _YoloEngine:
                 self._queue_gesture(swipe, swipe_conf or conf, f"pixel {swipe}")
         else:
             if was_stable:
-                print("[YOLO] clock lost (stable)")
+                print(f"[YOLO] {MENU_OBJECT_NAME} lost (stable)")
             self._hold_box = None
             self._hold_conf = 0.0
             self._swipe.update(None, 0.0)
@@ -513,6 +576,8 @@ class _YoloEngine:
             "last_gesture": last_g,
             "infer_fps": round(self._infer_fps, 1),
             "frames_processed": self._frames_processed,
+            "menu_object": MENU_OBJECT_NAME,
+            "menu_object_class": self._track_class_id,
             "idle_close_sec": IDLE_CLOSE_SEC,
             "frames_collected": 60,
             "templates": 4,
@@ -588,7 +653,10 @@ class YoloObjectService:
         self.server_socket.listen(5)
         self.is_running = True
         print(f"[YOLO] Listening on {self.host}:{self.port}  model={MODEL}")
-        print(f"[YOLO] idle_close={IDLE_CLOSE_SEC}s  clock_class={CLOCK_CLASS}")
+        print(
+            f"[YOLO] idle_close={IDLE_CLOSE_SEC}s  "
+            f"menu_object={MENU_OBJECT_NAME}  class={eng._track_class_id}"
+        )
 
         try:
             while self.is_running:
