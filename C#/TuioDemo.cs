@@ -286,6 +286,7 @@ public class TuioDemo : Form, TuioListener
 
     // Centered notice when Favorites / Watched lists are empty
     private string _menuNoticeText;
+    private string _menuNoticeListLabel;
     private DateTime _menuNoticeShownUtc = DateTime.MinValue;
     private const double MenuNoticeDurationSec = 3.5;
 
@@ -3326,10 +3327,12 @@ public class TuioDemo : Form, TuioListener
 
     private void ShowMenuEmptyListNotice(string listLabel)
     {
-        string body = string.Equals(listLabel, "Watched", StringComparison.OrdinalIgnoreCase)
-            ? "You don't have any watched exhibits yet."
-            : "You don't have any favorites yet.";
-        _menuNoticeText = body + "\r\nSelection returned to Home.";
+        bool isWatched = string.Equals(listLabel, "Watched", StringComparison.OrdinalIgnoreCase);
+        _menuNoticeListLabel = isWatched ? "Watched" : "Favorites";
+        _menuNoticeText = (isWatched
+                ? "You don't have any watched exhibits yet."
+                : "You don't have any favorites yet.")
+            + "\r\nSelection returned to Home.";
         _menuNoticeShownUtc = DateTime.UtcNow;
         circularMenu.SelectHomeTopLevel();
         Invalidate();
@@ -3341,6 +3344,7 @@ public class TuioDemo : Form, TuioListener
         if (!circularMenu.IsVisible)
         {
             _menuNoticeText = null;
+            _menuNoticeListLabel = null;
             return;
         }
 
@@ -3348,6 +3352,7 @@ public class TuioDemo : Form, TuioListener
         if (elapsed > MenuNoticeDurationSec)
         {
             _menuNoticeText = null;
+            _menuNoticeListLabel = null;
             return;
         }
 
@@ -3373,10 +3378,13 @@ public class TuioDemo : Form, TuioListener
             Alignment = StringAlignment.Center,
             LineAlignment = StringAlignment.Center
         };
+        string noticeTitle = string.Equals(_menuNoticeListLabel, "Watched", StringComparison.OrdinalIgnoreCase)
+            ? "No watched exhibits yet"
+            : "No favorites yet";
         using (var titleBrush = new SolidBrush(Color.FromArgb(alpha, themeTertiary)))
         using (var bodyBrush = new SolidBrush(Color.FromArgb(alpha, Color.White)))
         {
-            g.DrawString("Nothing here yet", fontSubtitle, titleBrush,
+            g.DrawString(noticeTitle, fontSubtitle, titleBrush,
                 new RectangleF(boxX + 16, boxY + 12, boxW - 32, 32), sf);
             g.DrawString(_menuNoticeText, fontSmall, bodyBrush,
                 new RectangleF(boxX + 20, boxY + 44, boxW - 40, boxH - 52), sf);

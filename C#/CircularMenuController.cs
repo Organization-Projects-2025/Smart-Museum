@@ -319,9 +319,13 @@ public class CircularMenuController
         {
             var second = GetSecondLevelItems();
             Console.WriteLine($"[CircularMenu] MoveUpAction (SecondLevel): top={top} SecondIndex={SecondIndex} secondCount={second.Count}");
-            if (second.Count == 0) 
+            if (second.Count == 0)
             {
-                Console.WriteLine($"[CircularMenu] MoveUpAction (SecondLevel): No items in second level!");
+                Console.WriteLine($"[CircularMenu] MoveUpAction (SecondLevel): {top} is empty — returning to Home");
+                IsInSecondLevel = false;
+                IsInThirdLevel = false;
+                SelectedFavoriteTitle = null;
+                if (OnAction != null) OnAction(top + "Empty", null);
                 return;
             }
             if (SecondIndex < 0 || SecondIndex >= second.Count)
